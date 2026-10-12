@@ -1,0 +1,12 @@
+# 설치된 패키지 (npm install로 다시 받을 수 있어요)
+node_modules/
+
+# 빌드 결과물 (나중에 exe 만들 때 생겨요)
+dist/
+out/
+
+# 윈도우/에디터 임시 파일
+Thumbs.db
+desktop.ini
+.vscode/
+*.log
