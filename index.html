@@ -2,278 +2,537 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
   <title>사진/영상 관리 프로그램</title>
   <style>
+    :root {
+      --bg: #f6f7f9;
+      --card: #ffffff;
+      --line: #e3e6eb;
+      --text: #1f2328;
+      --sub: #667085;
+      --blue: #2d7ff9;
+      --green: #1a9e5a;
+      --orange: #d77a00;
+      --red: #d33a3a;
+      --purple: #7a4fd6;
+    }
+    * { box-sizing: border-box; }
     body {
       font-family: 'Malgun Gothic', sans-serif;
-      text-align: center;
-      margin: 24px;
-    }
-    button {
-      font-size: 16px;
-      padding: 10px 20px;
-      cursor: pointer;
-    }
-    button:disabled { cursor: not-allowed; opacity: 0.5; }
-    .row { margin: 10px 0; }
-    .path { color: #555; margin-left: 10px; }
-    .options {
-      display: inline-block;
-      text-align: left;
-      background: #f7f7f7;
-      border-radius: 8px;
-      padding: 12px 20px;
-      margin: 10px 0;
-    }
-    .options div { margin: 6px 0; }
-    #runBtn { background: #2d7ff9; color: white; border: none; border-radius: 6px; }
-    #summary { margin-top: 12px; font-size: 17px; }
-    #months { margin-top: 10px; }
-    .tag {
-      display: inline-block;
-      background: #eef3ff;
-      border-radius: 12px;
-      padding: 4px 12px;
-      margin: 3px;
-    }
-    #progressBox { display: none; margin: 16px auto; width: 80%; }
-    progress { width: 100%; height: 22px; }
-    #progressText { margin-top: 6px; font-size: 14px; color: #333; }
-    table {
-      margin: 20px auto;
-      border-collapse: collapse;
-      width: 92%;
-      text-align: left;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 20px 28px 40px;
       font-size: 14px;
     }
-    th, td { border-bottom: 1px solid #ddd; padding: 6px 10px; }
-    th { background: #f5f5f5; }
-    .renamed { color: #d77a00; font-weight: bold; }
-    .trash { color: #d33; font-weight: bold; }
+    h1 { font-size: 22px; margin: 0 0 14px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px 18px;
+      margin-bottom: 12px;
+    }
+    .row { display: flex; align-items: center; gap: 10px; margin: 6px 0; flex-wrap: wrap; }
+    .label { width: 110px; font-weight: bold; }
+    .path { color: var(--sub); word-break: break-all; }
+    button {
+      font-family: inherit;
+      font-size: 14px;
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: #fff;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) { background: #f0f3f7; }
+    button:disabled { cursor: not-allowed; opacity: 0.45; }
+    button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+    button.primary:hover:not(:disabled) { background: #1f6ee6; }
+    button.danger { color: var(--red); }
+    button.small { padding: 3px 10px; font-size: 12px; }
+    input[type="number"] { width: 80px; padding: 5px; font-family: inherit; }
+
+    /* 도구 상태 */
+    .tool { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 14px; background: #eef6f0; }
+    .tool.bad { background: #fdeeee; color: var(--red); }
+
+    /* 이어하기 배너 */
+    #banner { display: none; border-color: #c9dafc; background: #f2f6ff; }
+    #banner b { font-size: 15px; }
+
+    /* 요약 칩 */
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .chip { background: #f0f2f5; border-radius: 12px; padding: 4px 12px; }
+    .chip.orange { background: #fff3e0; color: var(--orange); }
+    .chip.red { background: #fdeeee; color: var(--red); }
+    .chip.purple { background: #f3eefe; color: var(--purple); }
+    .chip.green { background: #eaf7ef; color: var(--green); }
+
+    /* 진행률 */
+    #progressBox { display: none; margin-top: 10px; }
+    progress { width: 100%; height: 20px; }
+    #progressText { margin-top: 4px; color: var(--sub); }
+    #status { margin-top: 8px; font-size: 15px; white-space: pre-line; }
+
+    /* 표 */
+    .tableHead { display: flex; align-items: center; gap: 10px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+    th { background: #f5f6f8; position: sticky; top: 0; }
+    td.name { word-break: break-all; }
+    td.nowrap { white-space: nowrap; }
+    .s-done { color: var(--green); }
+    .s-dup { color: var(--sub); }
+    .s-fail { color: var(--red); font-weight: bold; }
+    .s-skip { color: var(--sub); }
+    .tag { display: inline-block; font-size: 11px; border-radius: 8px; padding: 1px 6px; margin-left: 4px; }
+    .t-new { background: #e7f0ff; color: var(--blue); }
+    .t-num { background: #fff3e0; color: var(--orange); }
+    .t-nodate { background: #f3eefe; color: var(--purple); }
+    .t-check { background: #fdeeee; color: var(--red); }
+    .muted { color: var(--sub); }
   </style>
 </head>
 <body>
   <h1>📸 사진/영상 관리 프로그램</h1>
 
-  <div class="row">
-    <button id="srcBtn">📁 원본 폴더 선택</button>
-    <span class="path" id="srcPath">선택된 폴더 없음</span>
-  </div>
-  <div class="row">
-    <button id="destBtn">📁 대상 폴더 선택</button>
-    <span class="path" id="destPath">(선택 안 하면 원본 폴더 안에 정리해요)</span>
-  </div>
-
-  <div class="options">
-    <div><label><input type="checkbox" id="includeSub" checked> 하위 폴더 포함</label></div>
-    <div>
-      폴더 구조:
-      <label><input type="radio" name="level" value="month" checked> 연/월</label>
-      <label><input type="radio" name="level" value="day"> 연/월/일</label>
-    </div>
-    <div>
-      이름 겹칠 때:
-      <label><input type="radio" name="dup" value="keep" checked> 번호 붙이기 (둘 다 보존)</label>
-      <label><input type="radio" name="dup" value="trash"> 똑같은 파일은 휴지통 🗑️</label>
+  <!-- 1. 도구 상태 -->
+  <div class="card">
+    <div class="row">
+      <span class="label">🧰 도구</span>
+      <span id="tools" class="row" style="margin:0"></span>
+      <button class="small" id="recheckBtn">다시 확인</button>
     </div>
   </div>
 
-  <div class="row">
-    <button id="previewBtn">👀 미리보기</button>
-    <button id="runBtn" disabled>✅ 실행</button>
-    <button id="logBtn">📝 로그 폴더 열기</button>
-    <button id="openBtn">📂 결과 폴더 열기</button>
+  <!-- 2. 이어하기 배너 (남은 작업이 있을 때만 보여요) -->
+  <div class="card" id="banner">
+    <div><b>📌 진행 중인 작업이 있어요</b> <span class="muted" id="bannerFrom"></span></div>
+    <div class="chips" id="bannerChips"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="primary" id="nextBtn">▶ 이어서 실행</button>
+      <button id="trashBtn">🗑 원본 휴지통으로</button>
+      <button id="finishBtn">✔ 작업 끝내기</button>
+      <button class="danger" id="cancelBtn">✖ 작업 취소</button>
+    </div>
   </div>
 
-  <div id="progressBox">
-    <progress id="bar" value="0" max="100"></progress>
-    <div id="progressText"></div>
+  <!-- 3. 폴더 & 옵션 -->
+  <div class="card">
+    <div class="row">
+      <span class="label">📥 가져올 폴더</span>
+      <button id="srcBtn">폴더 선택</button>
+      <span class="path" id="srcPath">선택 안 함</span>
+    </div>
+    <div class="row">
+      <span class="label">💾 백업 폴더</span>
+      <button id="destBtn">폴더 선택</button>
+      <span class="path" id="destPath">선택 안 함</span>
+    </div>
+    <div class="row">
+      <span class="label">⚙ 옵션</span>
+      <label><input type="checkbox" id="includeSub"> 하위 폴더 포함</label>
+      <span class="muted">|</span>
+      <label>한 번에 <input type="number" id="batchSize" min="1" step="100"> 개씩 처리</label>
+    </div>
+    <div class="row muted" style="font-size:12px">
+      결과: 백업폴더\년\월\일\2025-03-28_200653_원본이름.jpg · 날짜 모르는 파일은 _날짜없음 · 원본은 끝난 뒤 물어보고 휴지통으로
+    </div>
   </div>
 
-  <p id="summary"></p>
-  <div id="months"></div>
-  <table id="table"></table>
+  <!-- 4. 버튼 & 진행률 -->
+  <div class="card">
+    <div class="row">
+      <button id="previewBtn">👀 미리보기</button>
+      <button class="primary" id="runBtn" disabled>✅ 실행</button>
+      <button id="pauseBtn" disabled>⏸ 일시정지</button>
+      <span class="muted">|</span>
+      <button id="logBtn">📝 로그 폴더</button>
+      <button id="openBtn">📂 백업 폴더 열기</button>
+    </div>
+    <div id="progressBox">
+      <progress id="bar" value="0" max="100"></progress>
+      <div id="progressText"></div>
+    </div>
+    <div id="status" class="muted">가져올 폴더와 백업 폴더를 고르고 미리보기를 눌러 주세요.</div>
+    <div class="chips" id="chips"></div>
+  </div>
+
+  <!-- 5. 표 -->
+  <div class="card">
+    <div class="tableHead">
+      <b>📋 목록</b>
+      <select id="filter">
+        <option value="all">전체 (주의할 것 먼저)</option>
+        <option value="issue">⚠ 주의할 것만</option>
+        <option value="todo">예정</option>
+        <option value="nodate">📁 날짜없음</option>
+        <option value="dup">⏭ 중복</option>
+        <option value="fail">❌ 실패</option>
+      </select>
+      <span class="muted" id="tableInfo"></span>
+    </div>
+    <table id="table"></table>
+  </div>
 
   <script>
     const $ = (id) => document.getElementById(id);
-    let source = null;
-    let dest = null;
-    let ready = false; // 미리보기를 마쳤는지
-    let lastMove = 0;  // 미리보기 때 계산된 이동 개수
-    let lastTrash = 0; // 미리보기 때 계산된 휴지통 개수
+    // api = preload.js에서 열어 준 기능들 (window.api 와 같아요)
 
-    // 옵션이 바뀌면 다시 미리보기 해야 해요
-    function reset() {
-      ready = false;
-      $('runBtn').disabled = true;
-    }
+    const state = { source: '', backupRoot: '', includeSub: true, batchSize: 2000 };
+    let job = null;         // 진행 중인 작업 정보
+    let planReady = false;  // 미리보기 끝났는지
+    let busy = false;       // 뭔가 하는 중인지
 
-    // 시간(초) → 00:00:00 모양으로
-    function fmt(sec) {
+    // ---------- 도우미 ----------
+    const num = (n) => Number(n || 0).toLocaleString('ko-KR');
+    function fmtTime(sec) {
       sec = Math.max(0, Math.round(sec));
-      const h = String(Math.floor(sec / 3600)).padStart(2, '0');
-      const m = String(Math.floor((sec % 3600) / 60)).padStart(2, '0');
-      const s = String(sec % 60).padStart(2, '0');
-      return `${h}:${m}:${s}`;
+      const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+      return [h, m, s].map((v) => String(v).padStart(2, '0')).join(':');
+    }
+    function fmtBytes(b) {
+      if (b >= 1024 ** 3) return (b / 1024 ** 3).toFixed(1) + 'GB';
+      if (b >= 1024 ** 2) return (b / 1024 ** 2).toFixed(1) + 'MB';
+      return Math.round(b / 1024) + 'KB';
+    }
+    function chip(text, cls = '') {
+      const s = document.createElement('span');
+      s.className = 'chip ' + cls;
+      s.textContent = text;
+      return s;
+    }
+    function setStatus(text) { $('status').textContent = text; }
+    const batchSize = () => Math.max(1, Number($('batchSize').value) || 2000);
+
+    // 버튼 켜고 끄기
+    function setBusy(on, isRunning = false) {
+      busy = on;
+      ['previewBtn', 'srcBtn', 'destBtn', 'nextBtn', 'trashBtn', 'finishBtn', 'cancelBtn', 'includeSub', 'batchSize']
+        .forEach((id) => ($(id).disabled = on));
+      $('runBtn').disabled = on || !planReady;
+      $('pauseBtn').disabled = !isRunning;
+      $('pauseBtn').textContent = '⏸ 일시정지';
+      $('progressBox').style.display = isRunning ? 'block' : 'none';
     }
 
-    // 원본 폴더 선택
-    $('srcBtn').addEventListener('click', async () => {
-      const f = await window.api.selectFolder('원본 폴더 선택');
-      if (!f) return;
-      source = f;
-      $('srcPath').textContent = '📂 ' + f;
-      reset();
-    });
+    // ---------- 도구 상태 ----------
+    const TOOL_NAMES = { exiftool: 'exiftool', magick: 'ImageMagick', ffmpeg: 'FFmpeg' };
+    function renderTools(t) {
+      const box = $('tools');
+      box.innerHTML = '';
+      for (const key of Object.keys(TOOL_NAMES)) {
+        const ok = t[key] && t[key].ok;
+        const span = document.createElement('span');
+        span.className = 'tool' + (ok ? '' : ' bad');
+        span.title = ok ? `${t[key].path}\n${t[key].version}` : '찾지 못했어요';
+        span.textContent = (ok ? '✅ ' : '❌ ') + TOOL_NAMES[key];
+        if (!ok) {
+          const b = document.createElement('button');
+          b.className = 'small';
+          b.textContent = '위치 지정';
+          b.onclick = async () => renderTools(await api.pickTool(key));
+          span.appendChild(b);
+        }
+        box.appendChild(span);
+      }
+    }
+    $('recheckBtn').onclick = async () => renderTools(await api.checkTools());
 
-    // 대상 폴더 선택
-    $('destBtn').addEventListener('click', async () => {
-      const f = await window.api.selectFolder('대상 폴더 선택');
-      if (!f) return;
-      dest = f;
-      $('destPath').textContent = '📂 ' + f;
-      reset();
-    });
-
-    // 옵션 바꾸면 초기화
-    $('includeSub').addEventListener('change', reset);
-    document.querySelectorAll('input[name="level"], input[name="dup"]').forEach((r) =>
-      r.addEventListener('change', reset)
-    );
-
-    // 미리보기
-    $('previewBtn').addEventListener('click', async () => {
-      if (!source) {
-        alert('먼저 원본 폴더를 선택해주세요!');
+    // ---------- 이어하기 배너 ----------
+    function setJob(info) {
+      job = info;
+      if (!info) {
+        $('banner').style.display = 'none';
         return;
       }
-      $('previewBtn').disabled = true;
-      $('summary').textContent = '⏳ 계획 만드는 중... (파일이 많으면 오래 걸려요)';
-      $('months').innerHTML = '';
-      $('table').innerHTML = '';
+      const s = info.stats;
+      $('banner').style.display = 'block';
+      $('bannerFrom').textContent = `· ${info.source} → ${info.backupRoot}`;
+      const c = $('bannerChips');
+      c.innerHTML = '';
+      c.appendChild(chip(`전체 ${num(s.total)}`));
+      c.appendChild(chip(`✅ 완료 ${num(s.done)}`, 'green'));
+      if (s.dup) c.appendChild(chip(`⏭ 중복 ${num(s.dup)}`));
+      if (s.fail) c.appendChild(chip(`❌ 실패 ${num(s.fail)}`, 'red'));
+      c.appendChild(chip(`⏳ 남은 작업 ${num(s.todo)}`, s.todo ? 'orange' : ''));
+      if (info.deletable) c.appendChild(chip(`🗑 지울 수 있는 원본 ${num(info.deletable)}개 (${fmtBytes(info.deletableBytes)})`, 'purple'));
 
-      try {
-        const level = document.querySelector('input[name="level"]:checked').value;
-        const dupMode = document.querySelector('input[name="dup"]:checked').value;
-        const res = await window.api.makePlan({
-          source,
-          dest,
-          includeSub: $('includeSub').checked,
-          level,
-          dupMode,
+      $('nextBtn').style.display = s.todo ? '' : 'none';
+      $('nextBtn').textContent = `▶ 다음 ${num(Math.min(batchSize(), s.todo))}개 실행`;
+      $('trashBtn').style.display = info.deletable ? '' : 'none';
+      $('finishBtn').style.display = s.todo ? 'none' : '';
+      $('cancelBtn').style.display = s.todo ? '' : 'none';
+    }
+
+    // ---------- 요약 칩 (미리보기 결과) ----------
+    function renderStats(s) {
+      const c = $('chips');
+      c.innerHTML = '';
+      c.appendChild(chip(`처리 예정 ${num(s.todo)}개 (HEIC→JPG ${num(s.heic)} · MOV→MP4 ${num(s.mov)} · 이름만 ${num(s.copy)})`, 'green'));
+      if (s.newFolders) c.appendChild(chip(`🆕 새 폴더 ${num(s.newFolders)}개`));
+      if (s.noDate) c.appendChild(chip(`📁 날짜없음 ${num(s.noDate)}`, 'purple'));
+      if (s.dup) c.appendChild(chip(`⏭ 중복 ${num(s.dup)}` + (s.check ? ` (확인 필요 ${num(s.check)})` : ''), s.check ? 'red' : ''));
+      if (s.renamed) c.appendChild(chip(`🔁 _번호 붙음 ${num(s.renamed)}`, 'orange'));
+      if (s.skip) c.appendChild(chip(`✔ 이미 정리됨 ${num(s.skip)}`));
+      c.appendChild(chip(`날짜 출처: 촬영정보 ${num(s.byFrom['촬영정보'])} · 파일이름 ${num(s.byFrom['파일이름'])} · 없음 ${num(s.byFrom['없음'])}`));
+    }
+
+    // ---------- 표 ----------
+    function renderTable(res) {
+      const t = $('table');
+      t.innerHTML = '<tr><th>상태</th><th>원본</th><th>작업</th><th>새 이름</th><th>갈 위치</th><th>날짜 출처</th><th>메모</th></tr>';
+      for (const r of res.rows) {
+        const tr = document.createElement('tr');
+        const cells = [r.status, r.src, r.work, r.name, r.dir, r.dateFrom, r.note];
+        cells.forEach((text, i) => {
+          const td = document.createElement('td');
+          td.textContent = text;
+          if (i === 0) td.className = 'nowrap s-' + r.statusKey;
+          if (i === 2 || i === 5) td.className = 'nowrap';
+          if (i === 1 || i === 3) td.className = 'name';
+          if (i === 3 && r.renamed) td.appendChild(tag('_번호', 't-num'));
+          if (i === 4 && r.newFolder) td.appendChild(tag('🆕 새 폴더', 't-new'));
+          if (i === 4 && r.noDate) td.appendChild(tag('날짜없음', 't-nodate'));
+          if (i === 6 && r.check) td.appendChild(tag('확인 필요', 't-check'));
+          tr.appendChild(td);
         });
-
-        if (res.total === 0) {
-          $('summary').textContent = '✅ 정리할 파일이 없어요';
-          return;
-        }
-
-        lastMove = res.moveCount;
-        lastTrash = res.trashCount;
-
-        const sc = res.sourceCount;
-        $('summary').textContent =
-          `👀 미리보기: 이동 ${res.moveCount}개` +
-          (res.trashCount ? ` / 🗑️ 중복 휴지통 ${res.trashCount}개` : '') +
-          ' (아직 아무것도 안 했어요!)' +
-          ` / 📅 촬영일 ${sc['촬영일']}개, 🏷️ 파일명 ${sc['파일명']}개, 🕒 수정일 ${sc['수정일']}개` +
-          (res.renamedCount ? ` / 🔁 번호 붙임 ${res.renamedCount}개` : '');
-
-        // 월별 태그
-        Object.keys(res.monthCount).sort().forEach((m) => {
-          const span = document.createElement('span');
-          span.className = 'tag';
-          span.textContent = `${m} (${res.monthCount[m]}개)`;
-          $('months').appendChild(span);
-        });
-
-        // 표
-        $('table').innerHTML =
-          '<tr><th>종류</th><th>파일명</th><th>옮길 폴더</th><th>날짜 기준</th><th>동작</th></tr>';
-        res.rows.forEach((p) => {
-          const tr = document.createElement('tr');
-          let action = '✅ 이동';
-          let cls = '';
-          if (p.action === 'trash') {
-            action = '🗑️ 휴지통 (중복)';
-            cls = 'trash';
-          } else if (p.renamed) {
-            action = '🔁 번호 붙여서 이동';
-            cls = 'renamed';
-          }
-          const cells = [p.type, p.name, p.rel, p.source, action];
-          cells.forEach((text, i) => {
-            const td = document.createElement('td');
-            td.textContent = text;
-            if (i === 4 && cls) td.className = cls;
-            tr.appendChild(td);
-          });
-          $('table').appendChild(tr);
-        });
-
-        ready = true;
-        $('runBtn').disabled = false;
-      } catch (e) {
-        $('summary').textContent = '❌ 오류: ' + e.message;
-      } finally {
-        $('previewBtn').disabled = false;
+        t.appendChild(tr);
       }
-    });
+      $('tableInfo').textContent = res.total > res.rows.length
+        ? `총 ${num(res.total)}개 중 ${num(res.rows.length)}개만 표시`
+        : `총 ${num(res.total)}개`;
+    }
+    function tag(text, cls) {
+      const s = document.createElement('span');
+      s.className = 'tag ' + cls;
+      s.textContent = text;
+      return s;
+    }
+    $('filter').onchange = async () => renderTable(await api.getRows($('filter').value));
 
-    // 진행 상황 받기
-    window.api.onProgress((p) => {
+    // ---------- 폴더 & 옵션 ----------
+    function renderPaths() {
+      $('srcPath').textContent = state.source || '선택 안 함';
+      $('destPath').textContent = state.backupRoot || '선택 안 함';
+    }
+    function resetPlan() {
+      planReady = false;
+      $('runBtn').disabled = true;
+    }
+    $('srcBtn').onclick = async () => {
+      const f = await api.selectFolder('가져올 폴더 선택', state.source);
+      if (!f) return;
+      state.source = f;
+      renderPaths();
+      resetPlan();
+      api.saveSettings({ source: f });
+    };
+    $('destBtn').onclick = async () => {
+      const f = await api.selectFolder('백업 폴더 선택 (예: G:\\_홍경우사진백업정리)', state.backupRoot);
+      if (!f) return;
+      state.backupRoot = f;
+      renderPaths();
+      resetPlan();
+      api.saveSettings({ backupRoot: f });
+    };
+    $('includeSub').onchange = () => {
+      resetPlan();
+      api.saveSettings({ includeSub: $('includeSub').checked });
+    };
+    $('batchSize').onchange = () => {
+      api.saveSettings({ batchSize: batchSize() });
+      if (job) setJob(job);
+    };
+
+    // ---------- 미리보기 ----------
+    api.onPlanStatus((msg) => setStatus(msg));
+
+    $('previewBtn').onclick = async () => {
+      if (!state.source || !state.backupRoot) {
+        alert('가져올 폴더와 백업 폴더를 먼저 골라 주세요!');
+        return;
+      }
+      // 진행 중인 작업이 있으면 확인
+      if (job) {
+        const msg = job.stats.todo
+          ? `진행 중인 작업이 있어요 (남은 ${num(job.stats.todo)}개).\n\n새로 미리보기를 하면 이전 작업은 취소돼요.\n(이미 완료된 파일은 그대로 있어요)\n\n계속할까요?`
+          : `원본 정리가 남은 작업이 있어요.\n\n새로 미리보기를 하면 이전 작업은 끝내요. 계속할까요?`;
+        if (!confirm(msg)) return;
+        await api.closeJob(job.stats.todo ? 'cancel' : 'done');
+        setJob(null);
+      }
+
+      resetPlan();
+      setBusy(true);
+      $('chips').innerHTML = '';
+      $('table').innerHTML = '';
+      setStatus('⏳ 계획 만드는 중... (파일이 많으면 몇 분 걸려요)');
+      try {
+        const res = await api.makePlan({ source: state.source, backupRoot: state.backupRoot, includeSub: $('includeSub').checked });
+        renderStats(res.stats);
+        $('filter').value = 'all';
+        renderTable(res);
+        if (res.stats.todo === 0) {
+          setStatus('✅ 새로 처리할 파일이 없어요' + (res.stats.dup ? ' (전부 중복이에요)' : ''));
+        } else {
+          planReady = true;
+          setStatus(`👀 미리보기 완료! 아직 아무것도 안 바꿨어요.\n처리 예정 ${num(res.stats.todo)}개 → 실행을 누르면 ${num(Math.min(batchSize(), res.stats.todo))}개부터 처리해요.`);
+        }
+      } catch (e) {
+        setStatus('❌ ' + e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''));
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    // ---------- 실행 ----------
+    $('runBtn').onclick = async () => {
+      if (!planReady) return;
+      const n = batchSize();
+      const ok = confirm(
+        `미리보기대로 실행할까요?\n\n` +
+        `· 이번에 최대 ${num(n)}개 처리 (남은 건 다음에 이어서)\n` +
+        `· 원본은 그대로 두고, 백업 폴더에 새로 만들어요\n` +
+        `· 끝나면 원본 삭제 여부를 물어볼게요\n` +
+        `· 기록은 로그 파일로 남아요`
+      );
+      if (!ok) return;
+      try {
+        setJob(await api.startJob());
+        planReady = false;
+        await runBatch();
+      } catch (e) {
+        setStatus('❌ ' + cleanErr(e));
+      }
+    };
+    $('nextBtn').onclick = () => runBatch();
+
+    api.onProgress((p) => {
       $('bar').max = p.total;
       $('bar').value = p.done;
-      const percent = Math.floor((p.done / p.total) * 100);
+      const pct = Math.floor((p.done / p.total) * 100);
       $('progressText').textContent =
-        `${percent}%  |  ${p.done} / ${p.total}  |  ` +
-        `경과 ${fmt(p.elapsedSec)}  |  남은 시간 ${fmt(p.remainSec)}  |  ${p.name}`;
+        `${pct}%  |  ${num(p.done)} / ${num(p.total)}  |  완료 ${num(p.done - p.dup - p.fail)} · 중복 ${num(p.dup)} · 실패 ${num(p.fail)}  |  ` +
+        `경과 ${fmtTime(p.elapsedSec)}  |  남은 시간 ${fmtTime(p.remainSec)}  |  ${p.name}`;
     });
 
-    // 실행
-    $('runBtn').addEventListener('click', async () => {
-      if (!ready) return;
-
-      let msg = '미리보기대로 진행할까요?\n\n· ' + lastMove + '개 이동 (이름 겹치면 번호 붙임)\n';
-      if (lastTrash > 0) {
-        msg += '· ' + lastTrash + '개는 똑같은 파일이라 휴지통으로 이동 (복구 가능)\n';
-      }
-      msg += '· 기록은 로그 파일로 저장돼요';
-      if (!confirm(msg)) return;
-
-      $('runBtn').disabled = true;
-      $('previewBtn').disabled = true;
-      $('progressBox').style.display = 'block';
+    async function runBatch() {
+      setBusy(true, true);
       $('bar').value = 0;
       $('progressText').textContent = '⏳ 시작합니다...';
-
+      setStatus('⏳ 처리 중... (일시정지를 누르면 지금 파일까지만 하고 멈춰요)');
       try {
-        const r = await window.api.runPlan();
-        $('summary').textContent =
-          `🎉 완료! 이동 ${r.moved}개 / 🗑️ 휴지통 ${r.trashed}개 / 실패 ${r.failed}개 (로그: ${r.logPath})`;
-        $('months').innerHTML = '';
-        $('table').innerHTML = '';
-        ready = false;
+        const r = await api.runBatch(batchSize());
+        setJob(r.job);
+        const left = r.job ? r.job.stats.todo : 0;
+        setStatus(
+          `${r.paused ? '⏸ 일시정지했어요' : '🎉 이번 회차 끝!'}  완료 ${num(r.done)} · 중복 ${num(r.dup)} · 실패 ${num(r.fail)}` +
+          (left ? `\n⏳ 남은 작업 ${num(left)}개 → 위쪽 "다음 실행" 버튼으로 이어서 할 수 있어요 (프로그램을 꺼도 돼요)` : '') +
+          (r.fail ? `\n❌ 실패한 파일은 원본을 남겨 뒀어요. 이유는 로그에서 확인하세요.` : '')
+        );
+        renderTable(await api.getRows($('filter').value));
+        setBusy(false);
+        await askTrash();
+        await maybeFinish();
       } catch (e) {
-        $('summary').textContent = '❌ 오류: ' + e.message;
+        setStatus('❌ ' + cleanErr(e));
       } finally {
-        $('previewBtn').disabled = false;
+        setBusy(false);
       }
+    }
+
+    $('pauseBtn').onclick = async () => {
+      await api.pause();
+      $('pauseBtn').disabled = true;
+      $('pauseBtn').textContent = '⏸ 멈추는 중... (지금 파일까지)';
+    };
+
+    // ---------- 원본 휴지통 ----------
+    api.onTrashProgress((p) => {
+      $('bar').max = p.total;
+      $('bar').value = p.done;
+      $('progressText').textContent = `🗑 원본 휴지통으로 보내는 중... ${num(p.done)} / ${num(p.total)}`;
     });
 
-    // 로그 폴더 열기
-    $('logBtn').addEventListener('click', () => window.api.openLogs());
+    async function askTrash() {
+      const info = await api.trashInfo();
+      if (!info.count) return;
+      let msg =
+        `🗑 원본 정리\n\n변환·저장이 끝난 원본 ${num(info.count)}개 (${fmtBytes(info.bytes)})를 휴지통으로 보낼까요?\n\n` +
+        `· 결과 파일이 백업 폴더에 있는 것만 보내요\n· 실패한 파일은 남겨 둬요`;
+      if (info.warnings.length) msg += '\n\n⚠️ ' + info.warnings.join('\n⚠️ ');
+      if (!confirm(msg)) return;
 
-    // 결과 폴더 열기 (대상 폴더가 없으면 원본 폴더)
-    $('openBtn').addEventListener('click', async () => {
-      const target = dest || source;
-      if (!target) {
-        alert('먼저 폴더를 선택해주세요!');
-        return;
+      const before = $('status').textContent; // 이번 회차 결과는 남겨 두기
+      setBusy(true);
+      $('progressBox').style.display = 'block';
+      try {
+        const r = await api.trashOriginals();
+        setJob(r.job);
+        setStatus(before + `\n🗑 원본 ${num(r.ok)}개를 휴지통으로 보냈어요` + (r.fail ? ` (실패 ${num(r.fail)}개 — 로그 확인)` : ''));
+      } finally {
+        setBusy(false);
       }
-      const ok = await window.api.openFolder(target);
-      if (!ok) alert('폴더를 찾을 수 없어요');
-    });
+    }
+    $('trashBtn').onclick = async () => {
+      await askTrash();
+      await maybeFinish();
+    };
+
+    // 다 끝났으면 작업 정리
+    async function maybeFinish() {
+      if (job && job.stats.todo === 0 && job.deletable === 0) {
+        await api.closeJob('done');
+        setJob(null);
+        setStatus($('status').textContent + '\n✅ 모든 작업이 끝났어요!');
+      }
+    }
+
+    $('finishBtn').onclick = async () => {
+      if (job.deletable && !confirm('지우지 않은 원본이 있어요. 원본은 그대로 두고 작업을 끝낼까요?')) return;
+      await api.closeJob('done');
+      setJob(null);
+      setStatus('✅ 작업을 끝냈어요');
+    };
+    $('cancelBtn').onclick = async () => {
+      if (!confirm('남은 작업을 취소할까요?\n(이미 완료된 파일과 원본은 그대로 있어요)')) return;
+      await api.closeJob('cancel');
+      setJob(null);
+      setStatus('✖ 작업을 취소했어요');
+    };
+
+    // ---------- 기타 버튼 ----------
+    $('logBtn').onclick = () => api.openLogs();
+    $('openBtn').onclick = async () => {
+      if (!(await api.openFolder(state.backupRoot))) alert('백업 폴더를 먼저 골라 주세요');
+    };
+
+    function cleanErr(e) {
+      return String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+    }
+
+    // ---------- 시작 ----------
+    (async () => {
+      const s = await api.getState();
+      Object.assign(state, {
+        source: s.settings.source,
+        backupRoot: s.settings.backupRoot,
+        includeSub: s.settings.includeSub,
+        batchSize: s.settings.batchSize,
+      });
+      $('includeSub').checked = state.includeSub;
+      $('batchSize').value = state.batchSize;
+      renderPaths();
+      renderTools(s.tools);
+      setJob(s.job);
+      if (s.job) {
+        setStatus('📌 이전 작업을 불러왔어요. 위쪽 버튼으로 이어서 할 수 있어요.');
+        renderTable(await api.getRows('all'));
+      }
+    })();
   </script>
 </body>
 </html>
