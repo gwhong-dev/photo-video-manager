@@ -1,0 +1,23 @@
+{
+  "name": "photo-video-manager",
+  "version": "1.0.0",
+  "description": "사진/영상을 날짜별 폴더로 정리하는 Windows 데스크톱 프로그램 (Electron)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": [
+    "electron",
+    "photo",
+    "organizer"
+  ],
+  "author": "gwhong-dev",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "exifr": "^7.1.3"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0"
+  }
+}
