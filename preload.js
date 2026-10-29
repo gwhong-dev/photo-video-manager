@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('api', {
   pickTool: (name) => ipcRenderer.invoke('pick-tool', name),
   saveSettings: (patch) => ipcRenderer.invoke('save-settings', patch),
   selectFolder: (title, defaultPath) => ipcRenderer.invoke('select-folder', title, defaultPath),
+  checkFolders: (source, backupRoot) => ipcRenderer.invoke('check-folders', source, backupRoot),
 
   // 미리보기 → 실행
   makePlan: (opts) => ipcRenderer.invoke('make-plan', opts),

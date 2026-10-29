@@ -322,9 +322,18 @@
       planReady = false;
       $('runBtn').disabled = true;
     }
+    // 고르는 순간 폴더 조합 확인 → 안 되면 이유를 보여주고 고른 것을 취소
+    async function folderRejected(source, backupRoot) {
+      const v = await api.checkFolders(source, backupRoot);
+      if (v.ok) return false;
+      setStatus('⛔ ' + v.reason);
+      alert('⛔ ' + v.reason);
+      return true;
+    }
     $('srcBtn').onclick = async () => {
       const f = await api.selectFolder('가져올 폴더 선택', state.source);
       if (!f) return;
+      if (await folderRejected(f, state.backupRoot)) return;
       state.source = f;
       renderPaths();
       resetPlan();
@@ -333,6 +342,7 @@
     $('destBtn').onclick = async () => {
       const f = await api.selectFolder('백업 폴더 선택 (예: G:\\_홍경우사진백업정리)', state.backupRoot);
       if (!f) return;
+      if (await folderRejected(state.source, f)) return;
       state.backupRoot = f;
       renderPaths();
       resetPlan();

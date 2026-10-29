@@ -8,7 +8,8 @@ const fs = require('fs');
 
 const { ExifTool } = require('./lib/exiftool');
 const { detectTools } = require('./lib/tools');
-const { makePlan, keyOf, NO_DATE_DIR } = require('./lib/planner');
+const { makePlan, NO_DATE_DIR } = require('./lib/planner');
+const { validateFolders } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
 const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals } = require('./lib/cleaner');
 const { createLogger } = require('./lib/logger');
@@ -177,15 +178,19 @@ ipcMain.handle('save-settings', async (e, patch) => {
   return settings;
 });
 
+// 폴더를 고르는 순간 확인 (둘 다 골랐을 때만 판단)
+ipcMain.handle('check-folders', async (e, source, backupRoot) => {
+  if (!source || !backupRoot) return { ok: true, reason: null };
+  return validateFolders(source, backupRoot);
+});
+
 // 미리보기 (읽기만 함!)
 ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
   if (running) throw new Error('실행 중에는 미리보기를 할 수 없어요');
   if (!et) throw new Error('exiftool을 찾지 못했어요. 위쪽 도구 상태를 확인해 주세요.');
-  if (!source || !fs.existsSync(source)) throw new Error('가져올 폴더를 확인해 주세요');
-  if (!backupRoot || !fs.existsSync(backupRoot)) throw new Error('백업 폴더를 확인해 주세요');
-  if (keyOf(source) === keyOf(backupRoot)) {
-    throw new Error('백업 폴더 전체를 가져올 폴더로 고를 수는 없어요 (후가공 폴더 등을 건드릴 수 있어서)');
-  }
+  // 폴더 조합 확인 (같은 폴더, 백업 안쪽/상위, 후가공 폴더 → 거부). 화면에서도 고를 때 확인하지만 한 번 더
+  const v = validateFolders(source, backupRoot);
+  if (!v.ok) throw new Error(v.reason);
 
   lastPlan = await makePlan({ source, backupRoot, includeSub }, et, (msg) => send('plan-status', msg));
   return { stats: lastPlan.stats, ...rowsOf(lastPlan, 'all') };

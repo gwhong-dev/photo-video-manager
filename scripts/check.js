@@ -379,6 +379,62 @@ const ITEMS = [
         out.push(sub('12d 사용률 80% 넘으면 경고', s.ok && !!s.warning, s.warning || '경고 없음'));
       }
 
+      // 12g 가져올 폴더 고르기 규칙 (H2): 같은 폴더, 백업 안쪽, 백업을 포함하는 상위, 후가공 폴더, 다른 경로(연결)로 본 백업 → 거부
+      let paths = null;
+      try {
+        paths = require('../lib/paths');
+      } catch (e) {
+        // 아직 없음
+      }
+      if (!paths || !paths.validateFolders) {
+        out.push(missing('12g 가져올 폴더 고르기 규칙'));
+      } else {
+        const x = path.join(root, '12g');
+        const backup = path.join(x, 'backup');
+        const mk = (...p) => (fs.mkdirSync(path.join(x, ...p), { recursive: true }), path.join(x, ...p));
+        mk('backup', '2026');
+        mk('source');
+        mk('백업', '2025년도', 'sub');
+        const alias = path.join(x, 'alias');
+        fs.symlinkSync(path.join(backup, '2026'), alias, 'junction'); // 백업\2026을 다른 이름으로 보는 연결
+        const cases = [
+          ['평범한 옆 폴더 → 허용', path.join(x, 'source'), true],
+          ['백업 폴더 자신', backup, false],
+          ['백업 폴더 안쪽', path.join(backup, '2026'), false],
+          ['백업을 포함하는 상위 폴더', x, false],
+          ['후가공 폴더 2025년도', path.join(x, '백업', '2025년도'), false],
+          ['후가공 폴더의 하위', path.join(x, '백업', '2025년도', 'sub'), false],
+          ['연결(junction)로 본 백업 안쪽', alias, false],
+        ];
+        const wrong = cases.filter(([, src, expectOk]) => {
+          const r = paths.validateFolders(src, backup);
+          return r.ok !== expectOk || (!r.ok && !r.reason);
+        });
+        out.push(sub('12g 가져올 폴더 고르기 규칙', wrong.length === 0, wrong.map(([n]) => n).join(' / ') || `${cases.length}가지 모두 맞음`));
+      }
+
+      // 12h 같은 파일을 다른 경로로 볼 때 (H1): 자기 자신을 "중복"으로 보지 않고, 정리 대상에도 안 넣음
+      {
+        const p = env.full;
+        const alias = path.join(root, '12h-alias');
+        fs.mkdirSync(root, { recursive: true });
+        fs.symlinkSync(p.backupRoot, alias, 'junction'); // 백업 폴더를 다른 이름으로 보는 연결
+        const plan = await makePlan({ source: alias, backupRoot: p.backupRoot, includeSub: true }, env.et);
+        const selfDup = plan.items.filter((it) => it.status !== 'skip');
+        out.push(sub('12h 다른 경로로 본 같은 파일 → 이미 정리됨(skip)', selfDup.length === 0, selfDup.map((it) => `${path.basename(it.src)}: ${it.status} ${it.note || ''}`).slice(0, 3).join(' / ') || `${plan.items.length}개 모두 skip`));
+
+        // 정리 단계에서도 한 번 더 막기: 남길 파일이 원본과 같은 파일(다른 경로)이면 대상 아님
+        if (!cleaner || !cleaner.cleanTargets) {
+          out.push(missing('12h 남길 파일 = 원본(다른 경로) → 정리 대상 아님'));
+        } else {
+          const done = p.job.items.find((it) => it.status === 'done' && it.finalPath);
+          const viaAlias = path.join(alias, path.relative(p.backupRoot, done.finalPath));
+          const fake = { source: alias, backupRoot: p.backupRoot, items: [{ i: 0, src: viaAlias, status: 'dup', dupOf: done.finalPath, size: 1 }] };
+          const t = await cleaner.cleanTargets(fake);
+          out.push(sub('12h 남길 파일 = 원본(다른 경로) → 정리 대상 아님', t.length === 0, `대상 ${t.length}개`));
+        }
+      }
+
       // 12f 드라이브 종류를 모름 → 이동 (휴지통 안 씀)
       if (!cleaner || !cleaner.cleanOriginals) {
         out.push(missing('12f 드라이브 종류 모름 → 이동'));
