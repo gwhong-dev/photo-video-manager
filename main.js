@@ -10,8 +10,8 @@ const { ExifTool } = require('./lib/exiftool');
 const { detectTools } = require('./lib/tools');
 const { makePlan, keyOf, NO_DATE_DIR } = require('./lib/planner');
 const { JobStore, jobStats } = require('./lib/job');
-const { cleanCandidates, cleanTargets } = require('./lib/cleaner');
-const { createLogger, now } = require('./lib/logger');
+const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals } = require('./lib/cleaner');
+const { createLogger } = require('./lib/logger');
 const { writePlanLog, nextTodo, checkSpace, runBatch } = require('./lib/runner');
 
 // ---------- 상태 ----------
@@ -252,51 +252,25 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
 });
 
 // 원본 삭제 전 정보 (개수, 용량, 휴지통 경고)
+// 원본 정리 전 정보 (개수, 용량, 드라이브별 방법, 경고)
 ipcMain.handle('trash-info', async () => {
-  const list = job ? await cleanTargets(job) : [];
-  const bytes = list.reduce((a, it) => a + (it.size || 0), 0);
-  const warnings = [];
-
-  // 드라이브별로 휴지통 용량(보통 드라이브의 5% 정도)보다 큰지 확인
-  const byRoot = {};
-  for (const it of list) {
-    const root = path.parse(it.src).root;
-    byRoot[root] = (byRoot[root] || 0) + (it.size || 0);
-  }
-  for (const [root, b] of Object.entries(byRoot)) {
-    try {
-      const s = fs.statfsSync(root);
-      const total = s.blocks * s.bsize;
-      if (b > total * 0.05) warnings.push(`${root} 드라이브: 휴지통 용량보다 클 수 있어요 → 일부는 바로 영구 삭제될 수 있어요`);
-    } catch (e) {
-      // 확인 못 하면 넘어감
-    }
-  }
-  return { count: list.length, bytes, warnings };
+  const targets = job ? await cleanTargets(job) : [];
+  return cleanInfo(job, targets);
 });
 
-// 원본 휴지통으로 보내기
+// 원본 정리 (하드디스크 → 휴지통 / USB·SD·네트워크 → _정리완료원본으로 이동, 영구 삭제 없음)
 ipcMain.handle('trash-originals', async () => {
   if (running) throw new Error('실행 중에는 할 수 없어요');
-  const list = job ? await cleanTargets(job) : [];
-  const log = logger.newLog('trash',`# 원본 휴지통 / ${now()} / ${list.length}개\n# 시간\t상태\t원본\t남아 있는 결과 파일`);
-  let ok = 0;
-  let fail = 0;
-  for (let k = 0; k < list.length; k++) {
-    const it = list[k];
-    const keep = it.finalPath || it.dupOf || (it.dupOfItem != null ? job.items[it.dupOfItem].finalPath : '');
-    try {
-      await shell.trashItem(it.src);
-      store.mark(job, it.i, { trashed: true });
-      ok++;
-      log.write(`${now()}\t휴지통\t${it.src}\t${keep}`);
-    } catch (err) {
-      fail++;
-      log.write(`${now()}\t실패\t${it.src}\t${err.message}`);
-    }
-    if (k % 20 === 0 || k === list.length - 1) send('trash-progress', { done: k + 1, total: list.length });
-  }
-  return { ok, fail, logPath: log.path, job: jobInfo() };
+  const targets = job ? await cleanTargets(job) : [];
+  const r = await cleanOriginals({
+    job,
+    store,
+    targets,
+    logger,
+    trash: (p) => shell.trashItem(p),
+    onProgress: (p) => send('trash-progress', p),
+  });
+  return { ...r, job: jobInfo() };
 });
 
 // 작업 끝내기 / 취소

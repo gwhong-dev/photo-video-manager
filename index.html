@@ -113,7 +113,7 @@
     <div class="chips" id="bannerChips"></div>
     <div class="row" style="margin-top:10px">
       <button class="primary" id="nextBtn">▶ 이어서 실행</button>
-      <button id="trashBtn">🗑 원본 휴지통으로</button>
+      <button id="trashBtn">🧹 원본 정리</button>
       <button id="finishBtn">✔ 작업 끝내기</button>
       <button class="danger" id="cancelBtn">✖ 작업 취소</button>
     </div>
@@ -138,7 +138,7 @@
       <label>한 번에 <input type="number" id="batchSize" min="1" step="100"> 개씩 처리</label>
     </div>
     <div class="row muted" style="font-size:12px">
-      결과: 백업폴더\년\월\일\2025-03-28_200653_원본이름.jpg · 날짜 모르는 파일은 _날짜없음 · 원본은 끝난 뒤 물어보고 휴지통으로
+      결과: 백업폴더\년\월\일\2025-03-28_200653_원본이름.jpg · 날짜 모르는 파일은 _날짜없음 · 원본은 끝난 뒤 물어보고 정리 (휴지통 또는 _정리완료원본)
     </div>
   </div>
 
@@ -396,7 +396,7 @@
         `미리보기대로 실행할까요?\n\n` +
         `· 이번에 최대 ${num(n)}개 처리 (남은 건 다음에 이어서)\n` +
         `· 원본은 그대로 두고, 백업 폴더에 새로 만들어요\n` +
-        `· 끝나면 원본 삭제 여부를 물어볼게요\n` +
+        `· 끝나면 원본 정리 여부를 물어볼게요\n` +
         `· 기록은 로그 파일로 남아요`
       );
       if (!ok) return;
@@ -462,19 +462,22 @@
       $('pauseBtn').textContent = '⏸ 멈추는 중... (지금 파일까지)';
     };
 
-    // ---------- 원본 휴지통 ----------
+    // ---------- 원본 정리 (하드디스크 → 휴지통 / USB·SD·네트워크 → _정리완료원본으로 이동) ----------
     api.onTrashProgress((p) => {
       $('bar').max = p.total;
       $('bar').value = p.done;
-      $('progressText').textContent = `🗑 원본 휴지통으로 보내는 중... ${num(p.done)} / ${num(p.total)}`;
+      $('progressText').textContent = `🧹 원본 정리 중... ${num(p.done)} / ${num(p.total)}`;
     });
 
     async function askTrash() {
       const info = await api.trashInfo();
       if (!info.count) return;
+      const where = info.drives
+        .map((d) => `${d.root} (${d.label}) ${num(d.count)}개 → ${d.method === 'trash' ? '휴지통으로' : '가져올 폴더\\_정리완료원본 으로 이동'}`)
+        .join('\n');
       let msg =
-        `🗑 원본 정리\n\n변환·저장이 끝난 원본 ${num(info.count)}개 (${fmtBytes(info.bytes)})를 휴지통으로 보낼까요?\n\n` +
-        `· 결과 파일이 백업 폴더에 있는 것만 보내요\n· 실패한 파일은 남겨 둬요`;
+        `🧹 원본 정리\n\n변환·저장이 끝난 원본 ${num(info.count)}개 (${fmtBytes(info.bytes)})를 정리할까요?\n\n${where}\n\n` +
+        `· 결과 파일이 백업 폴더에 있는 것만 정리해요\n· 실패한 파일, 확인이 필요한 중복은 남겨 둬요\n· 영구 삭제는 하지 않아요`;
       if (info.warnings.length) msg += '\n\n⚠️ ' + info.warnings.join('\n⚠️ ');
       if (!confirm(msg)) return;
 
@@ -484,7 +487,11 @@
       try {
         const r = await api.trashOriginals();
         setJob(r.job);
-        setStatus(before + `\n🗑 원본 ${num(r.ok)}개를 휴지통으로 보냈어요` + (r.fail ? ` (실패 ${num(r.fail)}개 — 로그 확인)` : ''));
+        setStatus(
+          before +
+            `\n🧹 원본 정리: 휴지통 ${num(r.trashed)}개, _정리완료원본으로 이동 ${num(r.moved)}개` +
+            (r.fail ? ` (실패 ${num(r.fail)}개 — 로그 확인)` : '')
+        );
       } finally {
         setBusy(false);
       }
