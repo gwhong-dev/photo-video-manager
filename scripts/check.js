@@ -411,6 +411,9 @@ const ITEMS = [
           return r.ok !== expectOk || (!r.ok && !r.reason);
         });
         out.push(sub('12g 가져올 폴더 고르기 규칙', wrong.length === 0, wrong.map(([n]) => n).join(' / ') || `${cases.length}가지 모두 맞음`));
+        // 고르는 순간 확인: 저장된 백업 폴더가 없어도(USB 뺌) 가져올 폴더 선택은 막지 않음 (미리보기 때 다시 확인)
+        const pick = paths.validatePick ? paths.validatePick(path.join(x, 'source'), path.join(x, '없는-백업')) : { ok: false };
+        out.push(sub('12g 백업 폴더가 없어도 가져올 폴더는 고를 수 있음', pick.ok === true, pick.reason || ''));
       }
 
       // 12h 같은 파일을 다른 경로로 볼 때 (H1): 자기 자신을 "중복"으로 보지 않고, 정리 대상에도 안 넣음
@@ -448,6 +451,18 @@ const ITEMS = [
         });
         const movedOk = targets.every((it) => !fs.existsSync(it.src) && it.movedTo && fs.existsSync(it.movedTo));
         out.push(sub('12i 휴지통 실패 → _정리완료원본으로 이동', r.moved === 2 && r.trashed === 0 && movedOk, `휴지통 ${r.trashed}, 이동 ${r.moved}, 실패 ${r.fail}`));
+
+        // 휴지통이 "실패"라고 했는데 원본이 이미 사라졌다면 → 어디로 갔는지 모르니 이동하지 않고 실패로 남김
+        const c2 = makeCase('12i-gone');
+        const gone = c2.job.items[0];
+        const elsewhere = path.join(c2.dir, 'somewhere-else.jpg');
+        const r2 = await cleaner.cleanOriginals({
+          job: c2.job, store: c2.store, targets: [gone], logger: c2.logger,
+          trash: async (p) => { fs.renameSync(p, elsewhere); throw new Error('가짜: 옮겨 놓고 실패라고 함'); },
+          driveKindOf: async () => 'fixed',
+        });
+        const nothingMoved = !fs.existsSync(path.join(c2.source, '_정리완료원본'));
+        out.push(sub('12i 휴지통 실패 + 원본 사라짐 → 이동 안 하고 실패로 기록', r2.fail === 1 && r2.moved === 0 && nothingMoved && !gone.movedTo, `실패 ${r2.fail}, 이동 ${r2.moved}`));
       }
 
       // 12j 드라이브 종류 판단 (M1): 폴더에 연결된 USB도 USB로, 정리할 때마다 새로 확인
@@ -474,6 +489,13 @@ const ITEMS = [
         const k1 = await platform.createDriveKindOf({ fetchTables: fetcher(3) })('E:\\a.jpg');
         const k2 = await platform.createDriveKindOf({ fetchTables: fetcher(2) })('E:\\a.jpg');
         out.push(sub('12j 정리할 때마다 드라이브 종류를 새로 확인', k1 === 'fixed' && k2 === 'removable' && calls === 2, `${k1} → ${k2}, 읽은 횟수 ${calls}`));
+        // 진짜 PowerShell로 이 PC의 임시 폴더 드라이브를 판단 (명령이 고장 나면 'unknown'이 나와서 ❌)
+        if (process.platform !== 'win32') {
+          out.push(skip('12j 진짜 PowerShell 드라이브 판단', 'Windows 아님'));
+        } else {
+          const real = await platform.createDriveKindOf()(os.tmpdir());
+          out.push(sub('12j 진짜 PowerShell 드라이브 판단 (임시 폴더)', real !== 'unknown', `${os.tmpdir().slice(0, 3)} → ${real}`));
+        }
       }
 
       // 12k 결과 파일 확인 (M2): 비어 있거나 기록해 둔 지문과 다르면 정리 안 함
@@ -521,6 +543,44 @@ const ITEMS = [
         const dir = path.dirname(r1.finalPath);
         const mp4s = fs.readdirSync(dir).filter((n) => n.toLowerCase().endsWith('.mp4'));
         out.push(sub('12m 기록 직전에 꺼진 뒤 이어하기 → 중복 파일 안 만듦', it2.status === 'done' && it2.finalPath === r1.finalPath && mp4s.length === 1, `상태 ${it2.status}, mp4 ${mp4s.length}개 (${mp4s.join(', ')})`));
+      }
+      {
+        // "옮길 예정"만 적고 이름 바꾸기 전에 꺼짐 (결과 파일 없음) → 평소처럼 다시 만들어야 함
+        const p = await pipeline(path.join(root, '12m-norename'), env, { manual: false, run: false });
+        const it = p.job.items.find((x) => x.kind === 'mov2mp4');
+        it.pending = { dest: it.dest, resultHash: 'abc' };
+        const r = await processor.processItem(it, env.ctx);
+        out.push(sub('12m 예정만 기록, 이름 바꾸기 전에 꺼짐 → 다시 만듦', r.status === 'done' && r.finalPath === it.dest && fs.existsSync(it.dest), `${r.status} ${path.basename(r.finalPath || '')}`));
+      }
+      {
+        // 예정 기록의 지문과 그 자리에 있는 파일이 다름 (남의 파일) → "완료"로 착각하지 않고, 그 파일은 건드리지 않음
+        const p = await pipeline(path.join(root, '12m-mismatch'), env, { manual: false, run: false });
+        const it = p.job.items.find((x) => x.kind === 'mov2mp4');
+        fs.mkdirSync(path.dirname(it.dest), { recursive: true });
+        fs.writeFileSync(it.dest, 'FOREIGN');
+        it.pending = { dest: it.dest, resultHash: 'deadbeef' };
+        const r = await processor.processItem(it, env.ctx);
+        const untouched = fs.readFileSync(it.dest, 'utf8') === 'FOREIGN';
+        out.push(sub('12m 예정 기록과 지문이 다름 → 완료로 보지 않고 남의 파일 그대로', r.finalPath !== it.dest && untouched, `결과 ${path.basename(r.finalPath || '')}, 남의 파일 그대로: ${untouched}`));
+      }
+
+      // 12n 같은 파일인지 알 수 없을 때 (새 Medium) → "이미 정리됨"이 아니라 "⚠ 확인 필요", 주의할 것 목록에 나옴
+      {
+        const planner = require('../lib/planner');
+        const p = env.full;
+        // 이미 정리된 백업 폴더에 같은 이름의 "다른" 사진을 가져오는 상황 + 같은 파일인지 모른다고 답하는 가짜 함수
+        const src = path.join(root, '12n', 'source');
+        fs.mkdirSync(src, { recursive: true });
+        fs.copyFileSync(path.join(AUTO, 'other', 'IMG_0101.jpg'), path.join(src, '2026-10-28_134058_IMG_0101.jpg'));
+        const plan = await planner.makePlan({ source: src, backupRoot: p.backupRoot, includeSub: true }, env.et, () => {}, { sameFile: () => null });
+        const it = plan.items[0];
+        const label = planner.statusLabelOf ? planner.statusLabelOf(it) : '(statusLabelOf 없음)';
+        const issue = planner.isIssue ? planner.isIssue(it) : false;
+        out.push(sub('12n 같은 파일인지 모름 → ⚠ 확인 필요 (주의할 것 목록)', it.status === 'skip' && it.check === true && label.includes('확인 필요') && issue && plan.stats.unsure === 1, `${it.status}, "${label}", 주의 목록 ${issue}, 요약 ${plan.stats.unsure}`));
+        // 정리 대상에도 절대 안 들어감
+        if (cleaner && cleaner.cleanCandidates) {
+          out.push(sub('12n 확인 필요 파일은 정리 대상 아님', cleaner.cleanCandidates({ items: [it] }).length === 0));
+        }
       }
 
       // 12f 드라이브 종류를 모름 → 이동 (휴지통 안 씀)

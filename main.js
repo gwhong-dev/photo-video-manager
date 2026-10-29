@@ -8,10 +8,11 @@ const fs = require('fs');
 
 const { ExifTool } = require('./lib/exiftool');
 const { detectTools } = require('./lib/tools');
-const { makePlan, NO_DATE_DIR } = require('./lib/planner');
-const { validateFolders } = require('./lib/paths');
+const { makePlan, NO_DATE_DIR, statusLabelOf, isIssue } = require('./lib/planner');
+const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
 const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals } = require('./lib/cleaner');
+const { createDriveKindOf } = require('./lib/platform');
 const { createLogger } = require('./lib/logger');
 const { writePlanLog, nextTodo, checkSpace, runBatch } = require('./lib/runner');
 
@@ -58,12 +59,9 @@ async function refreshTools() {
 let logger = null;
 
 // ---------- 화면에 보여줄 표 만들기 ----------
-const STATUS_LABEL = { todo: '예정', done: '✅ 완료', dup: '⏭ 중복', fail: '❌ 실패', skip: '✔ 이미 정리됨' };
-
+// 상태 이름, "주의할 것" 판단은 lib/planner.js (점검에서도 같은 함수를 확인해요)
 function rowsOf(data, filter) {
   const items = data.items;
-  const isIssue = (it) =>
-    it.status === 'dup' || it.status === 'fail' || it.renamed || it.relDir === NO_DATE_DIR;
   const tests = {
     all: () => true,
     issue: isIssue,
@@ -79,7 +77,7 @@ function rowsOf(data, filter) {
   const rows = list.slice(0, 500).map((it) => {
     const shown = it.finalPath || it.dupOf || it.dest;
     return {
-      status: STATUS_LABEL[it.status] || it.status,
+      status: statusLabelOf(it),
       statusKey: it.status,
       src: path.relative(data.source, it.src) || path.basename(it.src),
       work: it.label,
@@ -179,10 +177,7 @@ ipcMain.handle('save-settings', async (e, patch) => {
 });
 
 // 폴더를 고르는 순간 확인 (둘 다 골랐을 때만 판단)
-ipcMain.handle('check-folders', async (e, source, backupRoot) => {
-  if (!source || !backupRoot) return { ok: true, reason: null };
-  return validateFolders(source, backupRoot);
-});
+ipcMain.handle('check-folders', async (e, source, backupRoot) => validatePick(source, backupRoot));
 
 // 미리보기 (읽기만 함!)
 ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
@@ -259,9 +254,12 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
 
 // 원본 삭제 전 정보 (개수, 용량, 휴지통 경고)
 // 원본 정리 전 정보 (개수, 용량, 드라이브별 방법, 경고)
+//   확인 창에서 쓴 드라이브 판단을 실제 정리에도 그대로 써요 (보여 준 방법과 실제 방법이 달라지지 않게)
+let cleanDriveKindOf = null;
 ipcMain.handle('trash-info', async () => {
+  cleanDriveKindOf = createDriveKindOf();
   const targets = job ? await cleanTargets(job) : [];
-  return cleanInfo(job, targets);
+  return cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf });
 });
 
 // 원본 정리 (하드디스크 → 휴지통 / USB·SD·네트워크 → _정리완료원본으로 이동, 영구 삭제 없음)
@@ -277,11 +275,13 @@ ipcMain.handle('trash-originals', async () => {
       targets,
       logger,
       trash: (p) => shell.trashItem(p),
+      driveKindOf: cleanDriveKindOf || createDriveKindOf(), // 확인 창과 같은 판단
       onProgress: (p) => send('trash-progress', p),
     });
     return { ...r, job: jobInfo() };
   } finally {
     running = false;
+    cleanDriveKindOf = null; // 다음 정리 때는 새로 확인
   }
 });
 
