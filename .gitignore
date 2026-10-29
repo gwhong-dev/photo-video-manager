@@ -13,3 +13,20 @@ desktop.ini
 
 # 외부 프로그램 (exiftool, ImageMagick, FFmpeg) — 용량이 커서 저장소에는 안 올려요
 tools/
+
+# 비밀 정보 (절대 올리면 안 돼요)
+.env
+.env.*
+*recovery-codes*
+
+# 예전 버전 복사본, 참고용 스크립트 (저장소에는 안 올려요)
+version/
+참고용 파워쉘/
+
+# 썸네일 캐시 (프로그램이 다시 만들 수 있어요)
+thumbs/
+.thumbs/
+*.thumbcache
+
+# Claude Code 개인 설정 (나만 쓰는 설정)
+.claude/settings.local.json
