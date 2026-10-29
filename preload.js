@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('api', {
   makePlan: (opts) => ipcRenderer.invoke('make-plan', opts),
   getRows: (filter) => ipcRenderer.invoke('get-rows', filter),
   startJob: () => ipcRenderer.invoke('start-job'),
+  spaceInfo: (batchSize) => ipcRenderer.invoke('space-info', batchSize),
   runBatch: (batchSize) => ipcRenderer.invoke('run-batch', batchSize),
   pause: () => ipcRenderer.invoke('pause'),
 

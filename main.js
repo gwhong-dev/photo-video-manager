@@ -11,7 +11,7 @@ const { detectTools } = require('./lib/tools');
 const { makePlan, keyOf, NO_DATE_DIR } = require('./lib/planner');
 const { JobStore, canTrash, jobStats } = require('./lib/job');
 const { createLogger, now } = require('./lib/logger');
-const { writePlanLog, runBatch } = require('./lib/runner');
+const { writePlanLog, nextTodo, checkSpace, runBatch } = require('./lib/runner');
 
 // ---------- 상태 ----------
 let win = null;
@@ -213,6 +213,12 @@ ipcMain.handle('start-job', async () => {
   return jobInfo();
 });
 
+// 실행 전 남은 공간 확인 (화면에서 실행 버튼 누르기 전에 물어봐요)
+ipcMain.handle('space-info', async (e, batchSize) => {
+  if (!job) return null;
+  return checkSpace(nextTodo(job, batchSize), job.backupRoot);
+});
+
 // 일시정지 (지금 파일까지만 하고 멈춤)
 ipcMain.handle('pause', async () => {
   pauseAsked = true;
@@ -225,7 +231,7 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
   if (running) throw new Error('이미 실행 중이에요');
 
   const n = Math.max(1, Number(batchSize) || 2000);
-  const todo = job.items.filter((it) => it.status === 'todo').slice(0, n);
+  const todo = nextTodo(job, n);
 
   // 필요한 도구가 있는지 먼저 확인
   if (todo.some((it) => it.kind === 'heic2jpg') && !tools.magick.ok) throw new Error('ImageMagick이 없어서 HEIC를 변환할 수 없어요');

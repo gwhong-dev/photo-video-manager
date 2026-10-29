@@ -420,6 +420,14 @@
     });
 
     async function runBatch() {
+      // 남은 공간 먼저 확인 (모자라면 시작 안 함, 80% 넘으면 한 번 더 물어봄)
+      const space = await api.spaceInfo(batchSize());
+      if (space && !space.ok) {
+        setStatus('⛔ ' + space.warning + '\n백업 드라이브 공간을 비우거나 한 번에 처리할 개수를 줄여 주세요.');
+        return;
+      }
+      if (space && space.warning && !confirm(`⚠️ ${space.warning}\n\n그래도 실행할까요?`)) return;
+
       setBusy(true, true);
       $('bar').value = 0;
       $('progressText').textContent = '⏳ 시작합니다...';
@@ -427,6 +435,10 @@
       try {
         const r = await api.runBatch(batchSize());
         setJob(r.job);
+        if (r.stopped) {
+          setStatus('⛔ ' + r.stopped);
+          return;
+        }
         const left = r.job ? r.job.stats.todo : 0;
         setStatus(
           `${r.paused ? '⏸ 일시정지했어요' : '🎉 이번 회차 끝!'}  완료 ${num(r.done)} · 중복 ${num(r.dup)} · 실패 ${num(r.fail)}` +
