@@ -33,6 +33,9 @@ const SAMPLES = [
     ],
   },
   { rel: 'noinfo.jpg', draw: ['xc:#F1EEE6'] },
+  // Windows가 복사할 때 붙이는 "(1)" — 이름은 다르지만 내용은 똑같은 파일
+  { rel: 'IMG_0104.jpg', draw: ['gradient:#F1EEE6-#55534E'], tags: ['-DateTimeOriginal=2026:10:28 13:42:00'] },
+  { rel: 'IMG_0104(1).jpg', copyOf: 'IMG_0104.jpg' },
 ];
 
 (async () => {

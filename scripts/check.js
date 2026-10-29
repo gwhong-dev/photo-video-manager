@@ -229,8 +229,18 @@ const ITEMS = [
     async run(env) {
       const p = env.full;
       const st = ['IMG_0101.jpg', 'dup/IMG_0101.jpg'].map((r) => (itemOf(p, r) || {}).status).sort();
+      // 이름만 다른 같은 파일 (Windows 복사본 "(1)") → 하나만 저장
+      const st2 = ['IMG_0104.jpg', 'IMG_0104(1).jpg'].map((r) => (itemOf(p, r) || {}).status).sort();
+      // 백업에 이미 있는 파일과 내용이 같은데 이름이 다름 → 중복
+      const src2 = path.join(env.tmp, 'dup-existing', 'source');
+      fs.mkdirSync(src2, { recursive: true });
+      fs.copyFileSync(path.join(AUTO, 'IMG_0101.jpg'), path.join(src2, '사본_IMG_0101.jpg'));
+      const plan2 = await makePlan({ source: src2, backupRoot: p.backupRoot, includeSub: true }, env.et);
+      const it2 = plan2.items[0];
       return [
         sub('같은 파일 2개 → 완료 1 + 중복 1', st.join(',') === 'done,dup', st.join(',')),
+        sub('이름만 다른 같은 파일 IMG_0104 / IMG_0104(1) → 완료 1 + 중복 1', st2.join(',') === 'done,dup', st2.join(',')),
+        sub('백업에 이미 있는 같은 내용(다른 이름) → 중복', it2.status === 'dup' && !!it2.dupOf && fs.existsSync(it2.dupOf), `${it2.status} ${it2.note || ''}`),
         expectPath(p, 'other/IMG_0101.jpg'),
       ];
     },
@@ -581,6 +591,18 @@ const ITEMS = [
         if (cleaner && cleaner.cleanCandidates) {
           out.push(sub('12n 확인 필요 파일은 정리 대상 아님', cleaner.cleanCandidates({ items: [it] }).length === 0));
         }
+      }
+
+      // 12o 원본 확인(지문 계산) 진행 상황을 하나씩 알려줌 → 화면에 "원본 확인 중… (n/전체)"
+      if (!cleaner || !cleaner.cleanTargets) {
+        out.push(missing('12o 원본 확인 진행 표시'));
+      } else {
+        const c = makeCase('12o');
+        const calls = [];
+        await cleaner.cleanTargets(c.job, { onProgress: (x) => calls.push(x) });
+        const total = cleaner.cleanCandidates(c.job).length;
+        const last = calls[calls.length - 1] || {};
+        out.push(sub('12o 원본 확인 진행 표시 (파일마다 n/전체)', calls.length === total && last.done === total && last.total === total, `알림 ${calls.length}번, 마지막 ${last.done}/${last.total} (후보 ${total})`));
       }
 
       // 12f 드라이브 종류를 모름 → 이동 (휴지통 안 씀)

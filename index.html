@@ -480,9 +480,31 @@
       $('progressText').textContent = `🧹 원본 정리 중... ${num(p.done)} / ${num(p.total)}`;
     });
 
+    // 원본 확인(지문 계산) 진행 표시
+    api.onCleanCheckProgress((p) => {
+      $('bar').max = p.total;
+      $('bar').value = p.done;
+      $('progressText').textContent = `🔍 원본 확인 중… (${num(p.done)}/${num(p.total)})`;
+    });
+
     async function askTrash() {
-      const info = await api.trashInfo();
-      if (!info.count) return;
+      // 확인하는 동안: 예전 문구 지우기, 버튼 막기, 진행 막대 보이기 (멈춘 것처럼 보이지 않게)
+      setStatus('🔍 원본 확인 중… 결과 파일이 멀쩡한지 하나씩 확인하고 있어요 (영상이 많으면 1분 넘게 걸려요)');
+      setBusy(true);
+      $('progressBox').style.display = 'block';
+      $('bar').value = 0;
+      $('progressText').textContent = '🔍 원본 확인 중…';
+      let info;
+      try {
+        info = await api.trashInfo();
+      } finally {
+        setBusy(false);
+      }
+      if (!info.count) {
+        setStatus('정리할 원본이 없어요 (결과 파일이 확인된 원본만 정리해요)');
+        return;
+      }
+      setStatus(`🔍 원본 확인 끝: 정리할 수 있는 원본 ${num(info.count)}개`);
       const where = info.drives
         .map((d) => `${d.root} (${d.label}) ${num(d.count)}개 → ${d.method === 'trash' ? '휴지통으로' : '가져올 폴더\\_정리완료원본 으로 이동'}`)
         .join('\n');
@@ -508,8 +530,12 @@
       }
     }
     $('trashBtn').onclick = async () => {
-      await askTrash();
-      await maybeFinish();
+      try {
+        await askTrash();
+        await maybeFinish();
+      } catch (e) {
+        setStatus('❌ ' + cleanErr(e)); // 오류가 나도 조용히 끝나지 않게 화면에 보여줘요
+      }
     };
 
     // 다 끝났으면 작업 정리

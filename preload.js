@@ -33,4 +33,5 @@ contextBridge.exposeInMainWorld('api', {
   onPlanStatus: (cb) => ipcRenderer.on('plan-status', (e, msg) => cb(msg)),
   onProgress: (cb) => ipcRenderer.on('progress', (e, data) => cb(data)),
   onTrashProgress: (cb) => ipcRenderer.on('trash-progress', (e, data) => cb(data)),
+  onCleanCheckProgress: (cb) => ipcRenderer.on('clean-check-progress', (e, data) => cb(data)),
 });

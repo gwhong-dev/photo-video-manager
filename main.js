@@ -255,11 +255,18 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
 // 원본 삭제 전 정보 (개수, 용량, 휴지통 경고)
 // 원본 정리 전 정보 (개수, 용량, 드라이브별 방법, 경고)
 //   확인 창에서 쓴 드라이브 판단을 실제 정리에도 그대로 써요 (보여 준 방법과 실제 방법이 달라지지 않게)
+//   원본 확인(지문 계산)은 1분 넘게 걸릴 수 있어요 → 진행 상황을 화면에 보내고, 그동안은 "실행 중"으로 막아요 (여러 번 눌러도 겹치지 않게)
 let cleanDriveKindOf = null;
 ipcMain.handle('trash-info', async () => {
-  cleanDriveKindOf = createDriveKindOf();
-  const targets = job ? await cleanTargets(job) : [];
-  return cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf });
+  if (running) throw new Error('다른 작업이 끝난 뒤에 해 주세요');
+  running = true;
+  try {
+    cleanDriveKindOf = createDriveKindOf();
+    const targets = job ? await cleanTargets(job, { onProgress: (p) => send('clean-check-progress', p) }) : [];
+    return await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf });
+  } finally {
+    running = false;
+  }
 });
 
 // 원본 정리 (하드디스크 → 휴지통 / USB·SD·네트워크 → _정리완료원본으로 이동, 영구 삭제 없음)
