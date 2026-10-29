@@ -205,6 +205,7 @@ ipcMain.handle('get-rows', async (e, filter) => {
 
 // 미리보기 → 작업 목록으로 저장 (실행 시작)
 ipcMain.handle('start-job', async () => {
+  if (running) throw new Error('실행 중이거나 원본 정리 중에는 새 작업을 시작할 수 없어요');
   if (!lastPlan) throw new Error('먼저 미리보기를 해 주세요');
   if (store.exists()) store.close('replaced'); // 이전 작업은 보관
   job = store.create(lastPlan);
@@ -266,16 +267,22 @@ ipcMain.handle('trash-info', async () => {
 // 원본 정리 (하드디스크 → 휴지통 / USB·SD·네트워크 → _정리완료원본으로 이동, 영구 삭제 없음)
 ipcMain.handle('trash-originals', async () => {
   if (running) throw new Error('실행 중에는 할 수 없어요');
-  const targets = job ? await cleanTargets(job) : [];
-  const r = await cleanOriginals({
-    job,
-    store,
-    targets,
-    logger,
-    trash: (p) => shell.trashItem(p),
-    onProgress: (p) => send('trash-progress', p),
-  });
-  return { ...r, job: jobInfo() };
+  // 정리하는 동안에는 "실행 중"으로 표시 → 미리보기·새 작업·작업 끝내기를 막아요 (기록이 섞이지 않게)
+  running = true;
+  try {
+    const targets = job ? await cleanTargets(job) : [];
+    const r = await cleanOriginals({
+      job,
+      store,
+      targets,
+      logger,
+      trash: (p) => shell.trashItem(p),
+      onProgress: (p) => send('trash-progress', p),
+    });
+    return { ...r, job: jobInfo() };
+  } finally {
+    running = false;
+  }
 });
 
 // 작업 끝내기 / 취소
@@ -300,7 +307,21 @@ ipcMain.handle('open-folder', async (e, p) => {
 });
 
 // ---------- 시작 / 종료 ----------
+// 프로그램은 하나만 켜지게 (두 개가 같은 작업 기록을 동시에 건드리면 안 돼서요)
+//   이미 켜져 있으면 → 새로 켠 쪽은 바로 끄고, 원래 창을 앞으로 보여줘요
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!win || win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  });
+}
+
 app.whenReady().then(() => {
+  if (!gotLock) return;
   settings = loadSettings();
   logger = createLogger(logDir());
   store = new JobStore(path.join(userDir(), 'jobs'));
