@@ -1,0 +1,500 @@
+// 파일 위치: scripts/check.js
+// 역할: 자동 점검 (npm run check) — docs/점검-푸시-절차.md 의 12개 항목
+//
+// ⚠️ 샘플(test/samples)은 절대 직접 쓰지 않아요.
+//    임시 폴더(%TEMP%\pvm-check-시각)에 복사한 뒤 그 복사본으로만 실행해요.
+//    휴지통·드라이브 종류·남은 공간은 "가짜 함수"로 바꿔 끼워서 시험해요 → 진짜 휴지통은 안 건드림.
+//
+// 결과: ✅ 통과 / ❌ 실패 / ⏭ 건너뜀 (❌가 하나라도 있으면 종료 코드 1)
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
+
+const { detectTools, runCmd } = require('../lib/tools');
+const { ExifTool } = require('../lib/exiftool');
+const { makePlan } = require('../lib/planner');
+const { JobStore } = require('../lib/job');
+const { createLogger, stamp } = require('../lib/logger');
+const runner = require('../lib/runner');
+const { launchCheck } = require('./launch-check');
+
+const APP = path.join(__dirname, '..');
+const SAMPLES = path.join(APP, 'test', 'samples');
+const AUTO = path.join(SAMPLES, 'auto');
+const MANUAL = path.join(SAMPLES, 'manual');
+
+// 자동 샘플의 기대 결과 (백업 폴더 기준)
+const EXPECT = {
+  'IMG_0101.jpg': '2026/10/28/2026-10-28_134058_IMG_0101.jpg', // dup/IMG_0101.jpg 와 둘 중 하나가 이 자리
+  'other/IMG_0101.jpg': '2026/10/28/2026-10-28_134058_IMG_0101_1.jpg',
+  '여행 사진/2026-10-28_13-41-05_여행.jpg': '2026/10/28/2026-10-28_134105_여행.jpg',
+  'KakaoTalk_20261028_210941.jpg': '2026/10/28/2026-10-28_210941_KakaoTalk_20261028_210941.jpg',
+  'IMG_0102.PNG': '2026/10/27/2026-10-27_091500_IMG_0102.png',
+  'IMG_0103.MOV': '2026/10/28/2026-10-28_134113_IMG_0103.mp4',
+  'noinfo.jpg': '_날짜없음/noinfo.jpg',
+};
+
+// ---------- 도우미 ----------
+const slash = (p) => p.split(path.sep).join('/');
+const sub = (label, ok, detail = '') => ({ label, status: ok ? 'ok' : 'fail', detail });
+const skip = (label, detail) => ({ label, status: 'skip', detail });
+
+function sha1(p) {
+  return crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex');
+}
+function listFiles(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((e) => e.isFile())
+    .map((e) => path.join(e.parentPath || e.path, e.name));
+}
+function hashAll(dir) {
+  const m = {};
+  for (const f of listFiles(dir)) m[slash(path.relative(dir, f))] = sha1(f);
+  return m;
+}
+function hasManual() {
+  return listFiles(MANUAL).length > 0;
+}
+
+// 샘플을 임시 폴더로 복사 (auto는 source 바로 아래, manual은 source\manual)
+function copySamples(root, { manual = true } = {}) {
+  const source = path.join(root, 'source');
+  fs.cpSync(AUTO, source, { recursive: true, preserveTimestamps: true });
+  if (manual && hasManual()) fs.cpSync(MANUAL, path.join(source, 'manual'), { recursive: true, preserveTimestamps: true });
+  return source;
+}
+
+// 미리보기 → 작업 저장 → 실행 (진짜 프로그램과 같은 순서)
+async function pipeline(root, env, { batchSize = 100000, manual = true, run = true, statfs } = {}) {
+  const source = copySamples(root, { manual });
+  const backupRoot = path.join(root, 'backup');
+  fs.mkdirSync(backupRoot, { recursive: true });
+  const logger = createLogger(path.join(root, 'logs'));
+  const plan = await makePlan({ source, backupRoot, includeSub: true }, env.et);
+  const store = new JobStore(path.join(root, 'jobs'));
+  const job = store.create(plan);
+  runner.writePlanLog(job, logger);
+  const result = run ? await runner.runBatch({ job, store, batchSize, ctx: env.ctx, logger, statfs }) : null;
+  return { root, source, backupRoot, logger, store, job, result };
+}
+
+// 원본 상대 경로 → 그 파일의 item
+function itemOf(p, rel) {
+  return p.job.items.find((it) => slash(path.relative(p.source, it.src)) === rel);
+}
+// item의 결과 파일 (백업 폴더 기준 상대 경로)
+function resultOf(p, it) {
+  return it && it.finalPath ? slash(path.relative(p.backupRoot, it.finalPath)) : null;
+}
+function expectPath(p, rel) {
+  const it = itemOf(p, rel);
+  const got = resultOf(p, it);
+  return sub(rel, got === EXPECT[rel], got === EXPECT[rel] ? got : `기대 ${EXPECT[rel]} / 실제 ${got || (it ? it.status + ' ' + (it.note || '') : '없음')}`);
+}
+
+// ---------- 점검 항목 ----------
+const ITEMS = [
+  {
+    no: 1,
+    name: '앱 실행',
+    async run() {
+      const r = await launchCheck(APP);
+      return [
+        sub('창이 뜨고 정상 종료', r.exitCode === 0 && r.title === '사진/영상 관리 프로그램', `제목 "${r.title}", 종료 코드 ${r.exitCode}`),
+        sub('화면 오류 없음', r.errors.length === 0, r.errors.join(' / ')),
+        sub('도구 ✅ 3개', ['✅ exiftool', '✅ ImageMagick', '✅ FFmpeg'].every((t) => r.text.includes(t))),
+      ];
+    },
+  },
+  {
+    no: 2,
+    name: '외부 도구',
+    async run(env) {
+      const t = env.tools;
+      const out = ['exiftool', 'magick', 'ffmpeg', 'ffprobe'].map((n) => sub(n, t[n].ok, t[n].version || '찾지 못함'));
+      if (t.magick.ok) {
+        const r = await runCmd(t.magick.path, ['-list', 'format']);
+        out.push(sub('HEIC 읽기', /^\s*HEIC\s+HEIC\s+r/m.test(r.stdout)));
+      }
+      return out;
+    },
+  },
+  {
+    no: 3,
+    name: '샘플 정리',
+    async run(env) {
+      const p = env.full;
+      const fails = p.job.items.filter((it) => it.status === 'fail');
+      const after = hashAll(SAMPLES);
+      const same = JSON.stringify(after) === JSON.stringify(env.samplesBefore);
+      return [
+        sub(`전체 ${p.job.items.length}개 처리, 실패 0개`, fails.length === 0, fails.map((it) => `${path.basename(it.src)}: ${it.note}`).join(' / ')),
+        sub('test/samples 원본 그대로', same),
+      ];
+    },
+  },
+  {
+    no: 4,
+    name: '폴더 구조',
+    async run(env) {
+      const p = env.full;
+      const bad = p.job.items
+        .map((it) => resultOf(p, it))
+        .filter((r) => r && !/^(\d{4}\/\d{2}\/\d{2}|_날짜없음)\/[^/]+$/.test(r));
+      const out = [sub('모든 결과가 YYYY/MM/DD 또는 _날짜없음 바로 아래', bad.length === 0, bad.join(' / '))];
+      for (const rel of ['여행 사진/2026-10-28_13-41-05_여행.jpg', 'IMG_0102.PNG', 'KakaoTalk_20261028_210941.jpg']) {
+        const got = resultOf(p, itemOf(p, rel));
+        out.push(sub(rel, got && path.posix.dirname(got) === path.posix.dirname(EXPECT[rel]), got || '결과 없음'));
+      }
+      return out;
+    },
+  },
+  {
+    no: 5,
+    name: '파일 이름',
+    async run(env) {
+      const p = env.full;
+      const pair = ['IMG_0101.jpg', 'dup/IMG_0101.jpg'].map((r) => resultOf(p, itemOf(p, r)));
+      return [
+        sub('IMG_0101 (둘 중 하나)', pair.includes(EXPECT['IMG_0101.jpg']), pair.join(' / ')),
+        expectPath(p, '여행 사진/2026-10-28_13-41-05_여행.jpg'),
+        expectPath(p, 'KakaoTalk_20261028_210941.jpg'),
+        expectPath(p, 'IMG_0102.PNG'),
+      ];
+    },
+  },
+  {
+    no: 6,
+    name: '영상 날짜',
+    async run(env) {
+      return [expectPath(env.full, 'IMG_0103.MOV')];
+    },
+  },
+  {
+    no: 7,
+    name: '변환',
+    async run(env) {
+      const p = env.full;
+      const out = [];
+      // MOV → MP4
+      const mov = itemOf(p, 'IMG_0103.MOV');
+      if (!mov || !mov.finalPath) {
+        out.push(sub('MOV → MP4', false, '결과 없음'));
+      } else {
+        const codec = async (f) => (await runCmd(env.tools.ffprobe.path, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', f])).stdout.trim();
+        const [c1, c2] = [await codec(mov.src), await codec(mov.finalPath)];
+        out.push(sub('MP4 영상 다시 압축 안 함', c1 && c1 === c2, `${c1} → ${c2}`));
+        const [m] = await env.et.read([mov.finalPath], ['XMP-dc:Subject', 'Keys:CreationDate']);
+        const subj = [].concat(m.Subject || []).join(', ');
+        out.push(sub('MP4에 XMP 태그(dc:subject)', subj === '비디오, 수원시', subj || '없음'));
+        out.push(sub('MP4에 Keys:CreationDate', !!m.CreationDate, m.CreationDate || '없음'));
+      }
+      // HEIC → JPG (수동 샘플)
+      const heics = p.job.items.filter((it) => it.kind === 'heic2jpg');
+      if (!heics.length) {
+        out.push(skip('HEIC → JPG', '수동 샘플 없음'));
+      } else {
+        for (const it of heics) {
+          const name = path.basename(it.src);
+          if (!it.finalPath || !fs.existsSync(it.finalPath)) {
+            out.push(sub(`HEIC → JPG: ${name}`, false, `결과 없음 (${it.status} ${it.note || ''})`));
+            continue;
+          }
+          const [src] = await env.et.read([it.src], ['DateTimeOriginal']);
+          const [dst] = await env.et.read([it.finalPath], ['Orientation#', 'DateTimeOriginal']);
+          out.push(sub(`HEIC → JPG: ${name}`, dst.Orientation === 1 && dst.DateTimeOriginal === src.DateTimeOriginal, `방향 ${dst.Orientation}, 날짜 ${dst.DateTimeOriginal}`));
+        }
+      }
+      // 라이브 포토 (같은 이름의 HEIC + MOV)
+      const base = (it) => path.join(path.dirname(it.src), path.basename(it.src, path.extname(it.src))).toLowerCase();
+      const pairs = heics.filter((h) => p.job.items.some((v) => v.kind === 'mov2mp4' && base(v) === base(h)));
+      if (!pairs.length) {
+        out.push(skip('라이브 포토 (HEIC + MOV)', '수동 샘플 없음'));
+      } else {
+        for (const h of pairs) {
+          const v = p.job.items.find((x) => x.kind === 'mov2mp4' && base(x) === base(h));
+          const ok = [h, v].every((x) => x.finalPath && fs.existsSync(x.finalPath));
+          out.push(sub(`라이브 포토: ${path.basename(base(h))}`, ok, [h, v].map((x) => resultOf(p, x) || `${x.status} ${x.note || ''}`).join(' + ')));
+        }
+      }
+      return out;
+    },
+  },
+  {
+    no: 8,
+    name: '중복',
+    async run(env) {
+      const p = env.full;
+      const st = ['IMG_0101.jpg', 'dup/IMG_0101.jpg'].map((r) => (itemOf(p, r) || {}).status).sort();
+      return [
+        sub('같은 파일 2개 → 완료 1 + 중복 1', st.join(',') === 'done,dup', st.join(',')),
+        expectPath(p, 'other/IMG_0101.jpg'),
+      ];
+    },
+  },
+  {
+    no: 9,
+    name: '날짜 없음',
+    async run(env) {
+      return [expectPath(env.full, 'noinfo.jpg')];
+    },
+  },
+  {
+    no: 10,
+    name: '이어하기',
+    async run(env) {
+      const root = path.join(env.tmp, 'resume');
+      const p = await pipeline(root, env, { batchSize: 3, manual: false });
+      const first = p.result.handled;
+      // 프로그램을 껐다 켠 것처럼: 저장된 작업을 디스크에서 다시 불러오기
+      const store2 = new JobStore(path.join(root, 'jobs'));
+      const job2 = store2.load();
+      const leftBefore = job2.items.filter((it) => it.status === 'todo').length;
+      await runner.runBatch({ job: job2, store: store2, batchSize: 100000, ctx: env.ctx, logger: p.logger });
+      const leftAfter = job2.items.filter((it) => it.status === 'todo').length;
+      // run 로그에서 파일마다 몇 번 처리됐는지 세기
+      const counts = {};
+      for (const f of listFiles(path.join(root, 'logs')).filter((f) => path.basename(f).startsWith('run_'))) {
+        for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
+          const cols = line.split('\t');
+          if (['완료', '중복', '실패'].includes(cols[1])) counts[cols[2]] = (counts[cols[2]] || 0) + 1;
+        }
+      }
+      const twice = Object.entries(counts).filter(([, n]) => n > 1).map(([f]) => path.basename(f));
+      const total = p.job.stats.todo; // 미리보기 때 정한 처리 예정 개수 (중복으로 정해진 건 빠짐)
+      return [
+        sub('1회차 3개만 처리', first === 3, `${first}개`),
+        sub('다시 불러온 뒤 남은 것만 처리', leftBefore === total - 3 && leftAfter === 0, `남은 것 ${leftBefore} → ${leftAfter}`),
+        sub('같은 파일을 두 번 처리 안 함', twice.length === 0 && Object.keys(counts).length === total, twice.join(' / ') || `${Object.keys(counts).length}개 한 번씩`),
+      ];
+    },
+  },
+  {
+    no: 11,
+    name: '로그',
+    async run(env) {
+      const names = listFiles(path.join(env.full.root, 'logs')).map((f) => path.basename(f));
+      return [
+        sub('plan 로그', names.some((n) => /^plan_.*\.txt$/.test(n)), names.join(', ')),
+        sub('run 로그', names.some((n) => /^run_.*\.txt$/.test(n))),
+      ];
+    },
+  },
+  {
+    no: 12,
+    name: '안전',
+    async run(env) {
+      let cleaner = null;
+      try {
+        cleaner = require('../lib/cleaner');
+      } catch (e) {
+        // 아직 없음
+      }
+      const out = [];
+      const root = path.join(env.tmp, 'safety');
+      const missing = (fn) => sub(fn, false, '아직 없음');
+
+      // 원본 정리 시험용 작은 작업 만들기 (가짜 원본 + 결과 파일)
+      const makeCase = (name) => {
+        const dir = path.join(root, name);
+        const source = path.join(dir, 'source');
+        const backup = path.join(dir, 'backup');
+        fs.mkdirSync(path.join(source, 'sub'), { recursive: true });
+        fs.mkdirSync(backup, { recursive: true });
+        const w = (p, s) => (fs.writeFileSync(p, s), p);
+        const items = [
+          { i: 0, src: w(path.join(source, 'sub', 'a.jpg'), 'A'), status: 'done', finalPath: w(path.join(backup, 'a.jpg'), 'A') },
+          { i: 1, src: w(path.join(source, 'b.jpg'), 'B'), status: 'dup', dupOf: w(path.join(backup, 'b.jpg'), 'B') }, // 같은 내용 → 대상
+          { i: 2, src: w(path.join(source, 'c.jpg'), 'C'), status: 'dup', check: true, dupOf: w(path.join(backup, 'c.jpg'), 'C') }, // 확인 필요 → 제외
+          { i: 3, src: w(path.join(source, 'd.heic'), 'D-heic'), status: 'dup', dupOf: w(path.join(backup, 'd.jpg'), 'D-jpg') }, // 변환 중복 → 제외
+          { i: 4, src: w(path.join(source, 'e.jpg'), 'E'), status: 'dup', dupOf: path.join(backup, 'e.jpg') }, // 남길 파일 없음 → 제외
+        ];
+        const job = { source, backupRoot: backup, items };
+        const store = { mark: (j, i, patch) => Object.assign(j.items[i], patch) }; // 가짜 저장소
+        return { dir, source, backup, job, store, logger: createLogger(path.join(dir, 'logs')) };
+      };
+
+      // 12a 휴지통 없는 드라이브 → 이동 (같은 이름이 이미 있으면 _1)
+      if (!cleaner || !cleaner.cleanOriginals) {
+        out.push(missing('12a 휴지통 없는 드라이브 → _정리완료원본으로 이동'));
+      } else {
+        const c = makeCase('12a');
+        const already = path.join(c.source, '_정리완료원본', 'sub', 'a.jpg');
+        fs.mkdirSync(path.dirname(already), { recursive: true });
+        fs.writeFileSync(already, 'OLD');
+        const trashed = [];
+        const targets = [c.job.items[0], c.job.items[1]];
+        const r = await cleaner.cleanOriginals({ job: c.job, store: c.store, targets, logger: c.logger, trash: async (p) => trashed.push(p), driveKindOf: async () => 'removable' });
+        const moved = [path.join(c.source, '_정리완료원본', 'sub', 'a_1.jpg'), path.join(c.source, '_정리완료원본', 'b.jpg')];
+        const ok =
+          trashed.length === 0 &&
+          moved.every((m) => fs.existsSync(m)) &&
+          !fs.existsSync(targets[0].src) &&
+          fs.readFileSync(already, 'utf8') === 'OLD' &&
+          r.moved === 2;
+        out.push(sub('12a 휴지통 없는 드라이브 → _정리완료원본으로 이동', ok, `휴지통 ${trashed.length}번, 이동 ${r.moved}개`));
+        const logs = listFiles(path.join(c.dir, 'logs')).map((f) => path.basename(f));
+        out.push(sub('12a 정리 로그 이름 clean_', logs.some((n) => /^clean_.*\.txt$/.test(n)), logs.join(', ')));
+
+        // 12e 다시 미리보기 → _정리완료원본 안의 파일은 안 읽음
+        const plan = await makePlan({ source: c.source, backupRoot: c.backup, includeSub: true }, env.et);
+        const inside = plan.items.filter((it) => slash(it.src).includes('/_정리완료원본/'));
+        out.push(sub('12e 다시 가져오기 때 _정리완료원본 건너뜀', inside.length === 0, `${inside.length}개 읽음`));
+      }
+
+      // 12b 휴지통 있는 드라이브(고정 디스크) → 휴지통 함수 호출
+      if (!cleaner || !cleaner.cleanOriginals) {
+        out.push(missing('12b 고정 디스크 → 휴지통'));
+      } else {
+        const c = makeCase('12b');
+        const trashed = [];
+        const targets = [c.job.items[0], c.job.items[1]];
+        const r = await cleaner.cleanOriginals({ job: c.job, store: c.store, targets, logger: c.logger, trash: async (p) => trashed.push(p), driveKindOf: async () => 'fixed' });
+        out.push(sub('12b 고정 디스크 → 휴지통', trashed.length === 2 && r.trashed === 2 && r.moved === 0, `휴지통 ${trashed.length}번`));
+      }
+
+      // 12c 정리 대상: 같은 해시 파일이 있는 중복만
+      if (!cleaner || !cleaner.cleanTargets) {
+        out.push(missing('12c 중복은 같은 해시 파일이 있을 때만 정리 대상'));
+      } else {
+        const c = makeCase('12c');
+        const t = (await cleaner.cleanTargets(c.job)).map((it) => it.i).sort();
+        out.push(sub('12c 중복은 같은 해시 파일이 있을 때만 정리 대상', t.join(',') === '0,1', `대상 ${t.join(',') || '없음'} (기대 0,1)`));
+      }
+
+      // 12d 남은 공간 부족 → 실행 안 함 / 80% 넘으면 경고
+      if (!runner.checkSpace) {
+        out.push(missing('12d 공간 부족이면 실행 중단'));
+      } else {
+        const tiny = () => ({ bsize: 1, blocks: 1e12, bavail: 10, bfree: 10 });
+        const p = await pipeline(path.join(root, '12d'), env, { manual: false, run: false });
+        const r = await runner.runBatch({ job: p.job, store: p.store, batchSize: 100000, ctx: env.ctx, logger: p.logger, statfs: tiny });
+        const untouched = p.job.items.every((it) => it.status !== 'done');
+        out.push(sub('12d 공간 부족이면 실행 중단', r.handled === 0 && !!r.stopped && untouched, `처리 ${r.handled}개, ${r.stopped || '멈추지 않음'}`));
+        const busy = () => ({ bsize: 1, blocks: 1e12, bavail: 1e11, bfree: 1e11 }); // 90% 사용 중
+        const s = runner.checkSpace(p.job.items, p.backupRoot, busy);
+        out.push(sub('12d 사용률 80% 넘으면 경고', s.ok && !!s.warning, s.warning || '경고 없음'));
+      }
+
+      // 12f 드라이브 종류를 모름 → 이동 (휴지통 안 씀)
+      if (!cleaner || !cleaner.cleanOriginals) {
+        out.push(missing('12f 드라이브 종류 모름 → 이동'));
+      } else {
+        const c = makeCase('12f');
+        const trashed = [];
+        const r = await cleaner.cleanOriginals({ job: c.job, store: c.store, targets: [c.job.items[0]], logger: c.logger, trash: async (p) => trashed.push(p), driveKindOf: async () => 'unknown' });
+        out.push(sub('12f 드라이브 종류 모름 → 이동', trashed.length === 0 && r.moved === 1, `휴지통 ${trashed.length}번, 이동 ${r.moved}개`));
+      }
+      return out;
+    },
+  },
+];
+
+// ---------- 점검 임시 폴더 정리 ----------
+// 규칙 (docs/점검-푸시-절차.md): 점검이 만든 %TEMP%\pvm-check-... 폴더는 복사본이라 영구 삭제해도 돼요.
+//   통과 → 이번 폴더 포함 전부 지움
+//   실패 → 원인을 볼 수 있게 이번 폴더 1개만 남기고 나머지 지움
+const TEMP_PREFIX = 'pvm-check-';
+const sameDir = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+
+// 지워도 되는 폴더인지 코드로 확인 (%TEMP% 바로 안 + 이름이 pvm-check- + 링크 아닌 진짜 폴더)
+function isCheckTempDir(dir) {
+  const full = path.resolve(dir);
+  if (!sameDir(path.dirname(full), os.tmpdir())) return false;
+  if (!path.basename(full).startsWith(TEMP_PREFIX)) return false;
+  try {
+    const st = fs.lstatSync(full);
+    return st.isDirectory() && !st.isSymbolicLink();
+  } catch (e) {
+    return false;
+  }
+}
+
+function cleanupTempDirs(current, failed) {
+  const removed = [];
+  for (const name of fs.readdirSync(os.tmpdir())) {
+    const dir = path.join(os.tmpdir(), name);
+    if (!isCheckTempDir(dir)) continue;
+    if (failed && sameDir(dir, current)) continue; // 실패한 이번 폴더는 남김
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      removed.push(name);
+    } catch (e) {
+      console.log(`  ⚠️ 임시 폴더를 못 지웠어요: ${dir} (${e.message})`);
+    }
+  }
+  return removed;
+}
+
+// ---------- 수동 샘플 처리 결과 표 (참고용) ----------
+function manualReport(p) {
+  const rows = p.job.items.filter((it) => slash(path.relative(p.source, it.src)).startsWith('manual/'));
+  if (!rows.length) return '';
+  const lines = ['', '📷 수동 샘플 처리 결과', '| 원본 | 작업 | 상태 | 결과 | 메모 |', '|---|---|---|---|---|'];
+  for (const it of rows) {
+    lines.push(`| ${path.basename(it.src)} | ${it.label} | ${it.status} | ${resultOf(p, it) || '-'} | ${it.note || ''} |`);
+  }
+  return lines.join('\n');
+}
+
+// ---------- 실행 ----------
+(async () => {
+  const ICON = { ok: '✅', fail: '❌', skip: '⏭' };
+  const tmp = path.join(os.tmpdir(), `pvm-check-${stamp()}`);
+  fs.mkdirSync(tmp, { recursive: true });
+  console.log(`🧪 점검 시작 (임시 폴더: ${tmp})`);
+
+  const tools = await detectTools({}, APP);
+  if (!tools.exiftool.ok) {
+    console.log('❌ exiftool을 찾지 못해서 점검을 할 수 없어요 (새 터미널에서 다시 실행해 보세요)');
+    process.exit(1);
+  }
+  const et = new ExifTool(tools.exiftool.path);
+  const env = {
+    tmp,
+    tools,
+    et,
+    ctx: { et, magick: tools.magick.path, ffmpeg: tools.ffmpeg.path, ffprobe: tools.ffprobe.path },
+    samplesBefore: hashAll(SAMPLES),
+  };
+
+  let failed = 1; // 중간에 오류로 멈추면 실패로 보고 폴더를 남겨요
+  try {
+    failed = 0;
+    env.full = await pipeline(path.join(tmp, 'full'), env);
+    for (const item of ITEMS) {
+      let subs;
+      try {
+        subs = await item.run(env);
+      } catch (e) {
+        subs = [sub('실행 중 오류', false, e.message)];
+      }
+      const status = subs.some((s) => s.status === 'fail') ? 'fail' : subs.every((s) => s.status === 'skip') ? 'skip' : 'ok';
+      if (status === 'fail') failed++;
+      console.log(`${ICON[status]} ${String(item.no).padStart(2)}. ${item.name}`);
+      for (const s of subs) {
+        if (s.status === 'ok' && status === 'ok') continue; // 통과한 항목은 간단히
+        const why = s.status === 'skip' ? `건너뜀 (${s.detail})` : s.detail;
+        console.log(`      ${ICON[s.status]} ${s.label}${why ? ' — ' + why : ''}`);
+      }
+    }
+    console.log(manualReport(env.full));
+  } catch (e) {
+    failed = failed || 1;
+    console.log('❌ 점검 실행 오류: ' + e.stack);
+  } finally {
+    et.close();
+  }
+
+  const removed = cleanupTempDirs(tmp, failed > 0);
+  console.log(`\n결과: ${failed ? `❌ ${failed}개 항목 실패` : '✅ 모두 통과'}`);
+  console.log(failed ? `  원인 확인용으로 남긴 폴더: ${tmp}` : '  이번 임시 폴더는 지웠어요');
+  if (removed.length) console.log(`  지운 점검 임시 폴더 ${removed.length}개: ${removed.join(', ')}`);
+  process.exit(failed ? 1 : 0);
+})().catch((e) => {
+  console.error('❌ 점검 실행 오류: ' + e.stack);
+  process.exit(1);
+});

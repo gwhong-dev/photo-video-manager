@@ -4,7 +4,9 @@
   "description": "사진/영상을 변환(HEIC→JPG, MOV→MP4)하고 찍은 날짜로 이름·폴더를 정리하는 Windows 데스크톱 프로그램 (Electron)",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "samples": "node scripts/make-samples.js",
+    "check": "node scripts/check.js"
   },
   "keywords": [
     "electron",

@@ -9,8 +9,9 @@ const fs = require('fs');
 const { ExifTool } = require('./lib/exiftool');
 const { detectTools } = require('./lib/tools');
 const { makePlan, keyOf, NO_DATE_DIR } = require('./lib/planner');
-const { processItem } = require('./lib/processor');
 const { JobStore, canTrash, jobStats } = require('./lib/job');
+const { createLogger, now } = require('./lib/logger');
+const { writePlanLog, runBatch } = require('./lib/runner');
 
 // ---------- 상태 ----------
 let win = null;
@@ -51,28 +52,8 @@ async function refreshTools() {
 }
 
 // ---------- 로그 ----------
-// 파일 이름용 시간 (예: 2026-10-13_004603)
-function stamp() {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-}
-function newLog(prefix, header) {
-  fs.mkdirSync(logDir(), { recursive: true });
-  const p = path.join(logDir(), `${prefix}_${stamp()}.txt`);
-  fs.writeFileSync(p, header + '\n', 'utf8');
-  return { path: p, write: (line) => fs.appendFileSync(p, line + '\n', 'utf8') };
-}
-const now = () => new Date().toLocaleString('ko-KR');
-
-// 파일 1개의 참고 정보 (로그용)
-function extraInfo(it) {
-  const parts = [`날짜출처:${it.dateFrom}`];
-  if (it.refDate) parts.push(`참고(수정날짜):${it.refDate}`);
-  if (it.model) parts.push(`기기:${it.model}`);
-  if (it.gps) parts.push(`GPS:${it.gps}`);
-  return parts.join(' / ');
-}
+// 실제 로그 쓰기는 lib/logger.js (앱이 준비된 뒤에 만들어요)
+let logger = null;
 
 // ---------- 화면에 보여줄 표 만들기 ----------
 const STATUS_LABEL = { todo: '예정', done: '✅ 완료', dup: '⏭ 중복', fail: '❌ 실패', skip: '✔ 이미 정리됨' };
@@ -228,22 +209,7 @@ ipcMain.handle('start-job', async () => {
   if (store.exists()) store.close('replaced'); // 이전 작업은 보관
   job = store.create(lastPlan);
   lastPlan = null;
-
-  // 계획 로그 (날짜없음 참고 날짜, 중복, 확인 필요 목록)
-  const s = job.stats;
-  const log = newLog(
-    'plan',
-    `# 계획 / ${now()}\n# 가져올 폴더: ${job.source}\n# 백업 폴더: ${job.backupRoot}\n` +
-      `# 처리 예정 ${s.todo}개 (HEIC→JPG ${s.heic}, MOV→MP4 ${s.mov}, 이름만 ${s.copy}) / 날짜없음 ${s.noDate} / ` +
-      `중복 ${s.dup} (확인 필요 ${s.check}) / _번호 ${s.renamed} / 이미 정리됨 ${s.skip}\n` +
-      `# 아래는 주의할 파일만 적었어요 (날짜없음, 중복, 번호 붙음)`
-  );
-  log.write('# 상태\t원본\t갈 위치\t메모\t참고 정보');
-  for (const it of job.items) {
-    if (it.status === 'todo' && !it.renamed && it.relDir !== NO_DATE_DIR) continue; // 평범한 건 생략
-    const tag = it.relDir === NO_DATE_DIR ? '날짜없음' : it.check ? '확인필요' : it.status === 'dup' ? '중복' : it.status === 'skip' ? '이미정리' : '번호붙음';
-    log.write(`${tag}\t${it.src}\t${it.dupOf || it.dest}\t${it.note}\t${extraInfo(it)}`);
-  }
+  writePlanLog(job, logger); // 계획 로그 (날짜없음 참고 날짜, 중복, 확인 필요 목록)
   return jobInfo();
 });
 
@@ -268,49 +234,20 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
   running = true;
   pauseAsked = false;
   const ctx = { et, magick: tools.magick.path, ffmpeg: tools.ffmpeg.path, ffprobe: tools.ffprobe.path };
-  const log = newLog('run', `# 실행 / ${now()} / 이번 회차 ${todo.length}개\n# 시간\t상태\t원본\t결과\t메모\t참고 정보`);
-  const start = Date.now();
-  let lastSend = 0;
-  const count = { done: 0, dup: 0, fail: 0 };
-  let handled = 0;
-
   try {
-    for (const it of todo) {
-      if (pauseAsked) break;
-      try {
-        const r = await processItem(it, ctx);
-        store.mark(job, it.i, { status: r.status, finalPath: r.finalPath, note: r.note || it.note });
-        count[r.status]++;
-        log.write(`${now()}\t${r.status === 'done' ? '완료' : '중복'}\t${it.src}\t${r.finalPath}\t${r.note || ''}\t${extraInfo(it)}`);
-      } catch (err) {
-        store.mark(job, it.i, { status: 'fail', note: err.message });
-        count.fail++;
-        log.write(`${now()}\t실패\t${it.src}\t-\t${err.message}\t${extraInfo(it)}`);
-      }
-      handled++;
-
-      // 진행 상황 보내기 (0.2초에 한 번)
-      const t = Date.now();
-      if (t - lastSend > 200 || handled === todo.length) {
-        lastSend = t;
-        const elapsedSec = (t - start) / 1000;
-        send('progress', {
-          done: handled,
-          total: todo.length,
-          name: path.basename(it.src),
-          elapsedSec,
-          remainSec: (elapsedSec / handled) * (todo.length - handled),
-          ...count,
-        });
-      }
-    }
+    const r = await runBatch({
+      job,
+      store,
+      batchSize: n,
+      ctx,
+      logger,
+      shouldPause: () => pauseAsked,
+      onProgress: (p) => send('progress', p),
+    });
+    return { ...r, job: jobInfo() };
   } finally {
     running = false;
   }
-
-  const stats = jobStats(job);
-  log.write(`# 끝 / 완료 ${count.done}, 중복 ${count.dup}, 실패 ${count.fail} / 남은 작업 ${stats.todo}개${pauseAsked ? ' (일시정지)' : ''}`);
-  return { ...count, paused: pauseAsked, handled, logPath: log.path, job: jobInfo() };
 });
 
 // 원본 삭제 전 정보 (개수, 용량, 휴지통 경고)
@@ -341,7 +278,7 @@ ipcMain.handle('trash-info', async () => {
 ipcMain.handle('trash-originals', async () => {
   if (running) throw new Error('실행 중에는 할 수 없어요');
   const list = trashList();
-  const log = newLog('trash', `# 원본 휴지통 / ${now()} / ${list.length}개\n# 시간\t상태\t원본\t남아 있는 결과 파일`);
+  const log = logger.newLog('trash',`# 원본 휴지통 / ${now()} / ${list.length}개\n# 시간\t상태\t원본\t남아 있는 결과 파일`);
   let ok = 0;
   let fail = 0;
   for (let k = 0; k < list.length; k++) {
@@ -385,6 +322,7 @@ ipcMain.handle('open-folder', async (e, p) => {
 // ---------- 시작 / 종료 ----------
 app.whenReady().then(() => {
   settings = loadSettings();
+  logger = createLogger(logDir());
   store = new JobStore(path.join(userDir(), 'jobs'));
   try {
     job = store.load(); // 이어할 작업이 있으면 불러오기

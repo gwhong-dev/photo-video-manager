@@ -42,6 +42,16 @@ npm install
 npm start
 ```
 
+## 자동 점검
+
+```
+npm run check     # 12개 항목 점검 (docs/점검-푸시-절차.md)
+npm run samples   # 자동 샘플 다시 만들기 (test/samples/auto, 없는 파일만)
+```
+
+- 샘플은 `%TEMP%\pvm-check-시각` 폴더에 **복사한 뒤** 그 복사본으로만 점검해요 (통과하면 자동으로 지움)
+- HEIC·라이브 포토 점검은 `test/samples/manual/`에 아이폰 사진을 직접 넣어야 해요 (git에는 안 올라감). 없으면 ⏭ 건너뜀
+
 ## 사용 순서
 
 1. 📥 가져올 폴더 / 💾 백업 폴더 선택 (다음부터 기억)
