@@ -435,6 +435,94 @@ const ITEMS = [
         }
       }
 
+      // 12i 휴지통 함수가 실패하면 → 영구 삭제하지 않고 이동 (M1)
+      if (!cleaner || !cleaner.cleanOriginals) {
+        out.push(missing('12i 휴지통 실패 → 이동'));
+      } else {
+        const c = makeCase('12i');
+        const targets = [c.job.items[0], c.job.items[1]];
+        const r = await cleaner.cleanOriginals({
+          job: c.job, store: c.store, targets, logger: c.logger,
+          trash: async () => { throw new Error('가짜 휴지통 실패'); },
+          driveKindOf: async () => 'fixed',
+        });
+        const movedOk = targets.every((it) => !fs.existsSync(it.src) && it.movedTo && fs.existsSync(it.movedTo));
+        out.push(sub('12i 휴지통 실패 → _정리완료원본으로 이동', r.moved === 2 && r.trashed === 0 && movedOk, `휴지통 ${r.trashed}, 이동 ${r.moved}, 실패 ${r.fail}`));
+      }
+
+      // 12j 드라이브 종류 판단 (M1): 폴더에 연결된 USB도 USB로, 정리할 때마다 새로 확인
+      const platform = require('../lib/platform');
+      if (!platform.resolveKind || !platform.createDriveKindOf) {
+        out.push(missing('12j 드라이브 종류 판단 (폴더 연결 USB, 매번 새로)'));
+      } else {
+        const tables = {
+          volumes: [{ Name: 'C:\\', DriveType: 3 }, { Name: 'C:\\mnt\\usb\\', DriveType: 2 }],
+          disks: [{ DeviceID: 'C:', DriveType: 3 }, { DeviceID: 'Z:', DriveType: 4 }],
+        };
+        const cases = [
+          ['C:\\photos\\a.jpg', 'fixed'],
+          ['C:\\mnt\\usb\\a.jpg', 'removable'],
+          ['Z:\\a.jpg', 'network'],
+          ['\\\\nas\\share\\a.jpg', 'network'],
+          ['Q:\\a.jpg', 'unknown'],
+        ];
+        const wrong = cases.filter(([p, k]) => platform.resolveKind(p, tables) !== k).map(([p, k]) => `${p}→${platform.resolveKind(p, tables)} (기대 ${k})`);
+        out.push(sub('12j 폴더에 연결된 USB, 네트워크, 모르는 드라이브 판단', wrong.length === 0, wrong.join(' / ')));
+        // 판단기를 새로 만들면 드라이브 정보를 새로 읽음 (예전 판단을 계속 쓰지 않음)
+        let calls = 0;
+        const fetcher = (kind) => async () => (calls++, { volumes: [{ Name: 'E:\\', DriveType: kind }], disks: [] });
+        const k1 = await platform.createDriveKindOf({ fetchTables: fetcher(3) })('E:\\a.jpg');
+        const k2 = await platform.createDriveKindOf({ fetchTables: fetcher(2) })('E:\\a.jpg');
+        out.push(sub('12j 정리할 때마다 드라이브 종류를 새로 확인', k1 === 'fixed' && k2 === 'removable' && calls === 2, `${k1} → ${k2}, 읽은 횟수 ${calls}`));
+      }
+
+      // 12k 결과 파일 확인 (M2): 비어 있거나 기록해 둔 지문과 다르면 정리 안 함
+      if (!cleaner || !cleaner.cleanTargets) {
+        out.push(missing('12k 결과 파일이 비었거나 바뀌면 정리 안 함'));
+      } else {
+        const c = makeCase('12k');
+        const good = c.job.items[0];
+        good.resultHash = await cleaner.hashFile(good.finalPath);
+        const empty = { i: 5, src: path.join(c.source, 'f.jpg'), status: 'done', finalPath: path.join(c.backup, 'f.jpg') };
+        fs.writeFileSync(empty.src, 'F');
+        fs.writeFileSync(empty.finalPath, ''); // 0바이트 결과
+        const changed = { i: 6, src: path.join(c.source, 'g.jpg'), status: 'done', finalPath: path.join(c.backup, 'g.jpg'), resultHash: 'deadbeef' };
+        fs.writeFileSync(changed.src, 'G');
+        fs.writeFileSync(changed.finalPath, 'G-바뀜'); // 기록한 지문과 다름
+        c.job.items.push(empty, changed);
+        const t = (await cleaner.cleanTargets(c.job)).map((it) => it.i).sort();
+        out.push(sub('12k 결과 파일이 비었거나 바뀌면 정리 안 함', t.join(',') === '0,1', `대상 ${t.join(',')} (기대 0,1)`));
+      }
+
+      // 12l 이름이 겹치면 숫자를 바꾸지 않고 항상 _1, _2 (M3)
+      const processor = require('../lib/processor');
+      if (!processor.nextFree) {
+        out.push(missing('12l 이름 겹침 → _1, _2'));
+      } else {
+        const d = path.join(root, '12l');
+        fs.mkdirSync(d, { recursive: true });
+        for (const n of ['2026-10-28_134105.mp4', 'IMG_0101.jpg', 'IMG_0101_1.jpg']) fs.writeFileSync(path.join(d, n), 'x');
+        const got = ['2026-10-28_134105.mp4', 'IMG_0101.jpg'].map((n) => path.basename(processor.nextFree(path.join(d, n))));
+        const want = ['2026-10-28_134105_1.mp4', 'IMG_0101_2.jpg'];
+        out.push(sub('12l 이름 겹침 → _1, _2 (시각·번호는 그대로)', got.join(',') === want.join(','), `${got.join(', ')} (기대 ${want.join(', ')})`));
+      }
+
+      // 12m 이름 바꾸기 직후, 기록 직전에 꺼졌다가 이어하기 (M4) → 같은 파일을 또 만들지 않음
+      {
+        const p = await pipeline(path.join(root, '12m'), env, { manual: false, run: false });
+        const it = p.job.items.find((x) => x.kind === 'mov2mp4');
+        // 1회차: 처리하다가 "완료" 기록 직전에 꺼진 것처럼 (예정 기록만 남음)
+        const r1 = await processor.processItem(it, { ...env.ctx, onBeforeRename: (info) => p.store.mark(p.job, it.i, { pending: info }) });
+        // 다시 켜기: 디스크에서 작업 불러오기 → 이어서 실행
+        const store2 = new JobStore(path.join(p.root, 'jobs'));
+        const job2 = store2.load();
+        await runner.runBatch({ job: job2, store: store2, batchSize: 100000, ctx: env.ctx, logger: p.logger });
+        const it2 = job2.items[it.i];
+        const dir = path.dirname(r1.finalPath);
+        const mp4s = fs.readdirSync(dir).filter((n) => n.toLowerCase().endsWith('.mp4'));
+        out.push(sub('12m 기록 직전에 꺼진 뒤 이어하기 → 중복 파일 안 만듦', it2.status === 'done' && it2.finalPath === r1.finalPath && mp4s.length === 1, `상태 ${it2.status}, mp4 ${mp4s.length}개 (${mp4s.join(', ')})`));
+      }
+
       // 12f 드라이브 종류를 모름 → 이동 (휴지통 안 씀)
       if (!cleaner || !cleaner.cleanOriginals) {
         out.push(missing('12f 드라이브 종류 모름 → 이동'));
