@@ -9,7 +9,8 @@ const fs = require('fs');
 const { ExifTool } = require('./lib/exiftool');
 const { detectTools } = require('./lib/tools');
 const { makePlan, keyOf, NO_DATE_DIR } = require('./lib/planner');
-const { JobStore, canTrash, jobStats } = require('./lib/job');
+const { JobStore, jobStats } = require('./lib/job');
+const { cleanCandidates, cleanTargets } = require('./lib/cleaner');
 const { createLogger, now } = require('./lib/logger');
 const { writePlanLog, nextTodo, checkSpace, runBatch } = require('./lib/runner');
 
@@ -94,15 +95,9 @@ function rowsOf(data, filter) {
   return { rows, total };
 }
 
-// 원본 지울 수 있는 것들
-function trashList() {
-  if (!job) return [];
-  return job.items.filter((it) => canTrash(job, it));
-}
-
 function jobInfo() {
   if (!job) return null;
-  const list = trashList();
+  const list = cleanCandidates(job); // 정리할 수 있어 보이는 원본 (정리 직전에 지문까지 다시 확인)
   return {
     source: job.source,
     backupRoot: job.backupRoot,
@@ -258,7 +253,7 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
 
 // 원본 삭제 전 정보 (개수, 용량, 휴지통 경고)
 ipcMain.handle('trash-info', async () => {
-  const list = trashList();
+  const list = job ? await cleanTargets(job) : [];
   const bytes = list.reduce((a, it) => a + (it.size || 0), 0);
   const warnings = [];
 
@@ -283,7 +278,7 @@ ipcMain.handle('trash-info', async () => {
 // 원본 휴지통으로 보내기
 ipcMain.handle('trash-originals', async () => {
   if (running) throw new Error('실행 중에는 할 수 없어요');
-  const list = trashList();
+  const list = job ? await cleanTargets(job) : [];
   const log = logger.newLog('trash',`# 원본 휴지통 / ${now()} / ${list.length}개\n# 시간\t상태\t원본\t남아 있는 결과 파일`);
   let ok = 0;
   let fail = 0;
