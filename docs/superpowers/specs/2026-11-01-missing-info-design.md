@@ -116,8 +116,10 @@ CREATE TABLE edit_items (
 ```
 {"type":"apply","batchId":"...","at":"...","root":"...","kind":"location","items":[{"path":"...","before":null,"after":{...}}]}
 {"type":"undo","batchId":"...","at":"..."}
-{"type":"void","batchId":"..."}
+{"type":"void","of":"apply","batchId":"..."}
 ```
+
+`void`는 바로 앞의 같은 묶음 줄(`of`가 `apply`면 넣기, `undo`면 되돌리기)이 DB에 저장되지 못했다는 표시다. 되돌리기도 넣기와 같은 순서로 저장한다.
 
 순서
 1. 기록 파일에 먼저 쓴다. 실패하면 작업을 거절하고 DB도 바꾸지 않는다.
