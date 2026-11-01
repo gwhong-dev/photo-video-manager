@@ -93,9 +93,10 @@ function Preview({ file }) {
 
 // selectedId = 자세히 보여 줄 사진, count = 고른 장수, copySource = 복사해 둔 값 (없으면 null)
 // onCopy / onPaste / onDirect = 버튼을 눌렀을 때 (우클릭 메뉴와 같은 일)
-export default function DetailPanel({ selectedId, gen, count = 0, copySource = null, onCopy, onPaste, onDirect }) {
+// readOnly = 사진 정보만 보여 줘요 (위치 제안 화면). 값 넣기 버튼과 복사한 값 칸을 그리지 않아요
+export default function DetailPanel({ selectedId, gen, count = 0, copySource = null, onCopy, onPaste, onDirect, readOnly = false }) {
   const { file, error } = useFileInfo(selectedId, gen);
-  const actions = (
+  const actions = readOnly ? null : (
     <Actions count={count} canCopy={count === 1} hasCopy={!!copySource} onCopy={onCopy} onPaste={onPaste} onDirect={onDirect} />
   );
 
@@ -148,7 +149,7 @@ export default function DetailPanel({ selectedId, gen, count = 0, copySource = n
   return (
     <aside className="panel" aria-label="사진 정보">
       {body}
-      {copySource && <CopyNote source={copySource} />}
+      {copySource && !readOnly && <CopyNote source={copySource} />}
     </aside>
   );
 }

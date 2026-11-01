@@ -54,6 +54,10 @@ contextBridge.exposeInMainWorld('api', {
     previewEdit: (ids, edit) => ipcRenderer.invoke('gallery:preview-edit', ids, edit),
     applyEdit: (ids, edit) => ipcRenderer.invoke('gallery:apply-edit', ids, edit),
     undoLast: (batchId) => ipcRenderer.invoke('gallery:undo-last', batchId),
+    // 위치 제안
+    listSuggestions: () => ipcRenderer.invoke('gallery:list-suggestions'),
+    skipSuggestions: (ids) => ipcRenderer.invoke('gallery:skip-suggestions', ids),
+    clearSuggestionSkips: () => ipcRenderer.invoke('gallery:clear-suggestion-skips'),
     rescan: () => ipcRenderer.invoke('gallery:rescan'),
     openScreen: (name) => ipcRenderer.invoke('gallery:open-screen', name), // 'import' | 'gallery'
     // 구독을 끊는 함수를 돌려줘요

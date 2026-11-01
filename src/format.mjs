@@ -67,3 +67,16 @@ export function appliedText(count, kind) {
 export function undoneText(count, kind) {
   return countOk(count) && KIND_OBJECT[kind] ? `${formatCount(count)}장 ${KIND_OBJECT[kind]} 되돌렸어요` : '';
 }
+
+// ---------- 위치 제안 ----------
+// 넣기 버튼: "4장에 이 위치 넣기". 0장이면 빈 글자
+export const suggestApplyLabel = (count) => (countOk(count) ? `${formatCount(count)}장에 이 위치 넣기` : '');
+
+// 근거 사진과의 시간 차이: 0 → "1분 안", 12 → "12분 차이", 65 → "1시간 5분 차이"
+export function gapText(minutes) {
+  if (minutes < 1) return '1분 안';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (!h) return `${m}분 차이`;
+  return m ? `${h}시간 ${m}분 차이` : `${h}시간 차이`;
+}
