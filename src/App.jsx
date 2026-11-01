@@ -13,7 +13,7 @@ import EmptyState from './components/EmptyState.jsx';
 import ScanBanner from './components/ScanBanner.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Toolbar from './components/Toolbar.jsx';
-import { EMPTY_SELECTION, nextSelection, selectionForMenu, selectionOf } from './selection.mjs';
+import { EMPTY_SELECTION, filterScope, nextSelection, selectionForMenu, selectionOf, viewMatches } from './selection.mjs';
 
 const START_FILTER = { tab: 'all', sort: 'newest', query: '', tag: null };
 const SEARCH_DELAY_MS = 200; // 입력을 멈추고 이 시간이 지나면 검색
@@ -98,7 +98,7 @@ export default function App() {
 
   // ---------- 고른 사진 비우기 ----------
   // 화면, 탭, 검색어, 태그가 달라지면 비워요 (정렬은 같은 사진들이라 그대로). 그려지기 전에 바로 바꿔서 한 번도 어긋나게 보이지 않아요
-  const scope = `${screen}|${filter.tab}|${filter.info || ''}|${filter.query}|${filter.tag || ''}`;
+  const scope = `${screen}|${filterScope(filter)}`;
   const [scopeSeen, setScopeSeen] = useState(scope);
   if (scopeSeen !== scope) {
     setScopeSeen(scope);
@@ -107,6 +107,10 @@ export default function App() {
   }
   const scopeRef = useRef(scope); // 비동기 응답이 "그 사이 필터가 바뀌었나"를 알 수 있게
   scopeRef.current = scope;
+  // 필터를 바꾼 직후에는 옛 목록이 잠깐 남아 있어요. 그 사이의 고르기는 받지 않아요 (옛 목록의 번호가 섞이지 않게)
+  const viewCurrent = viewMatches(view, filter);
+  const viewCurrentRef = useRef(viewCurrent);
+  viewCurrentRef.current = viewCurrent;
 
   // ---------- 검색어는 입력을 멈추고 0.2초 뒤에 적용 ----------
   useEffect(() => {
@@ -178,11 +182,13 @@ export default function App() {
 
   // ---------- 고르기 ----------
   const onCellClick = useCallback((file, event, dayFiles) => {
+    if (!viewCurrentRef.current) return;
     const ctrl = event.ctrlKey || event.metaKey;
     setSelection((sel) => nextSelection(sel, { id: file.id, ctrl, shift: event.shiftKey, dayFiles }));
   }, []);
   // 우클릭: 선택 밖의 칸이면 그 칸만 골라요. 메뉴 그리기는 작업 7
   const onCellMenu = useCallback((file, event) => {
+    if (!viewCurrentRef.current) return;
     setSelection((sel) => selectionForMenu(sel, file.id));
     setCellMenuAt({ x: event.clientX, y: event.clientY });
   }, []);
@@ -196,11 +202,12 @@ export default function App() {
       if (scopeRef.current === at) setNotice(errorText(e));
     }
   };
-  const selectDay = (day) => selectIds(() => api.listFiles(day, view.filter).then((files) => files.map((f) => f.id)));
+  const selectDay = (day) => viewCurrent && selectIds(() => api.listFiles(day, view.filter).then((files) => files.map((f) => f.id)));
   const selectAll = async () => {
+    if (!viewCurrent) return;
     setSelectingAll(true);
     try {
-      await selectIds(() => api.listIds(view ? view.filter : filter));
+      await selectIds(() => api.listIds(view.filter));
     } finally {
       setSelectingAll(false);
     }
@@ -300,7 +307,7 @@ export default function App() {
             onInfo={(info) => setField({ info })}
             onSort={(sort) => setField({ sort })}
             onSelectAll={selectAll}
-            selectingAll={selectingAll}
+            selectingAll={selectingAll || !viewCurrent}
           />
         )}
         <ScanBanner

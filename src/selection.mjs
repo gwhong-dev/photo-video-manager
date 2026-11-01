@@ -6,6 +6,8 @@
 //   nextSelection(sel, { id, ctrl, shift, dayFiles }) → 칸을 클릭했을 때의 새 선택
 //   selectionOf(ids)               → 목록 전체 / 이 날 모두 선택처럼 한꺼번에 고른 선택
 //   selectionForMenu(sel, id)      → 우클릭한 칸이 선택 밖이면 그 칸만 고른 선택
+//   filterScope(filter)            → 선택을 비워야 하는 기준이 같은지 비교하는 글자 (정렬은 빼요)
+//   viewMatches(view, filter)      → 화면에 보이는 목록이 지금 필터의 목록인지
 
 export const EMPTY_SELECTION = Object.freeze({ ids: new Set(), anchor: null, focus: null });
 
@@ -58,4 +60,16 @@ export function selectionOf(ids) {
 // 우클릭: 이미 고른 칸이면 선택을 그대로 두고, 선택 밖의 칸이면 그 칸만 골라요
 export function selectionForMenu(sel, id) {
   return sel && sel.ids.has(id) ? sel : only(id);
+}
+
+// 선택이 "같은 사진들"인지 가르는 기준: 종류 탭, 정보 없음 탭(있으면 정보 없는 사진 화면), 검색어, 태그. 정렬은 같은 사진들이라 뺐어요
+export function filterScope(filter) {
+  const f = filter || {};
+  return [f.tab || 'all', f.info || '', f.query || '', f.tag || ''].join('|');
+}
+
+// 필터를 바꾸면 새 목록이 올 때까지 옛 목록이 잠깐 화면에 남아요. 그 사이에는 고르기를 받지 않아요
+//   (옛 목록의 번호가 새 필터의 선택에 섞여 보지 못한 사진에 값이 들어가는 일을 막으려고)
+export function viewMatches(view, filter) {
+  return !!view && filterScope(view.filter) === filterScope(filter);
 }

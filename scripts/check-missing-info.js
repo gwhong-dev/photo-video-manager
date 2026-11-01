@@ -1534,7 +1534,7 @@ const items = [
       } catch (e) {
         return [sub('src/selection.mjs 불러오기', false, e.message)];
       }
-      const { nextSelection, EMPTY_SELECTION, selectionOf, selectionForMenu } = m;
+      const { nextSelection, EMPTY_SELECTION, selectionOf, selectionForMenu, filterScope, viewMatches } = m;
       const sorted = (sel) => [...sel.ids].sort((a, b) => a - b).join();
       const D = [10, 11, 12, 13, 14].map((id) => ({ id })); // 한 날의 파일 5장
       const none = EMPTY_SELECTION;
@@ -1583,6 +1583,22 @@ const items = [
       const g2 = selectionForMenu(b1, 11);
       const g3 = selectionForMenu(b1, 12);
       out.push(sub('25g 우클릭: 선택 안에 있는 칸이면 그대로, 밖이면 그 칸만', g2 === b1 && sorted(g3) === '12' && g3.focus === 12 && g3.anchor === 12, JSON.stringify([[...g3.ids], g3.focus])));
+
+      // 25h 화면에 보이는 목록(view)이 지금 필터의 것일 때만 고르기를 받아요 (바뀐 직후 옛 목록의 번호가 섞이지 않게)
+      const F = (over = {}) => ({ tab: 'all', sort: 'newest', query: '', tag: null, ...over });
+      const V = (filter) => ({ key: JSON.stringify(filter), filter, days: [], gen: 0 });
+      out.push(sub('25h 필터가 같은 목록이면 받음, 정렬만 달라도 받음', viewMatches(V(F()), F()) === true && viewMatches(V(F()), F({ sort: 'oldest' })) === true && viewMatches(V(F({ info: 'noDate' })), F({ info: 'noDate' })) === true));
+      out.push(sub(
+        '25h 탭, 정보 없음 탭, 검색어, 태그가 다른 옛 목록과 목록이 없을 때는 거절',
+        viewMatches(V(F()), F({ tab: 'photo' })) === false
+          && viewMatches(V(F()), F({ info: 'noLocation' })) === false // 갤러리 -> 정보 없는 사진 화면
+          && viewMatches(V(F({ info: 'noLocation' })), F()) === false // 정보 없는 사진 화면 -> 갤러리
+          && viewMatches(V(F({ info: 'noLocation' })), F({ info: 'manual' })) === false
+          && viewMatches(V(F()), F({ query: 'a' })) === false
+          && viewMatches(V(F()), F({ tag: '여행' })) === false
+          && viewMatches(null, F()) === false,
+      ));
+      out.push(sub('25h filterScope: 빈 값 info/tag는 없는 것과 같음', filterScope(F()) === filterScope(F({ info: undefined, tag: null })) && filterScope(F({ info: 'noDate' })) !== filterScope(F())));
       return out;
     },
   },
