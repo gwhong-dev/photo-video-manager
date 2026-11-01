@@ -203,7 +203,7 @@ CREATE TABLE edit_items (
 | `gallery:get-copy-source(id)` | 복사할 값 요약 (파일 경로 없음) |
 | `gallery:preview-edit(ids, edit)` | 미리보기 결과 |
 | `gallery:apply-edit(ids, edit)` | 다시 계산해서 저장, 끝나면 `library-changed` 알림 |
-| `gallery:undo-last()` | 마지막 묶음 되돌리기 |
+| `gallery:undo-last(batchId)` | 마지막 묶음 되돌리기. 화면에 보이는 묶음이 마지막 묶음이 아니면 거절 |
 
 `edit` 모양은 둘 중 하나다.
 - `{ source: 'copy', sourceId, date, time, location }`
