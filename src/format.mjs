@@ -1,5 +1,5 @@
 // 파일 위치: src/format.mjs
-// 역할: 화면에 보여 줄 글자 만들기 (영상 길이, 용량, 찍은 시각, 좌표). React 없이 값만 다뤄서 점검에서도 불러 확인해요
+// 역할: 화면에 보여 줄 글자 만들기 (영상 길이, 용량, 찍은 시각, 좌표, 값 넣기 버튼 글). React 없이 값만 다뤄서 점검에서도 불러 확인해요
 
 // 영상 길이: 12.3초 → "0:12", 3725초 → "1:02:05". 모르면 빈 글자
 export function formatDuration(sec) {
@@ -40,3 +40,25 @@ export function formatCoords(lat, lng) {
 
 // 숫자에 천 단위 쉼표 (1,200)
 export const formatCount = (n) => Number(n || 0).toLocaleString('ko-KR');
+
+// ---------- 날짜와 위치 넣기 버튼 글 ----------
+// 넣은 항목의 이름과, 문장에 쓸 때의 "을/를"까지 붙인 말
+const KIND_NAME = { date: '날짜', location: '위치', both: '날짜와 위치' };
+const KIND_OBJECT = { date: '날짜를', location: '위치를', both: '날짜와 위치를' };
+const countOk = (n) => Number.isFinite(n) && n > 0;
+
+// 미리보기 창의 실행 버튼: "124장에 위치 넣기". 바꿀 사진이 0장이거나 종류를 모르면 빈 글자
+//   (화면은 빈 글자면 버튼을 끄고 "바꿀 사진이 없어요"를 보여 줘요)
+export function applyLabel(count, kind) {
+  return countOk(count) && KIND_NAME[kind] ? `${formatCount(count)}장에 ${KIND_NAME[kind]} 넣기` : '';
+}
+
+// 되돌리기 버튼: "124장 위치 되돌리기"
+export function undoLabel(count, kind) {
+  return countOk(count) && KIND_NAME[kind] ? `${formatCount(count)}장 ${KIND_NAME[kind]} 되돌리기` : '';
+}
+
+// 값을 넣은 직후 알림 줄의 글: "124장에 위치를 넣었어요"
+export function appliedText(count, kind) {
+  return countOk(count) && KIND_OBJECT[kind] ? `${formatCount(count)}장에 ${KIND_OBJECT[kind]} 넣었어요` : '';
+}

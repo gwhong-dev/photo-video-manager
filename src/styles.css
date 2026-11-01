@@ -164,6 +164,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .banner .link-button { padding: 4px 10px; }
 .progress { width: 160px; height: 3px; background: var(--line); flex: none; }
 .progress div { height: 100%; background: var(--sub); }
+.banners + .banners .banner { border-top: 0; } /* 안내 줄이 둘 이어질 때 선이 겹쳐 두꺼워지지 않게 */
 
 /* ---------- 날짜별 격자 ---------- */
 .grid-scroll { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; user-select: none; /* Shift+클릭할 때 글자가 같이 파랗게 잡히지 않게 */ }
@@ -242,6 +243,91 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .missing { color: var(--warn); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { padding: 1px 8px; border: 1px solid var(--line); border-radius: 4px; font-size: 12px; color: var(--sub); }
+.panel-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.panel-actions button { text-align: left; }
+.panel-heading { margin: 0 0 4px; font-size: 13px; font-weight: 400; color: var(--faint); }
+.copy-note { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+.copy-name { margin: 0 0 4px; word-break: break-all; }
+.copy-note .detail-row { padding: 4px 0; }
+
+/* ---------- 우클릭 메뉴 ---------- */
+.context-menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+}
+.context-menu button {
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  padding: 7px 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+.context-menu button:hover:not(:disabled), .context-menu button:focus-visible { background: var(--sidebar); border-color: transparent; outline: 0; }
+
+/* ---------- 미리보기 창 ---------- */
+/* 창은 위쪽에 붙여 둬요 (아래 목록 길이가 바뀌어도 위쪽 칸들이 움직이지 않게) */
+.dialog-backdrop { position: fixed; inset: 0; z-index: 30; display: flex; align-items: flex-start; justify-content: center; padding: 8vh 24px 24px; background: rgba(0, 0, 0, 0.55); }
+.dialog {
+  --scroll-bg: var(--panel);
+  width: min(680px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 24px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color-scheme: dark;
+}
+.dialog:focus { outline: 0; }
+.dialog-title { margin: 0 0 12px; font-size: 18px; font-weight: 600; }
+.dialog-sub { margin: 0; font-size: 12px; color: var(--faint); }
+.dialog-note { margin: -2px 0 8px; }
+.dialog-pick { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; padding: 0; border: 0; min-width: 0; }
+.dialog-pick legend { padding: 0; margin-bottom: 8px; }
+.dialog-pick label { display: flex; align-items: center; gap: 10px; }
+.dialog-pick label.off { color: var(--faint); }
+.dialog-pick label > span:first-of-type { width: 40px; flex: none; }
+.dialog-pick input[type='checkbox'] { accent-color: var(--sub); margin: 0; }
+.dialog-pick input[type='date'], .dialog-pick input[type='time'] {
+  background: var(--sidebar);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  color-scheme: dark;
+}
+.dialog-pick input:focus-visible { outline: 2px solid var(--sub); outline-offset: 1px; }
+.dialog-value { color: var(--sub); min-width: 0; }
+.dialog-body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; border-top: 1px solid var(--line); padding-top: 12px; }
+.dialog-body .stale { opacity: 0.5; }
+.dialog-counts { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0 0 8px; color: var(--sub); }
+.dialog-counts .warn { color: var(--warn); }
+.dialog-error { margin: 0 0 8px; padding-left: 10px; border-left: 3px solid var(--line); color: var(--text); }
+.edit-list { list-style: none; margin: 0; padding: 0; }
+.edit-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 4px 12px; padding: 6px 0 6px 8px; border-bottom: 1px solid var(--line); font-size: 13px; border-left: 3px solid transparent; }
+.edit-row.had { border-left-color: var(--warn); }
+.edit-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.edit-values { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: var(--sub); }
+.edit-line { word-break: break-word; }
+.edit-kind { color: var(--faint); margin-right: 6px; }
+.edit-arrow { color: var(--faint); }
+.edit-same { color: var(--faint); }
+.edit-more { padding: 8px 0 2px 8px; font-size: 13px; color: var(--faint); }
+.dialog-foot { flex: none; display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; }
+button.primary { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+button.primary:hover:not(:disabled) { border-color: var(--text); }
+button.primary:disabled { background: var(--panel); color: var(--sub); border-color: var(--line); font-weight: 400; }
 
 /* ---------- 빈 화면 ---------- */
 .empty-state { margin: auto; max-width: 440px; padding: 32px; }

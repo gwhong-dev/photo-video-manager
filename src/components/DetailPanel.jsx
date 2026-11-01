@@ -1,13 +1,16 @@
 // 파일 위치: src/components/DetailPanel.jsx
-// 역할: 오른쪽 패널. 고른 사진의 큰 미리보기, 파일 이름, 찍은 시각과 어디서 읽었는지, 위치, 기기, 크기, 용량, 태그
+// 역할: 오른쪽 패널. 고른 사진의 큰 미리보기, 파일 이름, 찍은 시각과 어디서 읽었는지, 위치와 어디서 읽었는지, 기기, 크기, 용량, 태그
 //   없는 값은 경고 노랑 "정보 없음". 아무것도 안 골랐으면 안내 문구
+//   여러 장을 고르면 "N장 선택함"과 우클릭 메뉴와 같은 버튼들 (우클릭을 모르는 사람을 위해). 한 장일 때도 사진 정보 아래에 같은 버튼들
+//   복사해 둔 값이 있으면 어느 사진의 값인지와 날짜, 위치를 작게 보여 줘요
 //   파일 경로는 화면이 몰라요 (getFile이 주지 않아요). 이미지는 pvm://preview/<id> 로만 받아요
 
 import React, { useEffect, useState } from 'react';
 import { api, errorText } from '../api.js';
-import { formatBytes, formatCoords, formatDuration, formatTakenAt } from '../format.mjs';
+import { formatBytes, formatCoords, formatCount, formatDuration, formatTakenAt } from '../format.mjs';
 
-const SOURCE_TEXT = { exif: '사진 파일에서 읽음', filename: '파일 이름에서 읽음' };
+const SOURCE_TEXT = { exif: '사진 파일에서 읽음', filename: '파일 이름에서 읽음', manual: '내가 넣은 값' };
+const LOCATION_SOURCE_TEXT = { exif: '사진 파일에서 읽음', manual: '내가 넣은 값' };
 
 function Missing() {
   return <span className="missing">정보 없음</span>;
@@ -22,6 +25,34 @@ function Row({ label, children, sub }) {
         {sub && <div className="detail-sub">{sub}</div>}
       </dd>
     </div>
+  );
+}
+
+// 값 넣기 버튼들: 우클릭 메뉴와 같은 일을 해요. count = 고른 장수
+function Actions({ count, canCopy, hasCopy, onCopy, onPaste, onDirect }) {
+  const n = formatCount(count);
+  return (
+    <div className="panel-actions">
+      {canCopy && <button type="button" onClick={onCopy}>날짜와 위치 복사</button>}
+      {hasCopy && <button type="button" onClick={onPaste}>{n}장에 붙여넣기</button>}
+      <button type="button" onClick={onDirect}>{n}장에 날짜 직접 넣기</button>
+    </div>
+  );
+}
+
+// 복사해 둔 값 요약: 어느 사진의 값인지, 날짜, 위치
+function CopyNote({ source }) {
+  const taken = formatTakenAt(source.takenAt);
+  const coords = formatCoords(source.lat, source.lng);
+  return (
+    <section className="copy-note" aria-label="복사한 값">
+      <h3 className="panel-heading">복사한 값</h3>
+      <p className="detail-sub copy-name">{source.name}</p>
+      <dl className="detail-list">
+        <Row label="날짜">{taken || <Missing />}</Row>
+        <Row label="위치">{coords || <Missing />}</Row>
+      </dl>
+    </section>
   );
 }
 
@@ -60,11 +91,24 @@ function Preview({ file }) {
   );
 }
 
-export default function DetailPanel({ selectedId, gen }) {
+// selectedId = 자세히 보여 줄 사진, count = 고른 장수, copySource = 복사해 둔 값 (없으면 null)
+// onCopy / onPaste / onDirect = 버튼을 눌렀을 때 (우클릭 메뉴와 같은 일)
+export default function DetailPanel({ selectedId, gen, count = 0, copySource = null, onCopy, onPaste, onDirect }) {
   const { file, error } = useFileInfo(selectedId, gen);
+  const actions = (
+    <Actions count={count} canCopy={count === 1} hasCopy={!!copySource} onCopy={onCopy} onPaste={onPaste} onDirect={onDirect} />
+  );
 
   let body;
-  if (selectedId === null) {
+  if (count >= 2) {
+    body = (
+      <>
+        <h2 className="detail-name">{formatCount(count)}장 선택함</h2>
+        <p className="panel-hint">고른 사진에 같은 날짜나 위치를 한 번에 넣을 수 있어요. 넣기 전에 바뀌는 내용을 먼저 보여 드려요.</p>
+        {actions}
+      </>
+    );
+  } else if (selectedId === null) {
     body = <p className="panel-hint">사진을 누르면 여기에 자세한 정보가 보여요.</p>;
   } else if (error) {
     body = <p className="panel-hint" role="alert">{error}</p>;
@@ -84,7 +128,7 @@ export default function DetailPanel({ selectedId, gen }) {
         {file.readError && <p className="detail-sub">파일 정보를 다 읽지 못했어요</p>}
         <dl className="detail-list">
           <Row label="찍은 시각" sub={taken && SOURCE_TEXT[file.takenAtSource]}>{taken || <Missing />}</Row>
-          <Row label="위치">{coords || <Missing />}</Row>
+          <Row label="위치" sub={coords && LOCATION_SOURCE_TEXT[file.locationSource]}>{coords || <Missing />}</Row>
           <Row label="기기">{file.model || <Missing />}</Row>
           <Row label="크기">{size || <Missing />}</Row>
           {file.mediaType === 'video' && <Row label="길이">{formatDuration(file.durationSec) || <Missing />}</Row>}
@@ -97,8 +141,14 @@ export default function DetailPanel({ selectedId, gen }) {
             )}
           </Row>
         </dl>
+        {actions}
       </>
     );
   }
-  return <aside className="panel" aria-label="사진 정보">{body}</aside>;
+  return (
+    <aside className="panel" aria-label="사진 정보">
+      {body}
+      {copySource && <CopyNote source={copySource} />}
+    </aside>
+  );
 }

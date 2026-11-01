@@ -4,15 +4,21 @@
 //   두 화면은 같은 창 안에서 바뀌어요 (정보 없는 사진 화면은 filter.info 가 있는 갤러리와 같은 격자예요)
 //   읽는 도중에도 목록이 제자리에서 갱신돼요: 알림이 와도 0.5초에 한 번만 다시 불러오고, 스크롤과 선택은 그대로 둬요
 //   고른 사진들(selection)은 탭, 필터(검색어와 태그 포함), 화면이 바뀌면 비워요. 정렬이 바뀔 때와 목록 갱신 때는 그대로 둬요
+//   날짜와 위치 넣기: 우클릭 메뉴(ContextMenu)나 오른쪽 패널 버튼 -> 미리보기 창(EditDialog) -> 넣기 -> 되돌리기 줄(UndoBar)
+//   복사한 값(copySource)은 기준 사진의 번호와 요약만 기억해요. 화면을 바꿔도 남고, 프로그램을 끄면 사라져요
+//   값을 넣은 뒤에는 선택을 비워요. 오류는 모두 기존 notice 줄로 보여요
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from './api.js';
+import ContextMenu from './components/ContextMenu.jsx';
 import DayGrid from './components/DayGrid.jsx';
 import DetailPanel from './components/DetailPanel.jsx';
+import EditDialog from './components/EditDialog.jsx';
 import EmptyState from './components/EmptyState.jsx';
 import ScanBanner from './components/ScanBanner.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Toolbar from './components/Toolbar.jsx';
+import UndoBar from './components/UndoBar.jsx';
 import { EMPTY_SELECTION, filterScope, nextSelection, selectionForMenu, selectionOf, viewMatches } from './selection.mjs';
 
 const START_FILTER = { tab: 'all', sort: 'newest', query: '', tag: null };
@@ -38,7 +44,11 @@ export default function App() {
   const [gen, setGen] = useState(0); // 목록이 갱신될 때마다 올라가요
   const [screen, setScreen] = useState('gallery'); // 'gallery' | 'missing' (같은 창 안의 화면 전환)
   const [selection, setSelection] = useState(EMPTY_SELECTION); // { ids, anchor, focus }
-  const [cellMenuAt, setCellMenuAt] = useState(null); // 작업 7: 우클릭한 자리 { x, y }. 우클릭 메뉴가 이 값을 읽어 그려요
+  const [cellMenuAt, setCellMenuAt] = useState(null); // 우클릭한 자리 { x, y }. 있으면 우클릭 메뉴를 그려요
+  const [copySource, setCopySource] = useState(null); // 복사해 둔 값 { id, name, takenAt, lat, lng } (파일 경로 없음)
+  const [dialog, setDialog] = useState(null); // 미리보기 창: { mode: 'copy' | 'direct', ids, prefer }. 열 때의 선택을 그대로 담아요
+  const [justApplied, setJustApplied] = useState(null); // 방금 넣은 묶음 { batchId }. 넣은 직후 알림 줄을 보여 줘요
+  const [undoing, setUndoing] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false); // "목록 전체 선택"으로 번호를 받아오는 중
   const [notice, setNotice] = useState(''); // 화면 전환이 거절된 이유 등
   const [rescanning, setRescanning] = useState(false);
@@ -186,7 +196,7 @@ export default function App() {
     const ctrl = event.ctrlKey || event.metaKey;
     setSelection((sel) => nextSelection(sel, { id: file.id, ctrl, shift: event.shiftKey, dayFiles }));
   }, []);
-  // 우클릭: 선택 밖의 칸이면 그 칸만 골라요. 메뉴 그리기는 작업 7
+  // 우클릭: 선택 밖의 칸이면 그 칸만 골라요. 메뉴는 아래 render에서 cellMenuAt 으로 그려요
   const onCellMenu = useCallback((file, event) => {
     if (!viewCurrentRef.current) return;
     setSelection((sel) => selectionForMenu(sel, file.id));
@@ -210,6 +220,67 @@ export default function App() {
       await selectIds(() => api.listIds(view.filter));
     } finally {
       setSelectingAll(false);
+    }
+  };
+
+  // ---------- 날짜와 위치 넣기 ----------
+  const closeMenu = useCallback(() => setCellMenuAt(null), []);
+  // 복사: 한 장일 때만. 값은 main이 DB에서 읽어 줘요 (화면은 번호와 요약만 기억)
+  const copyValue = async () => {
+    setCellMenuAt(null);
+    if (selection.ids.size !== 1) return;
+    const [id] = selection.ids;
+    try {
+      const source = await api.getCopySource(id);
+      if (!source) {
+        setNotice('이 사진은 폴더에서 사라져서 복사할 수 없어요.');
+      } else if (!source.takenAt && !(typeof source.lat === 'number' && typeof source.lng === 'number')) {
+        setNotice('이 사진에는 복사할 날짜나 위치가 없어요.');
+      } else {
+        setCopySource(source);
+        setNotice('');
+      }
+    } catch (e) {
+      setNotice(errorText(e));
+    }
+  };
+  // 미리보기 창 열기. 열 때 고른 사진 번호를 그대로 담아 두어서, 창이 열린 동안 선택이 바뀌어도 대상은 같아요
+  const openDialog = (mode) => {
+    setCellMenuAt(null);
+    if (selection.ids.size === 0 || (mode === 'copy' && !copySource)) return;
+    setNotice('');
+    setDialog({ mode, ids: [...selection.ids], prefer: filter.info === 'noDate' ? 'date' : 'location' });
+  };
+  // 넣기가 끝났을 때: 창을 닫고 선택을 비우고, 상태와 목록을 바로 다시 읽어요 (되돌리기 줄이 곧 나타나도록)
+  const onApplied = (result) => {
+    setDialog(null);
+    setSelection(EMPTY_SELECTION);
+    if (!result || !result.count) {
+      setNotice('바꿀 사진이 없어서 아무것도 넣지 않았어요.');
+      return;
+    }
+    setJustApplied({ batchId: result.batchId });
+    refresh();
+    setGen((g) => g + 1);
+  };
+  // 되돌리기: 마지막 묶음부터. 누르는 동안은 버튼을 꺼서 두 번 되돌리지 않게 해요
+  const undoRef = useRef(false);
+  const undo = async () => {
+    if (undoRef.current) return;
+    undoRef.current = true;
+    setUndoing(true);
+    setNotice('');
+    try {
+      const result = await api.undoLast();
+      if (!result) setNotice('되돌릴 작업이 없어요.');
+      setJustApplied(null);
+      refresh();
+      setGen((g) => g + 1);
+    } catch (e) {
+      setNotice(errorText(e));
+    } finally {
+      undoRef.current = false;
+      setUndoing(false);
     }
   };
 
@@ -283,6 +354,13 @@ export default function App() {
   }
 
   const showTools = !!(state && state.root && !state.dbError && state.total > 0);
+  // 되돌리기 줄: "내가 넣은 정보" 탭에서는 위쪽에 늘, 그 밖에서는 넣은 직후에만 (같은 줄이 두 번 보이지 않게)
+  const lastBatch = (state && state.lastBatch) || null;
+  const manualTab = screen === 'missing' && filter.info === 'manual';
+  const showTopUndo = showTools && manualTab && !!lastBatch;
+  const showAfterUndo = showTools && !manualTab && !!lastBatch && !!justApplied && justApplied.batchId === lastBatch.id;
+  // 오른쪽 패널에 자세히 보여 줄 사진: 한 장만 골랐으면 그 사진 ("이 날 모두 선택"이 한 장짜리 날이어도 보이게)
+  const soleId = selection.ids.size === 1 ? [...selection.ids][0] : null;
   return (
     <div className="shell">
       <Sidebar
@@ -310,6 +388,7 @@ export default function App() {
             selectingAll={selectingAll || !viewCurrent}
           />
         )}
+        {showTopUndo && <UndoBar batch={lastBatch} variant="top" busy={undoing} onUndo={undo} />}
         <ScanBanner
           state={state}
           recovered={recovered}
@@ -318,9 +397,33 @@ export default function App() {
           onRescan={rescan}
           rescanning={rescanning}
         />
+        {showAfterUndo && <UndoBar batch={lastBatch} variant="after" busy={undoing} onUndo={undo} onDismiss={() => setJustApplied(null)} />}
         <div className="center">{center}</div>
       </main>
-      {showTools && <DetailPanel selectedId={selection.focus} gen={gen} />}
+      {showTools && (
+        <DetailPanel
+          selectedId={soleId !== null ? soleId : selection.focus}
+          gen={gen}
+          count={selection.ids.size}
+          copySource={copySource}
+          onCopy={copyValue}
+          onPaste={() => openDialog('copy')}
+          onDirect={() => openDialog('direct')}
+        />
+      )}
+      {showTools && cellMenuAt && selection.ids.size > 0 && (
+        <ContextMenu
+          at={cellMenuAt}
+          count={selection.ids.size}
+          canCopy={selection.ids.size === 1}
+          hasCopy={!!copySource}
+          onCopy={copyValue}
+          onPaste={() => openDialog('copy')}
+          onDirect={() => openDialog('direct')}
+          onClose={closeMenu}
+        />
+      )}
+      {dialog && <EditDialog mode={dialog.mode} ids={dialog.ids} source={copySource} prefer={dialog.prefer} onClose={() => setDialog(null)} onApplied={onApplied} />}
     </div>
   );
 }

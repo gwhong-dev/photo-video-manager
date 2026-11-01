@@ -1602,6 +1602,28 @@ const items = [
       return out;
     },
   },
+  {
+    no: 26,
+    name: '버튼 문구',
+    async run() {
+      const out = [];
+      // src/format.mjs 도 React가 없는 순수 글자 만들기예요 (file:// 주소로 불러와요)
+      const { pathToFileURL } = require('url');
+      let m;
+      try {
+        m = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'format.mjs')).href);
+      } catch (e) {
+        return [sub('src/format.mjs 불러오기', false, e.message)];
+      }
+      const { applyLabel, undoLabel, appliedText } = m;
+      out.push(sub('26a applyLabel(1234, location) === "1,234장에 위치 넣기" (천 단위 쉼표)', typeof applyLabel === 'function' && applyLabel(1234, 'location') === '1,234장에 위치 넣기', typeof applyLabel === 'function' ? applyLabel(1234, 'location') : '함수 없음'));
+      out.push(sub('26b applyLabel(3, both) === "3장에 날짜와 위치 넣기", date는 날짜', typeof applyLabel === 'function' && applyLabel(3, 'both') === '3장에 날짜와 위치 넣기' && applyLabel(1, 'date') === '1장에 날짜 넣기'));
+      out.push(sub('26c 0장이거나 모르는 종류면 빈 글자 (화면은 버튼을 끄고 "바꿀 사진이 없어요"를 보임)', typeof applyLabel === 'function' && applyLabel(0, 'date') === '' && applyLabel(0, 'location') === '' && applyLabel(5, 'nope') === '' && applyLabel(undefined, 'date') === ''));
+      out.push(sub('26d undoLabel(2, date) === "2장 날짜 되돌리기", 124장 위치, 0장은 빈 글자', typeof undoLabel === 'function' && undoLabel(2, 'date') === '2장 날짜 되돌리기' && undoLabel(124, 'location') === '124장 위치 되돌리기' && undoLabel(7, 'both') === '7장 날짜와 위치 되돌리기' && undoLabel(0, 'date') === ''));
+      out.push(sub('26e appliedText: 넣은 직후 알림 줄 글 ("124장에 위치를 넣었어요")', typeof appliedText === 'function' && appliedText(124, 'location') === '124장에 위치를 넣었어요' && appliedText(3, 'date') === '3장에 날짜를 넣었어요' && appliedText(3, 'both') === '3장에 날짜와 위치를 넣었어요' && appliedText(0, 'date') === ''));
+      return out;
+    },
+  },
 ];
 
 module.exports = { items };
