@@ -191,6 +191,74 @@ const items = [
       return out;
     },
   },
+  {
+    no: 29,
+    name: '건너뛴 사진 목록',
+    async run(env) {
+      const out = [];
+      const { createSkips } = require('../lib/suggest-skips');
+      const dir = path.join(env.tmp, 'suggest-skips');
+      fs.mkdirSync(dir, { recursive: true });
+      const silent = () => {};
+
+      // 29a 다시 열어도 남아요 (한글, 공백, 특수문자 경로)
+      {
+        const f = path.join(dir, 'a.json');
+        const odd = 'D:\\사진 폴더\\a#1%20\'b".jpg';
+        const saved = createSkips(f, { onError: silent }).add([odd]);
+        const again = createSkips(f, { onError: silent }).paths();
+        out.push(sub('29a 특수문자 경로가 다시 열어도 그대로', saved === true && again.has(odd) && again.size === 1));
+      }
+
+      // 29b 겹쳐 더해도 하나, 비우면 다시 열어도 비어 있어요
+      {
+        const f = path.join(dir, 'b.json');
+        const s = createSkips(f, { onError: silent });
+        s.add(['x', 'y']);
+        s.add(['y']);
+        const size = createSkips(f, { onError: silent }).paths().size;
+        const cleared = s.clear();
+        const after = createSkips(f, { onError: silent }).paths().size;
+        out.push(sub('29b 겹쳐도 하나로 셈, 비우면 비어 있음', size === 2 && cleared === true && after === 0 && s.paths().size === 0, `${size}, ${after}`));
+      }
+
+      // 29c 깨진 파일: 이름을 바꿔 보관하고 빈 목록으로 시작해요
+      {
+        const sub1 = path.join(dir, 'broken');
+        fs.mkdirSync(sub1);
+        const f = path.join(sub1, 'suggest-skips.json');
+        fs.writeFileSync(f, '{ 깨진 내용');
+        let errors = 0;
+        const s = createSkips(f, { onError: () => { errors++; } });
+        const size = s.paths().size;
+        const kept = fs.readdirSync(sub1).filter((n) => n.startsWith('suggest-skips.json.broken-'));
+        out.push(sub('29c 깨진 파일은 보관하고 빈 목록, 오류 알림', size === 0 && kept.length === 1 && errors === 1, kept.join(',')));
+      }
+
+      // 29d 쓰기 실패: 던지지 않고 false, 메모리에는 남아요
+      {
+        const blocker = path.join(dir, 'blocker');
+        fs.writeFileSync(blocker, '폴더 자리에 파일');
+        let errors = 0;
+        const s = createSkips(path.join(blocker, 'skips.json'), { onError: () => { errors++; } });
+        const saved = s.add(['x']);
+        out.push(sub('29d 쓰기 실패면 false, 메모리에는 있음', saved === false && s.paths().has('x') && errors === 1));
+      }
+
+      // 29e 파일 모양과 임시 파일
+      {
+        const sub2 = path.join(dir, 'shape');
+        fs.mkdirSync(sub2);
+        const f = path.join(sub2, 'suggest-skips.json');
+        createSkips(f, { onError: silent }).add(['x']);
+        const data = JSON.parse(fs.readFileSync(f, 'utf8'));
+        const names = fs.readdirSync(sub2);
+        out.push(sub('29e 파일 모양 { paths }, 임시 파일이 안 남음', Array.isArray(data.paths) && data.paths[0] === 'x' && names.length === 1, names.join(',')));
+      }
+
+      return out;
+    },
+  },
 ];
 
 module.exports = { items };
