@@ -930,7 +930,7 @@ const items = [
       const { fillFakeLibrary } = require('./check-gallery');
 
       // 일부러 실패시키는 스위치: DB 저장, 되돌리기, void 줄 쓰기, 시작할 때 복구
-      const hooks = { failApply: false, failUndo: false, failVoid: false, failRecover: false, failLog: false, failSend: false };
+      const hooks = { failApply: false, failUndo: false, failVoid: false, failRecover: false, failLog: false, failSend: false, failItems: false, leak: '' };
       const opened = [];
       const origOpen = dbMod.openDb;
       const origCreateJournal = jMod.createJournal;
@@ -942,12 +942,16 @@ const items = [
         const db = {
           ...real,
           applyManualBatch(b) {
-            if (hooks.failApply) throw new Error('일부러 낸 저장 오류');
+            if (hooks.failApply) throw new Error(`일부러 낸 저장 오류 ${hooks.leak}`);
             return real.applyManualBatch(b);
           },
           undoBatch(id, at) {
-            if (hooks.failUndo) throw new Error('일부러 낸 되돌리기 오류');
+            if (hooks.failUndo) throw new Error(`일부러 낸 되돌리기 오류 ${hooks.leak}`);
             return real.undoBatch(id, at);
+          },
+          batchItems(id) {
+            if (hooks.failItems) throw new Error('일부러 낸 항목 읽기 오류');
+            return real.batchItems(id);
           },
         };
         opened.push(db);
@@ -958,7 +962,7 @@ const items = [
         return {
           ...j,
           append(line) {
-            if (hooks.failVoid && line.type === 'void') throw new Error('일부러 낸 void 쓰기 오류');
+            if (hooks.failVoid && line.type === 'void') throw new Error(`일부러 낸 void 쓰기 오류 ${hooks.leak}`);
             return j.append(line);
           },
         };
@@ -1069,6 +1073,8 @@ const items = [
           out.push(sub(`${label} 실행 중 오류`, false, String(e.stack).split('\n').slice(0, 3).join(' | ')));
         }
       };
+      // 화면에 줄 오류 글에 userData 폴더, 사진 폴더, 기록 파일 이름, 겹마침표가 없는지
+      const noPath = (P, m) => !m.includes(P.ud) && !m.includes(P.root) && !m.includes('manual-edits') && !m.includes('photos-root-xyz') && !m.includes('..');
       const NAMES = ['src.jpg', 'a.jpg', 'b.jpg', 'c.jpg'];
       const TARGETS = ['a.jpg', 'b.jpg', 'c.jpg'];
       const COPY_LOC = (sourceId) => ({ source: 'copy', sourceId, date: false, time: false, location: true });
@@ -1141,6 +1147,13 @@ const items = [
               && lines2.length === 2 && lines2[1].type === 'undo' && lines2[1].batchId === ap.batchId
               && f.sent.filter((c) => c === 'gallery:library-changed').length === 2 && st2.manualCount === 0 && st2.lastBatch === null && un2 === null,
             JSON.stringify([un, un2, lines2.length, f.sent]),
+          ));
+          // 되돌리기 로그: 묶음 번호와 파일별 전후 값 (되돌리기 전 11,21 → 되돌린 뒤 없음)
+          const undoLog = logNames(P, 'manual-edit').map((n) => fs.readFileSync(path.join(P.logDir, n), 'utf8')).filter((t) => t.startsWith('직접 넣은 값 되돌리기')).join(' | ');
+          out.push(sub(
+            '24a 되돌리기 로그에 묶음 번호와 파일별 경로, 되돌리기 전 → 후 값(위치 11,21 → 없음 3줄)이 있음',
+            undoLog.includes(ap.batchId) && TARGETS.every((n) => undoLog.includes(path.join(P.root, n))) && undoLog.split('11,21 → 없음').length - 1 === 3,
+            undoLog.slice(0, 300),
           ));
 
           // 24f 바꿀 것이 0장이면 count 0, 기록 파일, 묶음, 알림 그대로
@@ -1257,14 +1270,14 @@ const items = [
           const a = await fileOf(f, 'a.jpg');
           out.push(sub(
             '24g 기록 파일에 못 쓰면 넣기를 거절하고(이유를 알림) DB, 알림, 로그가 그대로',
-            typeof msg === 'string' && msg.includes('기록') && st.manualCount === 0 && st.lastBatch === null && a.lat === null && f.sent.length === 0 && logNames(P, 'manual-edit').length === 0,
+            typeof msg === 'string' && msg.includes('기록') && noPath(P, msg) && msg.includes('EISDIR') && st.manualCount === 0 && st.lastBatch === null && a.lat === null && f.sent.length === 0 && logNames(P, 'manual-edit').length === 0,
             msg,
           ));
           // 되돌리기도 마찬가지: 기록 파일에 못 쓰면 되돌리지 않음
           f.db.applyManualBatch({ id: 'pre', root: P.root, kind: 'location', createdAt: '2026-11-01T10:00:00', items: [{ path: path.join(P.root, 'a.jpg'), before: null, after: val({ lat: 1, lng: 2 }) }] });
           const msg2 = await errOf(f.call('gallery:undo-last'));
           const st2 = await f.call('gallery:get-state');
-          out.push(sub('24g 되돌리기도 기록 파일에 못 쓰면 거절하고 DB 그대로', typeof msg2 === 'string' && msg2.includes('기록') && st2.lastBatch && st2.lastBatch.count === 1 && (await fileOf(f, 'a.jpg')).lat === 1, msg2));
+          out.push(sub('24g 되돌리기도 기록 파일에 못 쓰면 거절하고 DB 그대로', typeof msg2 === 'string' && msg2.includes('기록') && noPath(P, msg2) && msg2.includes('EISDIR') && st2.lastBatch && st2.lastBatch.count === 1 && (await fileOf(f, 'a.jpg')).lat === 1, msg2));
         });
 
         // 24h DB 저장이 실패하면 void 줄이 생기고, 다시 켜도 값이 들어가지 않음
@@ -1274,13 +1287,15 @@ const items = [
           const ids = TARGETS.map((n) => idOf(f, n));
           const edit = COPY_LOC(idOf(f, 'src.jpg'));
           hooks.failApply = true;
+          hooks.leak = jfile(P); // 원래 오류 글에 경로가 섞여 있어도 화면에는 안 나가야 해요
           const msg = await errOf(f.call('gallery:apply-edit', ids, edit));
           hooks.failApply = false;
+          hooks.leak = '';
           const lines = jlines(P);
           const st = await f.call('gallery:get-state');
           out.push(sub(
             '24h DB 저장이 실패하면 거절(이유를 알림), 기록 파일에 apply 뒤 void, DB, 알림, 로그가 그대로',
-            typeof msg === 'string' && msg.includes('일부러 낸 저장 오류') && lines.length === 2 && lines[0].type === 'apply' && lines[1].type === 'void' && lines[1].of === 'apply' && lines[1].batchId === lines[0].batchId
+            typeof msg === 'string' && msg.includes('저장하지 못했어요') && noPath(P, msg) && !msg.includes('일부러 낸') && logText(P, 'gallery-error').includes('일부러 낸 저장 오류') && logText(P, 'gallery-error').includes('manual-edits') && lines.length === 2 && lines[0].type === 'apply' && lines[1].type === 'void' && lines[1].of === 'apply' && lines[1].batchId === lines[0].batchId
               && st.manualCount === 0 && f.sent.length === 0 && logNames(P, 'manual-edit').length === 0,
             JSON.stringify([msg, lines.map((l) => l.type)]),
           ));
@@ -1294,12 +1309,14 @@ const items = [
           const f2 = makeFake(P2);
           hooks.failApply = true;
           hooks.failVoid = true;
+          hooks.leak = jfile(P2);
           const msg2 = await errOf(f2.call('gallery:apply-edit', TARGETS.map((n) => idOf(f2, n)), COPY_LOC(idOf(f2, 'src.jpg'))));
           hooks.failApply = false;
           hooks.failVoid = false;
+          hooks.leak = '';
           out.push(sub(
             '24h void 줄도 못 쓰면 오류 글에 "다시 적용될 수 있어요"를 알리고 오류 로그에 남김',
-            typeof msg2 === 'string' && msg2.includes('다시 적용될 수 있어요') && logText(P2, 'gallery-error').includes('void'),
+            typeof msg2 === 'string' && msg2.includes('다시 적용될 수 있어요') && noPath(P2, msg2) && logText(P2, 'gallery-error').includes('void') && logText(P2, 'gallery-error').includes('manual-edits'),
             msg2,
           ));
 
@@ -1308,8 +1325,10 @@ const items = [
           let f3 = makeFake(P3);
           await f3.call('gallery:apply-edit', TARGETS.map((n) => idOf(f3, n)), COPY_LOC(idOf(f3, 'src.jpg')));
           hooks.failUndo = true;
+          hooks.leak = jfile(P3);
           const msg3 = await errOf(f3.call('gallery:undo-last'));
           hooks.failUndo = false;
+          hooks.leak = '';
           const l3 = jlines(P3);
           const sentAfterFail = f3.sent.length;
           f3.g.close();
@@ -1317,7 +1336,7 @@ const items = [
           const st3 = await f3.call('gallery:get-state');
           out.push(sub(
             '24h 되돌리기 저장이 실패하면 거절, 기록 파일에 undo 뒤 void(of undo), 값이 남고 다시 켜도 남음',
-            typeof msg3 === 'string' && l3.map((l) => l.type).join() === 'apply,undo,void' && l3[2].of === 'undo' && sentAfterFail === 1
+            typeof msg3 === 'string' && noPath(P3, msg3) && l3.map((l) => l.type).join() === 'apply,undo,void' && l3[2].of === 'undo' && sentAfterFail === 1
               && st3.manualCount === 3 && st3.lastBatch && st3.lastBatch.count === 3,
             JSON.stringify([msg3, l3.map((l) => l.type), st3.manualCount]),
           ));
@@ -1346,6 +1365,22 @@ const items = [
           ));
         });
 
+        // 24h 되돌리기 로그의 파일별 줄을 만들다 던져도 저장된 되돌리기는 성공
+        await scene('24h3', async () => {
+          const P = prep('itemsfail', NAMES);
+          const f = makeFake(P);
+          await f.call('gallery:apply-edit', TARGETS.map((n) => idOf(f, n)), COPY_LOC(idOf(f, 'src.jpg')));
+          hooks.failItems = true;
+          const un = await f.call('gallery:undo-last').then((v) => v, (e) => ({ error: e.message }));
+          hooks.failItems = false;
+          const st = await f.call('gallery:get-state');
+          out.push(sub(
+            '24h 되돌리기 로그의 파일별 줄을 만들다 던져도 되돌리기는 성공하고(void 없음, 알림 보냄) 오류 로그에 남음',
+            un.count === 3 && jlines(P).map((l) => l.type).join() === 'apply,undo' && st.manualCount === 0 && f.sent.length === 2 && logText(P, 'gallery-error').includes('일부러 낸 항목 읽기 오류'),
+            JSON.stringify([un, f.sent.length]),
+          ));
+        });
+
         // 24i 켤 때 복구: library.db를 지우고 다시 켜면 값이 돌아옴. 복구가 실패해도 갤러리는 켜짐
         await scene('24i', async () => {
           const P = prep('recover', NAMES);
@@ -1355,6 +1390,12 @@ const items = [
           await f.call('gallery:apply-edit', ids, edit);
           await f.call('gallery:apply-edit', [idOf(f, 'a.jpg')], { source: 'direct', date: '2024-03-05', time: '12:00:00' });
           await f.call('gallery:undo-last'); // 두 번째 묶음은 되돌림
+          const undoLog = logNames(P, 'manual-edit').map((n) => fs.readFileSync(path.join(P.logDir, n), 'utf8')).filter((t) => t.startsWith('직접 넣은 값 되돌리기')).join(' | ');
+          out.push(sub(
+            '24i 앞선 직접 넣은 값이 있던 파일의 되돌리기 로그: 날짜 2024-03-05T12:00:00 → 없음, 위치는 37.5,127 → 37.5,127',
+            undoLog.includes(path.join(P.root, 'a.jpg')) && undoLog.includes('2024-03-05T12:00:00 → 없음') && undoLog.includes('37.5,127 → 37.5,127'),
+            undoLog.slice(0, 300),
+          ));
           f.g.close();
           for (const ext of ['', '-wal', '-shm']) fs.rmSync(path.join(P.ud, `library.db${ext}`), { force: true });
           f = makeFake(P);
@@ -1441,7 +1482,7 @@ const items = [
           out.push(sub(
             '24n 백업 폴더가 없거나 DB를 열 수 없으면 넣기, 미리보기, 되돌리기는 읽을 수 있는 한국어 오류, listIds는 빈 목록, getCopySource는 null',
             m1.every((x) => typeof x === 'string' && x.includes('백업 폴더')) && same(ids, []) && cs === null && st.root === '' && st.lastBatch === null
-              && m2.every((x) => typeof x === 'string' && x.includes('library.db')) && same(ids2, []),
+              && m2.every((x) => typeof x === 'string' && x.includes('library.db') && !x.includes(dir) && !x.includes(path.sep)) && same(ids2, []),
             JSON.stringify([m1, m2]),
           ));
         });

@@ -71,7 +71,9 @@ function checkIds(ids) {
   return ids;
 }
 
-const msgOf = (e) => (e && e.message ? e.message : String(e));
+// 화면에 보여 줄 오류 글에는 파일 경로가 들어가면 안 돼요. 원래 오류 글(경로가 섞여 있을 수 있어요)은 로그에만 남기고,
+// 화면에는 정해진 문장과 오류 코드(EISDIR, EACCES 같은 짧은 영문 대문자)만 보여요
+const codeNote = (e) => (e && typeof e.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(e.code) ? ` (${e.code})` : '');
 
 function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning }) {
   const base = typeof userDir === 'function' ? userDir() : userDir;
@@ -288,7 +290,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // 가져오기 중이거나 DB, 백업 폴더가 없으면 못 해요. 준비됐으면 지금 백업 폴더(root)를 돌려줘요
   function editReady() {
     if (busy()) throw new Error('가져오기가 끝난 뒤에 할 수 있어요');
-    if (!db) throw new Error(dbError || '목록 파일을 열지 못해서 할 수 없어요');
+    // 원인(경로가 섞일 수 있음)은 시작 로그에 있어서 화면에는 정해진 문장만 보여요
+    if (!db) throw new Error('목록 파일(library.db)을 열지 못해서 할 수 없어요. 프로그램을 다시 켜 보세요');
     const root = rootNow();
     if (!root) throw new Error('백업 폴더를 먼저 정해 주세요');
     return root;
@@ -310,6 +313,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // DB에 저장하는 일만 try 로 감싸요. 실패하면 기록 파일에 void 를 적어서 다음에 켤 때 이 작업이 다시 적용되지 않게 해요.
   //   (저장이 끝난 뒤의 로그, 알림이 실패한 것을 void 로 적으면 안 되니까 저장 한 줄만 이 안에 둬요)
   //   void 마저 적지 못하면 그 사실을 오류 글에 같이 알려요
+  //   오류 글에는 정해진 문장과 오류 코드만 써요 (원래 오류 글은 경로가 섞일 수 있어서 로그에만 남겨요)
   //   of: 'apply' | 'undo', what: 오류 글에 쓸 이름
   function saveOrVoid(of, batchId, what, save) {
     try {
@@ -323,13 +327,15 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
         voidNote = ` 취소 표시도 기록 파일에 남기지 못해서, 다음에 프로그램을 켜면 이 ${what}가 다시 적용될 수 있어요.`;
       }
       errorLog(`${what} DB 저장`, err);
-      throw new Error(`${what}를 저장하지 못했어요: ${msgOf(err)}.${voidNote}`);
+      throw new Error(`${what}를 저장하지 못했어요${codeNote(err)}. 자세한 내용은 로그 폴더의 오류 로그에 있어요.${voidNote}`);
     }
   }
 
   // 저장이 끝난 뒤의 마무리: 로그 파일(묶음 번호, 개수, 파일별 전후 값)과 화면 알림. 실패해도 이미 저장된 작업은 그대로예요
-  function finishEdit(title, batchId, kind, count, lines) {
+  //   파일별 줄은 makeLines()로 이 try 안에서 만들어요 (만들다 던져도 저장된 작업을 실패로 만들지 않게)
+  function finishEdit(title, batchId, kind, count, makeLines) {
     try {
+      const lines = makeLines();
       const log = logger.newLog('manual-edit', `${title} ${now()}\n묶음 ${batchId}\n종류 ${kind}\n개수 ${count}`);
       if (lines.length) log.write(lines.join('\n')); // 수천 줄도 한 번에 써요
     } catch (err) {
@@ -342,7 +348,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     }
   }
 
-  const locText = (v) => (v.lat === null || v.lat === undefined ? '없음' : `${v.lat},${v.lng}`);
+  const locText = (v) => (!v || v.lat === null || v.lat === undefined ? '없음' : `${v.lat},${v.lng}`);
+  const dateText = (v) => (v && v.takenAt ? v.takenAt : '없음');
 
   // 복사할 기준 사진의 값 요약 (파일 경로 없음). 없거나 사라졌거나 다른 폴더 것이면 null
   ipcMain.handle('gallery:get-copy-source', (e, id) => {
@@ -376,13 +383,13 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       journal.append({ type: 'apply', batchId, at, root, kind: plan.kind, items });
     } catch (err) {
       errorLog('값 넣기 기록 파일 쓰기', err);
-      throw new Error(`기록 파일에 쓰지 못해서 값을 넣지 않았어요: ${msgOf(err)}`);
+      throw new Error(`기록 파일에 쓰지 못해서 값을 넣지 않았어요${codeNote(err)}. 자세한 내용은 로그 폴더의 오류 로그에 있어요.`);
     }
     // 2) DB 저장 (실패하면 void)
     saveOrVoid('apply', batchId, '값 넣기', () => db.applyManualBatch({ id: batchId, root, kind: plan.kind, createdAt: at, items }));
     // 3) 로그와 알림
-    finishEdit('직접 넣기', batchId, plan.kind, changed.length, changed.map((it) =>
-      `${it.path}\t날짜 ${it.before.takenAt || '없음'} → ${it.after.takenAt || '없음'}\t위치 ${locText(it.before)} → ${locText(it.after)}`));
+    finishEdit('직접 넣기', batchId, plan.kind, changed.length, () => changed.map((it) =>
+      `${it.path}\t날짜 ${dateText(it.before)} → ${dateText(it.after)}\t위치 ${locText(it.before)} → ${locText(it.after)}`));
     return { batchId, kind: plan.kind, count: changed.length };
   });
 
@@ -396,10 +403,12 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       journal.append({ type: 'undo', batchId: last.id, at });
     } catch (err) {
       errorLog('되돌리기 기록 파일 쓰기', err);
-      throw new Error(`기록 파일에 쓰지 못해서 되돌리지 않았어요: ${msgOf(err)}`);
+      throw new Error(`기록 파일에 쓰지 못해서 되돌리지 않았어요${codeNote(err)}. 자세한 내용은 로그 폴더의 오류 로그에 있어요.`);
     }
     saveOrVoid('undo', last.id, '되돌리기', () => db.undoBatch(last.id, at));
-    finishEdit('직접 넣은 값 되돌리기', last.id, last.kind, last.count, []);
+    // 되돌리기 로그: 파일별로 "되돌리기 전(넣었던 값) → 되돌린 뒤(그 전 값, 직접 넣은 값이 없었으면 없음)"
+    finishEdit('직접 넣은 값 되돌리기', last.id, last.kind, last.count, () => db.batchItems(last.id).map((it) =>
+      `${it.path}\t직접 넣은 날짜 ${dateText(it.after)} → ${dateText(it.before)}\t직접 넣은 위치 ${locText(it.after)} → ${locText(it.before)}`));
     return { kind: last.kind, count: last.count };
   });
 
