@@ -102,6 +102,71 @@ function timeIt(fn) {
   return { ms: Number(process.hrtime.bigint() - t0) / 1e6, result };
 }
 
+// ---------- 폴더 읽기(16번) 도우미 ----------
+const sha1Of = (p) => require('crypto').createHash('sha1').update(fs.readFileSync(p)).digest('hex');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 폴더 안 모든 파일의 내용 지문 + 수정 시각 (읽기 전후 비교용)
+function fingerprint(dir) {
+  const m = {};
+  for (const e of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+    if (!e.isFile()) continue;
+    const p = path.join(e.parentPath || e.path, e.name);
+    m[path.relative(dir, p)] = `${sha1Of(p)}@${fs.statSync(p).mtimeMs}`;
+  }
+  return m;
+}
+
+// 샘플 처리 결과(env.full.backupRoot)를 점검 임시 폴더에 복사해서 읽기 대상으로 써요 (복사본만 건드림)
+let libSeq = 0;
+function copyLibrary(env) {
+  const root = path.join(env.tmp, 'library-scan', `lib-${++libSeq}`, 'backup');
+  fs.mkdirSync(path.dirname(root), { recursive: true });
+  fs.cpSync(env.full.backupRoot, root, { recursive: true, preserveTimestamps: true });
+  return root;
+}
+
+// 폴더 읽기 객체 만들기 (logger가 없어도 돼요)
+function makeLib(db, et, over = {}) {
+  const { createLibrary } = require('../lib/library');
+  return createLibrary({ db, getEt: () => et, logger: null, isBusy: () => false, ...over });
+}
+
+// exiftool 호출 횟수를 세는 감싸개 (run을 가로채요)
+function countingEt(real) {
+  const w = Object.create(real);
+  w.calls = 0;
+  w.run = (args) => { w.calls++; return real.run(args); };
+  return w;
+}
+
+// 가짜 exiftool: 진짜로 읽은 뒤 after(files, tags, list, n)으로 결과를 바꿔요. n은 "주 읽기" 번호(1부터)
+function fakeEt(real, after) {
+  let n = 0;
+  return {
+    run: (a) => real.run(a),
+    async read(files, tags) {
+      const list = await real.read(files, tags);
+      return tags.includes('Duration#') ? after(files, tags, list, ++n) : list;
+    },
+  };
+}
+
+async function waitUntil(cond, ms) {
+  const end = Date.now() + ms;
+  while (!cond() && Date.now() < end) await sleep(20);
+  return cond();
+}
+
+const planner = () => require('../lib/planner');
+const listMedia = (root) => planner().walk(root, true, [], () => {});
+const isUnderDir = (p, dir) => planner().keyOf(p).startsWith(planner().keyOf(dir) + path.sep);
+const sumTotal = (db, root) => db.summary(root).total;
+const fileNamed = (db, root, day, name) => {
+  const hit = db.listFiles(root, day, ALL).find((f) => f.name === name);
+  return hit ? db.getFile(hit.id) : null;
+};
+
 const days = (list) => list.map((d) => `${d.day}:${d.count}`).join(',');
 const ALL = { tab: 'all', sort: 'newest', query: '', tag: null };
 
@@ -435,6 +500,253 @@ const items = [
         const detail = Object.entries(t).map(([k, v]) => `${k} ${Math.round(v)}ms`).join(', ');
         const slow = Object.entries(t).filter(([, v]) => v > LIMIT).map(([k]) => k);
         out.push(sub('가짜 6만 건 속도 (1000ms 이하)', slow.length === 0, detail));
+      }
+
+      return out;
+    },
+  },
+  {
+    no: 16,
+    name: '갤러리 폴더 읽기',
+    async run(env) {
+      const out = [];
+      const { createLogger } = require('../lib/logger');
+      const et = env.et;
+      const stash = path.join(env.tmp, 'library-scan', 'stash'); // 일부러 옮겨 놓는 곳 (이름만 바꿔 옮기고 지우지 않아요)
+      fs.mkdirSync(stash, { recursive: true });
+      const DAY = '2026-10-28';
+      const VIDEO = '2026-10-28_134113_IMG_0103.mp4';
+
+      // 16a 기본: 파일 안 바뀜, 영상 날짜 출처, 날짜 없음, 다시 읽기, 파일 하나만 바뀜, 없어짐과 돌아옴, 로그
+      await withDb(env, 'scan-basic', async (db) => {
+        const root = copyLibrary(env);
+        const n = listMedia(root).length;
+        const before = fingerprint(root);
+        const cet = countingEt(et);
+        const progress = [];
+        let changed = 0;
+        const logDir = path.join(env.tmp, 'library-scan', 'logs');
+        const lib = makeLib(db, cet, { logger: createLogger(logDir), onProgress: (p) => progress.push(p), onChanged: () => changed++ });
+
+        const r1 = await lib.scan(root);
+        out.push(sub('처음 읽기: 전부 저장', r1.status === 'done' && r1.read === n && r1.skipped === 0 && r1.missing === 0 && sumTotal(db, root) === n && n > 3, `${JSON.stringify(r1)} / 파일 ${n}개`));
+        const last = progress[progress.length - 1] || {};
+        out.push(sub('진행과 갱신 알림', last.phase === 'reading' && last.done === n && last.total === n && changed >= 1, `${JSON.stringify(last)} / 갱신 ${changed}번`));
+        out.push(sub('파일 안 바뀜 (내용과 수정 시각)', JSON.stringify(fingerprint(root)) === JSON.stringify(before)));
+
+        const v = fileNamed(db, root, DAY, VIDEO);
+        out.push(sub('영상 날짜 출처는 촬영 정보', !!v && v.takenAtSource === 'exif' && v.takenDay === DAY && v.mediaType === 'video', v ? `${v.takenAtSource} ${v.takenAt} ${v.takenOffset} ${v.durationSec}초 ${v.width}x${v.height}` : '파일 없음'));
+        const nd = db.listFiles(root, null, ALL).find((f) => f.name === 'noinfo.jpg');
+        const ndFile = nd ? db.getFile(nd.id) : null;
+        out.push(sub('날짜 없음', !!ndFile && ndFile.takenDay === null && ndFile.takenAtSource === null, ndFile ? `${ndFile.takenDay}` : '파일 없음'));
+
+        const calls0 = cet.calls;
+        const r2 = await lib.scan(root);
+        out.push(sub('다시 읽기는 exiftool 호출 0번', cet.calls === calls0 && r2.read === 0 && r2.skipped === n && r2.status === 'done', `호출 ${cet.calls - calls0}번, ${JSON.stringify(r2)}`));
+
+        const target = listMedia(root).map((f) => f.path).sort()[0];
+        const when = new Date(Date.now() - 3 * 86400000);
+        fs.utimesSync(target, when, when);
+        const r3 = await lib.scan(root);
+        const rec = db.knownFiles(root).get(target);
+        out.push(sub('파일 하나 바꾸면 그것만', r3.read === 1 && r3.skipped === n - 1 && !!rec && rec.mtimeMs === fs.statSync(target).mtimeMs, JSON.stringify(r3)));
+
+        const away = path.join(stash, 'away.bin');
+        fs.renameSync(target, away);
+        const r4 = await lib.scan(root);
+        out.push(sub('없어지면 missing', r4.status === 'done' && r4.missing === 1 && sumTotal(db, root) === n - 1 && db.knownFiles(root).get(target).missing === 1, JSON.stringify(r4)));
+        fs.renameSync(away, target);
+        const r5 = await lib.scan(root);
+        out.push(sub('돌아오면 복원 (다시 읽지 않음)', r5.read === 0 && r5.skipped === n && r5.missing === 0 && sumTotal(db, root) === n && db.knownFiles(root).get(target).missing === 0, JSON.stringify(r5)));
+
+        const logs = fs.existsSync(logDir) ? fs.readdirSync(logDir).filter((f) => f.startsWith('gallery-scan_')) : [];
+        const text = logs.length ? fs.readFileSync(path.join(logDir, logs[0]), 'utf8') : '';
+        out.push(sub('로그에 개수가 있음', logs.length >= 1 && text.includes(`찾음 ${n}개`) && text.includes(`읽음 ${n}개`), `로그 ${logs.length}개`));
+      });
+
+      // 16b 연결이 끊긴 경우: 폴더 없음, 빈 폴더, 찾은 뒤 폴더가 사라짐 → 아무것도 missing으로 만들지 않음
+      await withDb(env, 'scan-disconnect', async (db) => {
+        const root = copyLibrary(env);
+        const n = listMedia(root).length;
+        const lib = makeLib(db, et);
+        await lib.scan(root);
+
+        const gone = `${root}-gone`;
+        fs.renameSync(root, gone);
+        const r1 = await lib.scan(root);
+        out.push(sub('폴더 없음: disconnected, 개수 그대로', r1.status === 'disconnected' && r1.missing === 0 && sumTotal(db, root) === n, JSON.stringify(r1)));
+
+        fs.mkdirSync(root); // 같은 이름의 빈 폴더 (파일은 다른 곳에 있음)
+        const r2 = await lib.scan(root);
+        out.push(sub('빈 폴더: missing 표시 0개', r2.status === 'disconnected' && r2.missing === 0 && sumTotal(db, root) === n, JSON.stringify(r2)));
+
+        // 찾은 뒤에 폴더가 사라지면 (파일 하나가 목록에서 빠진 것처럼 보여도) 표시하지 않음
+        fs.renameSync(root, path.join(stash, 'empty-root'));
+        fs.renameSync(gone, root);
+        const hide = listMedia(root)[0].path;
+        const racing = (rt, inc, ex, onCount, onDirError) => {
+          const files = planner().walk(rt, inc, ex, onCount, onDirError).filter((f) => f.path !== hide);
+          fs.renameSync(rt, `${rt}-racing`);
+          return files;
+        };
+        const r3 = await makeLib(db, et, { walkFn: racing }).scan(root);
+        fs.renameSync(`${root}-racing`, root);
+        out.push(sub('찾은 뒤 폴더가 사라지면 표시 안 함', r3.status === 'disconnected' && r3.missing === 0 && sumTotal(db, root) === n, JSON.stringify(r3)));
+      });
+
+      // 16c 일부 폴더를 못 읽음: 그 폴더 안 파일은 missing으로 만들지 않음 (이름만 비슷한 폴더는 보호하지 않음)
+      await withDb(env, 'scan-faileddirs', async (db) => {
+        const root = copyLibrary(env);
+        const n = listMedia(root).length;
+        await makeLib(db, et).scan(root);
+        const dir28 = path.join(root, '2026', '10', '28');
+        const hidden = listMedia(root).filter((f) => isUnderDir(f.path, dir28)).length;
+        const fake = (report) => (rt, inc, ex, onCount, onDirError) => {
+          const files = planner().walk(rt, inc, ex, onCount, onDirError).filter((f) => !isUnderDir(f.path, dir28));
+          onDirError(report);
+          return files;
+        };
+        const r1 = await makeLib(db, et, { walkFn: fake(dir28) }).scan(root);
+        out.push(sub('못 읽은 폴더 안 파일은 missing 아님', hidden > 0 && r1.missing === 0 && r1.failedDirs.length === 1 && sumTotal(db, root) === n, `숨긴 ${hidden}개, ${JSON.stringify(r1)}`));
+        const r2 = await makeLib(db, et, { walkFn: fake(root) }).scan(root);
+        out.push(sub('root 전체를 못 읽었으면 아무것도 표시 안 함', r2.missing === 0 && sumTotal(db, root) === n, JSON.stringify(r2)));
+        const r3 = await makeLib(db, et, { walkFn: fake(path.join(root, '2026', '10', '2')) }).scan(root);
+        out.push(sub('이름만 비슷한 폴더(10/2 와 10/28)는 보호하지 않음', r3.missing === hidden && sumTotal(db, root) === n - hidden, `기대 ${hidden}개, ${JSON.stringify(r3)}`));
+        const r4 = await makeLib(db, et).scan(root);
+        out.push(sub('정상으로 읽으면 되돌아옴', r4.missing === 0 && r4.read === 0 && sumTotal(db, root) === n, JSON.stringify(r4)));
+      });
+
+      // 16d 제외 폴더, 특수문자 이름
+      await withDb(env, 'scan-names', async (db) => {
+        const root = copyLibrary(env);
+        const n = listMedia(root).length;
+        const srcRel = path.join('2026', '10', '28', '2026-10-28_134058_IMG_0101.jpg');
+        if (!fs.existsSync(path.join(root, srcRel))) { out.push(sub('특수문자 시험용 사진 준비', false, srcRel)); return; }
+        fs.mkdirSync(path.join(root, '2025년도'));
+        fs.copyFileSync(path.join(root, srcRel), path.join(root, '2025년도', 'a.jpg'));
+        fs.copyFileSync(path.join(root, srcRel), path.join(root, '사진 #1 100%.jpg'));
+        await makeLib(db, et).scan(root);
+        const known = [...db.knownFiles(root).keys()];
+        out.push(sub('후가공 폴더(2025년도) 제외', !known.some((p) => p.includes('2025년도')) && sumTotal(db, root) === n + 1, `${sumTotal(db, root)}개`));
+        const sp = db.listDays(root, ALL).map((d) => fileNamed(db, root, d.day, '사진 #1 100%.jpg')).find((f) => f);
+        out.push(sub('특수문자 이름의 날짜를 정상으로 읽음', !!sp && sp.takenDay === DAY && sp.takenAtSource === 'exif' && sp.readError === null, sp ? `${sp.takenDay} ${sp.takenAtSource}` : '못 찾음'));
+      });
+
+      // 16e 잘못된 날짜(0000:00:00)는 파일 이름 날짜로 (쓰기는 임시 복사본에만)
+      await withDb(env, 'scan-baddate', async (db) => {
+        const root = path.join(env.tmp, 'library-scan', 'baddate');
+        fs.mkdirSync(root, { recursive: true });
+        const file = path.join(root, '2026-01-02_030405_x.jpg');
+        fs.copyFileSync(path.join(env.full.backupRoot, '_날짜없음', 'noinfo.jpg'), file);
+        // exiftool은 0000:00:00 을 보통 방식(=)으로는 안 써 줘서 원래 값을 그대로 쓰는 #= 로 써요
+        await et.write(['-overwrite_original', '-DateTimeOriginal#=0000:00:00 00:00:00', file]);
+        const [back] = await et.read([file], ['DateTimeOriginal']);
+        const r = await makeLib(db, et).scan(root);
+        const f = fileNamed(db, root, '2026-01-02', '2026-01-02_030405_x.jpg');
+        out.push(sub('잘못된 날짜는 파일 이름 날짜로', !!back && back.DateTimeOriginal === '0000:00:00 00:00:00' && !!f && f.takenAtSource === 'filename' && f.takenAt === '2026-01-02T03:04:05' && r.status === 'done', `쓴 값 ${back && back.DateTimeOriginal}, ${f ? f.takenAtSource + ' ' + f.takenAt : '못 찾음'}`));
+      });
+
+      // 16f 읽는 중 파일 사라짐, 읽기 실패 파일은 "다시 읽기"를 눌러야 다시 읽음
+      await withDb(env, 'scan-vanish', async (db) => {
+        const root = copyLibrary(env);
+        const n = listMedia(root).length;
+        const x = path.join(root, '_날짜없음', 'noinfo.jpg');
+        const vanish = fakeEt(et, (files, tags, list) => {
+          fs.renameSync(x, path.join(stash, 'vanished.bin')); // 읽는 도중 사라진 것처럼
+          return list.filter((m) => planner().keyOf(m.SourceFile) !== planner().keyOf(x));
+        });
+        const r1 = await makeLib(db, vanish).scan(root);
+        const rec = db.knownFiles(root).get(x);
+        out.push(sub('읽는 중 사라진 파일: readError를 넣고 계속', r1.status === 'done' && r1.read === n && !!rec && !!rec.readError && sumTotal(db, root) === n, `${JSON.stringify(r1)} / ${rec && rec.readError}`));
+        const r2 = await makeLib(db, et).scan(root);
+        out.push(sub('다음 읽기에서 missing', r2.status === 'done' && r2.missing === 1 && sumTotal(db, root) === n - 1, JSON.stringify(r2)));
+      });
+      await withDb(env, 'scan-retry', async (db) => {
+        const root = copyLibrary(env);
+        const n = listMedia(root).length;
+        const x = path.join(root, '_날짜없음', 'noinfo.jpg');
+        const omit = fakeEt(et, (files, tags, list) => list.filter((m) => planner().keyOf(m.SourceFile) !== planner().keyOf(x)));
+        await makeLib(db, omit).scan(root);
+        const bad = db.knownFiles(root).get(x);
+        const r1 = await makeLib(db, et).scan(root);
+        out.push(sub('readError 파일은 보통 읽기에서 건너뜀', !!bad && !!bad.readError && r1.read === 0 && r1.skipped === n, JSON.stringify(r1)));
+        const r2 = await makeLib(db, et).scan(root, { retryErrors: true });
+        const fixed = db.knownFiles(root).get(x);
+        out.push(sub('다시 읽기(retryErrors)에서는 다시 읽음', r2.read === 1 && r2.skipped === n - 1 && !!fixed && fixed.readError === null, JSON.stringify(r2)));
+      });
+
+      // 16g 읽는 중 오류: 그 회차에는 missing을 만들지 않고 첫 묶음은 남김. 정상으로 다시 읽으면 전부 저장
+      await withDb(env, 'scan-error', async (db) => {
+        const root = copyLibrary(env);
+        const n = listMedia(root).length;
+        if (n < 7) { out.push(sub('묶음 시험용 파일 수 (7개 이상)', false, `${n}개`)); return; }
+        const ghost = path.join(root, 'ghost.jpg'); // DB에는 있는데 폴더에는 없는 파일 (오류가 나면 missing이 되면 안 돼요)
+        db.upsertFiles([row({ root, path: ghost, name: 'ghost.jpg', mtimeMs: 1 })]);
+        const boom = fakeEt(et, (files, tags, list, count) => {
+          if (count === 2) throw new Error('가짜 오류');
+          return list;
+        });
+        const r1 = await makeLib(db, boom, { chunkSize: 3 }).scan(root);
+        out.push(sub('두 번째 묶음 오류: status error, 첫 묶음 유지, missing 0', r1.status === 'error' && r1.missing === 0 && r1.read === 3 && sumTotal(db, root) === 4 && db.knownFiles(root).get(ghost).missing === 0, JSON.stringify(r1)));
+        const r2 = await makeLib(db, et, { chunkSize: 3 }).scan(root);
+        out.push(sub('정상으로 다시 읽으면 전부 저장', r2.status === 'done' && r2.read === n - 3 && r2.skipped === 3 && r2.missing === 1 && sumTotal(db, root) === n, JSON.stringify(r2)));
+      });
+
+      // 16h 겹치지 않음, 가져오기 우선, exiftool 없음
+      await withDb(env, 'scan-overlap-base', async (dbBase) => {
+        await withDb(env, 'scan-overlap', async (db) => {
+          const root = copyLibrary(env);
+          const calls = { n: 0 };
+          const counted = { run: (a) => et.run(a), read: (f, t) => { calls.n++; return et.read(f, t); } };
+          await makeLib(dbBase, counted).scan(root); // 한 번 읽을 때 몇 번 부르는지
+          const once = calls.n;
+          calls.n = 0;
+          const lib = makeLib(db, counted);
+          const p1 = lib.scan(root);
+          const p2 = lib.scan(root);
+          const during = lib.isScanning();
+          await p1;
+          out.push(sub('scan 두 번 호출은 같은 Promise, 읽기 1회', p1 === p2 && during === true && lib.isScanning() === false && once > 0 && calls.n === once, `호출 ${calls.n}번 (한 번 읽을 때 ${once}번)`));
+          const p3 = lib.scan(root);
+          await p3;
+          out.push(sub('끝난 뒤 다시 부르면 새로 시작', p3 !== p1));
+        });
+      });
+
+      await withDb(env, 'scan-busy', async (db) => {
+        const root = copyLibrary(env);
+        const n = listMedia(root).length;
+        if (n < 7) { out.push(sub('묶음 시험용 파일 수 (7개 이상)', false, `${n}개`)); return; }
+        let busy = false;
+        let changes = 0;
+        const lib = makeLib(db, et, { chunkSize: 3, isBusy: () => busy, onChanged: () => { if (++changes === 1) busy = true; } });
+        const p = lib.scan(root);
+        await waitUntil(() => changes >= 1, 10000);
+        await sleep(1500); // 가져오기 중이라고 알린 동안
+        const during = sumTotal(db, root);
+        busy = false;
+        const r = await p;
+        out.push(sub('가져오기 우선: 바쁜 동안 다음 묶음을 읽지 않고 끝나면 이어 감', during === 3 && r.status === 'done' && r.read === n && sumTotal(db, root) === n, `바쁜 동안 ${during}개, 끝난 뒤 ${sumTotal(db, root)}개`));
+      });
+
+      await withDb(env, 'scan-noet', async (db) => {
+        const root = copyLibrary(env);
+        const n = listMedia(root).length;
+        await makeLib(db, et).scan(root);
+        const r = await makeLib(db, null).scan(root);
+        out.push(sub('exiftool 없음: no-exiftool, 저장된 목록 유지', r.status === 'no-exiftool' && r.read === 0 && sumTotal(db, root) === n, JSON.stringify(r)));
+      });
+
+      // 16i 샘플 원본(test/samples)을 건드리지 않았는지 다시 확인 (쓰기는 임시 복사본에만 했어요)
+      {
+        const samples = path.join(__dirname, '..', 'test', 'samples');
+        const now = {};
+        for (const e of fs.readdirSync(samples, { recursive: true, withFileTypes: true })) {
+          if (!e.isFile()) continue;
+          const p = path.join(e.parentPath || e.path, e.name);
+          now[path.relative(samples, p).split(path.sep).join('/')] = sha1Of(p);
+        }
+        out.push(sub('test/samples 원본 그대로', JSON.stringify(now) === JSON.stringify(env.samplesBefore)));
       }
 
       return out;
