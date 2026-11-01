@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "samples": "node scripts/make-samples.js",
-    "check": "node scripts/check.js"
+    "check": "node scripts/check.js",
+    "postinstall": "node node_modules/electron/install.js"
   },
   "keywords": [
     "electron",
