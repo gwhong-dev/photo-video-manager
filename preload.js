@@ -53,7 +53,7 @@ contextBridge.exposeInMainWorld('api', {
     getCopySource: (id) => ipcRenderer.invoke('gallery:get-copy-source', id),
     previewEdit: (ids, edit) => ipcRenderer.invoke('gallery:preview-edit', ids, edit),
     applyEdit: (ids, edit) => ipcRenderer.invoke('gallery:apply-edit', ids, edit),
-    undoLast: () => ipcRenderer.invoke('gallery:undo-last'),
+    undoLast: (batchId) => ipcRenderer.invoke('gallery:undo-last', batchId),
     rescan: () => ipcRenderer.invoke('gallery:rescan'),
     openScreen: (name) => ipcRenderer.invoke('gallery:open-screen', name), // 'import' | 'gallery'
     // 구독을 끊는 함수를 돌려줘요

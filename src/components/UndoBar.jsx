@@ -9,7 +9,8 @@ import React from 'react';
 import { appliedText, undoLabel } from '../format.mjs';
 
 // batch = state.lastBatch { id, kind, count, createdAt }
-export default function UndoBar({ batch, variant, busy, onUndo, onDismiss }) {
+// busy = 되돌리는 중(글자도 바뀜), disabled = 새 상태를 기다리는 중(글자는 그대로, 버튼만 꺼짐)
+export default function UndoBar({ batch, variant, busy, disabled, onUndo, onDismiss }) {
   if (!batch) return null;
   const label = undoLabel(batch.count, batch.kind);
   if (!label) return null;
@@ -23,7 +24,7 @@ export default function UndoBar({ batch, variant, busy, onUndo, onDismiss }) {
             ? <span className="banner-sub"> 잘못 넣었다면 바로 되돌릴 수 있어요</span>
             : <span className="banner-sub"> 마지막에 넣은 것부터 차례로 되돌려요</span>}
         </div>
-        <button type="button" onClick={onUndo} disabled={busy}>{busy ? '되돌리는 중' : label}</button>
+        <button type="button" onClick={onUndo} disabled={busy || disabled}>{busy ? '되돌리는 중' : label}</button>
         {after && <button type="button" className="link-button" onClick={onDismiss}>닫기</button>}
       </div>
     </div>

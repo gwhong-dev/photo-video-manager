@@ -1066,6 +1066,8 @@ const items = [
       };
       const idOf = (f, name) => fileByPath(f.db, f.P.root, path.join(f.P.root, name)).id;
       const fileOf = (f, name) => f.call('gallery:get-file', idOf(f, name));
+      // 화면이 되돌리기 버튼에 적힌 묶음 번호를 같이 보내요 (지금 마지막 묶음의 번호)
+      const lastBatchId = async (f) => ((await f.call('gallery:get-state')).lastBatch || {}).id;
       const scene = async (label, fn) => {
         try {
           await fn();
@@ -1135,12 +1137,12 @@ const items = [
           ));
 
           // 되돌리기
-          const un = await f.call('gallery:undo-last');
+          const un = await f.call('gallery:undo-last', await lastBatchId(f));
           const reverted = [];
           for (const n of TARGETS) reverted.push(await fileOf(f, n));
           const lines2 = jlines(P);
           const st2 = await f.call('gallery:get-state');
-          const un2 = await f.call('gallery:undo-last');
+          const un2 = await f.call('gallery:undo-last', 'none');
           out.push(sub(
             '24a 되돌리기: 파일에서 읽은 값으로 돌아가고 기록 파일에 undo 줄, 알림 한 번 더, 묶음이 없으면 null',
             same(un, { kind: 'location', count: 3 }) && reverted.every((x) => x.lat === null && x.locationSource === null)
@@ -1196,7 +1198,7 @@ const items = [
           const m = [
             await errOf(f.call('gallery:preview-edit', ids, edit)),
             await errOf(f.call('gallery:apply-edit', ids, edit)),
-            await errOf(f.call('gallery:undo-last')),
+            await errOf(f.call('gallery:undo-last', 'x')),
           ];
           f.flags.running = false;
           const st = await f.call('gallery:get-state');
@@ -1275,7 +1277,7 @@ const items = [
           ));
           // 되돌리기도 마찬가지: 기록 파일에 못 쓰면 되돌리지 않음
           f.db.applyManualBatch({ id: 'pre', root: P.root, kind: 'location', createdAt: '2026-11-01T10:00:00', items: [{ path: path.join(P.root, 'a.jpg'), before: null, after: val({ lat: 1, lng: 2 }) }] });
-          const msg2 = await errOf(f.call('gallery:undo-last'));
+          const msg2 = await errOf(f.call('gallery:undo-last', 'pre'));
           const st2 = await f.call('gallery:get-state');
           out.push(sub('24g 되돌리기도 기록 파일에 못 쓰면 거절하고 DB 그대로', typeof msg2 === 'string' && msg2.includes('기록') && noPath(P, msg2) && msg2.includes('EISDIR') && st2.lastBatch && st2.lastBatch.count === 1 && (await fileOf(f, 'a.jpg')).lat === 1, msg2));
         });
@@ -1326,7 +1328,7 @@ const items = [
           await f3.call('gallery:apply-edit', TARGETS.map((n) => idOf(f3, n)), COPY_LOC(idOf(f3, 'src.jpg')));
           hooks.failUndo = true;
           hooks.leak = jfile(P3);
-          const msg3 = await errOf(f3.call('gallery:undo-last'));
+          const msg3 = await errOf(f3.call('gallery:undo-last', await lastBatchId(f3)));
           hooks.failUndo = false;
           hooks.leak = '';
           const l3 = jlines(P3);
@@ -1350,7 +1352,7 @@ const items = [
           hooks.failLog = true;
           hooks.failSend = true;
           const ap = await f.call('gallery:apply-edit', ids, COPY_LOC(idOf(f, 'src.jpg'))).then((v) => v, (e) => ({ error: e.message }));
-          const un = await f.call('gallery:undo-last').then((v) => v, (e) => ({ error: e.message }));
+          const un = await f.call('gallery:undo-last', await lastBatchId(f)).then((v) => v, (e) => ({ error: e.message }));
           hooks.failLog = false;
           hooks.failSend = false;
           const types = jlines(P).map((l) => l.type).join();
@@ -1371,7 +1373,7 @@ const items = [
           const f = makeFake(P);
           await f.call('gallery:apply-edit', TARGETS.map((n) => idOf(f, n)), COPY_LOC(idOf(f, 'src.jpg')));
           hooks.failItems = true;
-          const un = await f.call('gallery:undo-last').then((v) => v, (e) => ({ error: e.message }));
+          const un = await f.call('gallery:undo-last', await lastBatchId(f)).then((v) => v, (e) => ({ error: e.message }));
           hooks.failItems = false;
           const st = await f.call('gallery:get-state');
           out.push(sub(
@@ -1389,7 +1391,7 @@ const items = [
           const edit = COPY_LOC(idOf(f, 'src.jpg'));
           await f.call('gallery:apply-edit', ids, edit);
           await f.call('gallery:apply-edit', [idOf(f, 'a.jpg')], { source: 'direct', date: '2024-03-05', time: '12:00:00' });
-          await f.call('gallery:undo-last'); // 두 번째 묶음은 되돌림
+          await f.call('gallery:undo-last', await lastBatchId(f)); // 두 번째 묶음은 되돌림
           const undoLog = logNames(P, 'manual-edit').map((n) => fs.readFileSync(path.join(P.logDir, n), 'utf8')).filter((t) => t.startsWith('직접 넣은 값 되돌리기')).join(' | ');
           out.push(sub(
             '24i 앞선 직접 넣은 값이 있던 파일의 되돌리기 로그: 날짜 2024-03-05T12:00:00 → 없음, 위치는 37.5,127 → 37.5,127',
@@ -1457,7 +1459,7 @@ const items = [
           const ids = TARGETS.map((n) => idOf(f, n));
           const ap = await f.call('gallery:apply-edit', ids, COPY_LOC(idOf(f, 'src.jpg')));
           const a = await fileOf(f, 'a.jpg');
-          const un = await f.call('gallery:undo-last');
+          const un = await f.call('gallery:undo-last', await lastBatchId(f));
           out.push(sub(
             '24m 백업 폴더가 연결되지 않아도(connected false) 넣기와 되돌리기가 동작함',
             st0.connected === false && ap.count === 3 && a.lat === 37.5 && same(un, { kind: 'location', count: 3 }) && (await fileOf(f, 'a.jpg')).lat === null,
@@ -1469,7 +1471,7 @@ const items = [
         await scene('24n', async () => {
           const P = prep('noroot', NAMES);
           const f = makeFake({ ...P, root: '' });
-          const m1 = [await errOf(f.call('gallery:preview-edit', [1], { source: 'direct', date: '2024-03-05' })), await errOf(f.call('gallery:apply-edit', [1], { source: 'direct', date: '2024-03-05' })), await errOf(f.call('gallery:undo-last'))];
+          const m1 = [await errOf(f.call('gallery:preview-edit', [1], { source: 'direct', date: '2024-03-05' })), await errOf(f.call('gallery:apply-edit', [1], { source: 'direct', date: '2024-03-05' })), await errOf(f.call('gallery:undo-last', 'x'))];
           const ids = await f.call('gallery:list-ids', {});
           const cs = await f.call('gallery:get-copy-source', 1);
           const st = await f.call('gallery:get-state');
@@ -1477,7 +1479,7 @@ const items = [
           const dir = path.join(base, `nodb-${++seq}`);
           fs.mkdirSync(path.join(dir, 'ud', 'library.db'), { recursive: true });
           const f2 = makeFake({ dir, root: path.resolve(dir, 'photos-root-xyz'), ud: path.join(dir, 'ud'), logDir: path.join(dir, 'logs') });
-          const m2 = [await errOf(f2.call('gallery:preview-edit', [1], { source: 'direct', date: '2024-03-05' })), await errOf(f2.call('gallery:undo-last'))];
+          const m2 = [await errOf(f2.call('gallery:preview-edit', [1], { source: 'direct', date: '2024-03-05' })), await errOf(f2.call('gallery:undo-last', 'x'))];
           const ids2 = await f2.call('gallery:list-ids', {});
           out.push(sub(
             '24n 백업 폴더가 없거나 DB를 열 수 없으면 넣기, 미리보기, 되돌리기는 읽을 수 있는 한국어 오류, listIds는 빈 목록, getCopySource는 null',
@@ -1485,6 +1487,39 @@ const items = [
               && m2.every((x) => typeof x === 'string' && x.includes('library.db') && !x.includes(dir) && !x.includes(path.sep)) && same(ids2, []),
             JSON.stringify([m1, m2]),
           ));
+        });
+
+        // 24o 되돌리기는 화면이 보낸 묶음 번호가 지금 마지막 묶음일 때만 (두 번 눌러도 앞 묶음까지 되돌리지 않음)
+        await scene('24o', async () => {
+          const P = prep('undoid', NAMES);
+          const f = makeFake(P);
+          const ids = TARGETS.map((n) => idOf(f, n));
+          const A = await f.call('gallery:apply-edit', ids, COPY_LOC(idOf(f, 'src.jpg')));
+          const B = await f.call('gallery:apply-edit', [idOf(f, 'a.jpg')], { source: 'direct', date: '2024-03-05', time: '12:00:00' });
+          const snap = async () => JSON.stringify([jlines(P).length, (await f.call('gallery:get-state')).lastBatch, (await f.call('gallery:get-state')).manualCount, await fileOf(f, 'a.jpg'), await fileOf(f, 'b.jpg')]);
+          const s0 = await snap();
+          // 마지막이 아닌 묶음의 번호, 모양이 틀린 번호: 거절하고 기록 파일, DB 모두 그대로
+          const stale = await errOf(f.call('gallery:undo-last', A.batchId));
+          const bad = [await errOf(f.call('gallery:undo-last')), await errOf(f.call('gallery:undo-last', '')), await errOf(f.call('gallery:undo-last', 123)), await errOf(f.call('gallery:undo-last', { id: B.batchId })), await errOf(f.call('gallery:undo-last', 'x'.repeat(101)))];
+          const unchanged = (await snap()) === s0;
+          out.push(sub(
+            '24o 마지막이 아닌 묶음 번호는 "작업이 바뀌었어요"로, 번호가 없거나 모양이 틀리면 "올바르지 않아요"로 거절하고 기록 파일 줄, 마지막 묶음, 파일 값이 그대로',
+            typeof stale === 'string' && stale.includes('바뀌었어요') && bad.every((m) => typeof m === 'string' && m.includes('올바르지 않아요')) && unchanged,
+            JSON.stringify([stale, bad, unchanged]),
+          ));
+          // 맞는 번호는 되돌리고, 같은 번호로 한 번 더 누르면(두 번 클릭) 거절 - 앞 묶음 A는 그대로 남음
+          const un = await f.call('gallery:undo-last', B.batchId);
+          const again = await errOf(f.call('gallery:undo-last', B.batchId));
+          const st = await f.call('gallery:get-state');
+          const a = await fileOf(f, 'a.jpg');
+          out.push(sub(
+            '24o 맞는 번호는 되돌리고, 같은 번호로 다시 누르면 거절되어 앞 묶음(위치 3장)은 되돌려지지 않음',
+            same(un, { kind: 'date', count: 1 }) && typeof again === 'string' && again.includes('바뀌었어요') && st.lastBatch && st.lastBatch.id === A.batchId && st.manualCount === 3 && a.locationSource === 'manual' && a.takenAtSource === 'exif',
+            JSON.stringify([un, again, st.lastBatch && st.lastBatch.id === A.batchId, st.manualCount, a.locationSource, a.takenAtSource]),
+          ));
+          // 되돌릴 묶음이 하나도 없으면 번호가 있어도 null
+          await f.call('gallery:undo-last', A.batchId);
+          out.push(sub('24o 되돌릴 묶음이 없으면 null', (await f.call('gallery:undo-last', A.batchId)) === null));
         });
 
         // 24k 3,277장 넣기 시간 (10초 넘으면 실패)
@@ -1504,7 +1539,7 @@ const items = [
           const t1 = Date.now();
           const ap = await f.call('gallery:apply-edit', all, edit);
           const t2 = Date.now();
-          const un = await f.call('gallery:undo-last');
+          const un = await f.call('gallery:undo-last', await lastBatchId(f));
           const t3 = Date.now();
           const lineCount = jlines(P).length;
           out.push(sub(

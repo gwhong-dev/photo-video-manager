@@ -49,6 +49,7 @@ export default function App() {
   const [dialog, setDialog] = useState(null); // 미리보기 창: { mode: 'copy' | 'direct', ids, prefer }. 열 때의 선택을 그대로 담아요
   const [justApplied, setJustApplied] = useState(null); // 방금 넣은 묶음 { batchId }. 넣은 직후 알림 줄을 보여 줘요
   const [undoing, setUndoing] = useState(false);
+  const [syncing, setSyncing] = useState(false); // 넣은 직후 새 상태(마지막 묶음)를 받아오는 중. 그동안 되돌리기 버튼을 꺼요
   const [selectingAll, setSelectingAll] = useState(false); // "목록 전체 선택"으로 번호를 받아오는 중
   const [notice, setNotice] = useState(''); // 화면 전환이 거절된 이유 등
   const [rescanning, setRescanning] = useState(false);
@@ -252,32 +253,41 @@ export default function App() {
     setDialog({ mode, ids: [...selection.ids], prefer: filter.info === 'noDate' ? 'date' : 'location' });
   };
   // 넣기가 끝났을 때: 창을 닫고 선택을 비우고, 상태와 목록을 바로 다시 읽어요 (되돌리기 줄이 곧 나타나도록)
-  const onApplied = (result) => {
+  const onApplied = async (result) => {
     setDialog(null);
     setSelection(EMPTY_SELECTION);
     if (!result || !result.count) {
       setNotice('바꿀 사진이 없어서 아무것도 넣지 않았어요.');
       return;
     }
+    // 새 상태가 오기 전에는 되돌리기 줄에 앞 묶음의 글이 남아 있을 수 있어서, 도착할 때까지 버튼을 꺼요
+    setSyncing(true);
     setJustApplied({ batchId: result.batchId });
-    refresh();
     setGen((g) => g + 1);
+    try {
+      await refresh();
+    } finally {
+      setSyncing(false);
+    }
   };
-  // 되돌리기: 마지막 묶음부터. 누르는 동안은 버튼을 꺼서 두 번 되돌리지 않게 해요
+  // 되돌리기: 마지막 묶음부터. batchId = 버튼에 적힌 묶음의 번호 (main이 지금 마지막 묶음과 다르면 거절해요)
+  //   새 상태를 받아올 때까지 버튼을 계속 꺼 둬서, 두 번 눌러도 앞 묶음까지 되돌리지 않게 해요
   const undoRef = useRef(false);
-  const undo = async () => {
+  const undo = async (batchId) => {
     if (undoRef.current) return;
     undoRef.current = true;
     setUndoing(true);
     setNotice('');
     try {
-      const result = await api.undoLast();
+      const result = await api.undoLast(batchId);
       if (!result) setNotice('되돌릴 작업이 없어요.');
       setJustApplied(null);
-      refresh();
-      setGen((g) => g + 1);
     } catch (e) {
       setNotice(errorText(e));
+    }
+    try {
+      await refresh(); // 성공해도 거절돼도 최신 마지막 묶음을 다시 읽어요
+      setGen((g) => g + 1);
     } finally {
       undoRef.current = false;
       setUndoing(false);
@@ -388,7 +398,7 @@ export default function App() {
             selectingAll={selectingAll || !viewCurrent}
           />
         )}
-        {showTopUndo && <UndoBar batch={lastBatch} variant="top" busy={undoing} onUndo={undo} />}
+        {showTopUndo && <UndoBar batch={lastBatch} variant="top" busy={undoing} disabled={syncing} onUndo={() => undo(lastBatch.id)} />}
         <ScanBanner
           state={state}
           recovered={recovered}
@@ -397,7 +407,7 @@ export default function App() {
           onRescan={rescan}
           rescanning={rescanning}
         />
-        {showAfterUndo && <UndoBar batch={lastBatch} variant="after" busy={undoing} onUndo={undo} onDismiss={() => setJustApplied(null)} />}
+        {showAfterUndo && <UndoBar batch={lastBatch} variant="after" busy={undoing} disabled={syncing} onUndo={() => undo(lastBatch.id)} onDismiss={() => setJustApplied(null)} />}
         <div className="center">{center}</div>
       </main>
       {showTools && (

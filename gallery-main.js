@@ -394,10 +394,14 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   });
 
   // 되돌리기: 이 백업 폴더의 마지막 묶음만. 없으면 null
-  ipcMain.handle('gallery:undo-last', () => {
+  //   화면이 버튼에 적힌 묶음의 번호(batchId)를 같이 보내요. 마지막 묶음이 그 사이 바뀌었으면 거절해요
+  //   (두 번 눌러서 이미 되돌린 줄 모르고 그 앞 묶음까지 되돌리는 일을 막으려고. 기록 파일도 DB도 건드리지 않아요)
+  ipcMain.handle('gallery:undo-last', (e, batchId) => {
     const root = editReady();
+    if (typeof batchId !== 'string' || !batchId || batchId.length > 100) throw new Error('되돌릴 작업 번호가 올바르지 않아요.');
     const last = db.lastBatch(root);
     if (!last) return null;
+    if (last.id !== batchId) throw new Error('마지막으로 넣은 작업이 바뀌었어요. 화면을 확인하고 다시 눌러 주세요.');
     const at = new Date().toISOString();
     try {
       journal.append({ type: 'undo', batchId: last.id, at });
