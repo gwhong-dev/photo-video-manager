@@ -170,6 +170,19 @@ const fileNamed = (db, root, day, name) => {
 const days = (list) => list.map((d) => `${d.day}:${d.count}`).join(',');
 const ALL = { tab: 'all', sort: 'newest', query: '', tag: null };
 
+// 가짜 손상 영상: check.js의 breakVideo와 같은 방식 (목차 moov 상자를 지우고 끝을 0으로 채움)
+function breakMp4(from, to, zeros) {
+  const buf = fs.readFileSync(from);
+  const keep = [];
+  for (let p = 0; p + 8 <= buf.length; ) {
+    const size = buf.readUInt32BE(p);
+    if (size < 8) break;
+    if (buf.toString('latin1', p + 4, p + 8) !== 'moov') keep.push(buf.subarray(p, p + size));
+    p += size;
+  }
+  fs.writeFileSync(to, Buffer.concat([...keep, Buffer.alloc(zeros)]));
+}
+
 // ---------- 점검 항목 ----------
 const items = [
   {
@@ -902,6 +915,357 @@ const items = [
         }
         out.push(sub('test/samples 원본 그대로', JSON.stringify(now) === JSON.stringify(env.samplesBefore)));
       }
+
+      return out;
+    },
+  },
+  {
+    no: 17,
+    name: '갤러리 썸네일',
+    async run(env) {
+      const out = [];
+      const sharp = require('sharp');
+      const { createThumbs, thumbPath } = require('../lib/thumbs');
+      const { handleMedia } = require('../lib/media-protocol');
+      const { runCmd } = require('../lib/tools');
+      const { createLogger } = require('../lib/logger');
+      const tools = env.tools;
+      const AUTO = path.join(__dirname, '..', 'test', 'samples', 'auto');
+      const VIDEO_SRC = path.join(env.full.backupRoot, '2026', '10', '28', '2026-10-28_134113_IMG_0103.mp4');
+      const DAY = '2026-10-25'; // row()의 기본 날짜
+      const maxSide = async (p) => {
+        const m = await sharp(p).metadata();
+        return { format: m.format, w: m.width, h: m.height, max: Math.max(m.width, m.height) };
+      };
+      const state = (db, id) => db.getFile(id).thumbState;
+      const listAll = (dir) => fs.readdirSync(dir, { recursive: true, withFileTypes: true })
+        .filter((e) => e.isFile())
+        .map((e) => path.relative(dir, path.join(e.parentPath || e.path, e.name)))
+        .sort();
+
+      // 17용 임시 폴더: src(사진 복사본) / thumbs(썸네일) / logs. 사진은 전부 복사본이에요
+      const base = path.join(env.tmp, 'thumbs-check', 'main');
+      const src = path.join(base, 'src');
+      const thumbDir = path.join(base, 'thumbs');
+      fs.mkdirSync(path.join(src, '한글 폴더'), { recursive: true });
+      const put = (rel, from) => {
+        const to = path.join(src, rel);
+        fs.copyFileSync(from, to);
+        return to;
+      };
+      const jpg = put('IMG_0101.jpg', path.join(AUTO, 'IMG_0101.jpg'));
+      const hangul = put(path.join('한글 폴더', 'noinfo.jpg'), path.join(AUTO, 'noinfo.jpg'));
+      const png = put('IMG_0102.png', path.join(AUTO, 'IMG_0102.PNG'));
+      const special = put('사진 #1 100%.jpg', jpg);
+      const rotated = put('회전.jpg', jpg);
+      await env.et.write(['-overwrite_original', '-Orientation#=6', rotated]); // 복사본에만 씀
+      const next = put('다음.jpg', jpg);
+      const stale = put('낡은임시.jpg', jpg);
+      const gone = put('사라질.jpg', jpg);
+      const big = path.join(src, '큰사진.jpg');
+      await sharp({ create: { width: 3000, height: 2000, channels: 3, background: '#8899aa' } }).jpeg().toFile(big);
+      const hasVideo = fs.existsSync(VIDEO_SRC);
+      const video = hasVideo ? put('영상.mp4', VIDEO_SRC) : null;
+      const shortVideo = hasVideo ? put('짧은영상.mp4', VIDEO_SRC) : null;
+      const broken = hasVideo ? path.join(src, '깨진영상.mp4') : null;
+      if (hasVideo) breakMp4(VIDEO_SRC, broken, 4096);
+      const empty = path.join(src, '빈파일.jpg');
+      fs.writeFileSync(empty, '');
+      const fake = path.join(src, '가짜.jpg');
+      fs.writeFileSync(fake, '이건 사진이 아니에요');
+      const bmp = path.join(src, '형식.bmp');
+      let bmpOk = false;
+      if (tools.magick.ok) bmpOk = (await runCmd(tools.magick.path, [jpg, bmp])).code === 0 && fs.existsSync(bmp);
+      const all = [jpg, hangul, png, special, rotated, next, stale, gone, big, empty, fake];
+      if (hasVideo) all.push(video, shortVideo, broken);
+      if (bmpOk) all.push(bmp);
+
+      // DB에 올릴 줄. gone은 DB에 올린 뒤 폴더에서 지워요 (DB에는 있는데 폴더에는 없는 파일)
+      const rowOf = (file, root = src) => {
+        const st = fs.statSync(file);
+        const isVideo = /\.mp4$/.test(file);
+        return row({
+          root,
+          path: file,
+          name: path.basename(file),
+          mediaType: isVideo ? 'video' : 'photo',
+          size: st.size,
+          mtimeMs: Math.floor(st.mtimeMs),
+          durationSec: isVideo ? (file === shortVideo ? 0.5 : 3) : null,
+        });
+      };
+
+      let before = [];
+      await withDb(env, 'thumbs', async (db) => {
+        db.upsertFiles(all.map((f) => rowOf(f)));
+        fs.rmSync(gone);
+        before = listAll(src);
+        const idOf = (file) => fileNamed(db, src, DAY, path.basename(file)).id;
+        const logDir = path.join(base, 'logs');
+        const thumbs = createThumbs({ db, thumbDir, getTools: () => tools, isBusy: () => false, logger: createLogger(logDir) });
+
+        // 17a 사진, 한글 폴더 경로, PNG, 특수문자 이름: webp가 생기고 긴 변이 320 이하
+        const okFiles = [['사진', jpg], ['한글 폴더 경로', hangul], ['PNG', png], ['특수문자 이름 (사진 #1 100%.jpg)', special]];
+        const made = await Promise.all(okFiles.map(([, f]) => thumbs.request(idOf(f))));
+        for (let i = 0; i < okFiles.length; i++) {
+          const p = made[i];
+          let m = null;
+          try { m = p ? await maxSide(p) : null; } catch (e) { m = null; }
+          out.push(sub(okFiles[i][0], !!p && !!m && m.format === 'webp' && m.max <= 320 && m.max > 0 && state(db, idOf(okFiles[i][1])) === 'ready' && p.startsWith(thumbDir), p ? JSON.stringify(m) : '썸네일 없음'));
+        }
+        out.push(sub('썸네일 위치는 <앞 2글자>/<sha1>.webp', !!made[0] && made[0] === thumbPath(thumbDir, db.getFile(idOf(jpg))) && /^[0-9a-f]{2}$/.test(path.basename(path.dirname(made[0]))) && /^[0-9a-f]{40}\.webp$/.test(path.basename(made[0])), made[0] || ''));
+
+        // 17b 회전 정보: Orientation=6 이면 세로가 더 김
+        const rp = await thumbs.request(idOf(rotated));
+        const rm = rp ? await maxSide(rp) : null;
+        out.push(sub('회전 정보 반영 (Orientation=6 이면 세로가 더 김)', !!rm && rm.h > rm.w && rm.max <= 320, rm ? JSON.stringify(rm) : '썸네일 없음'));
+
+        // 17c 영상: mp4 썸네일, 1초보다 짧은 영상, 손상 영상
+        if (!hasVideo || !tools.ffmpeg.ok) {
+          out.push({ label: '영상 썸네일', status: 'skip', detail: hasVideo ? 'ffmpeg 없음' : '샘플 영상 없음' });
+        } else {
+          const vp = await thumbs.request(idOf(video));
+          const vm = vp ? await maxSide(vp) : null;
+          out.push(sub('영상: mp4 썸네일 생성', !!vm && vm.format === 'webp' && vm.max <= 320 && state(db, idOf(video)) === 'ready', vm ? JSON.stringify(vm) : '썸네일 없음'));
+          const sp = await thumbs.request(idOf(shortVideo));
+          out.push(sub('1초보다 짧다고 적힌 영상은 첫 장면 (-ss 없이)', !!sp && state(db, idOf(shortVideo)) === 'ready', sp || '썸네일 없음'));
+          const bp = await thumbs.request(idOf(broken));
+          const np = await thumbs.request(idOf(next));
+          out.push(sub('손상 영상: failed, 다음 파일은 정상', bp === null && state(db, idOf(broken)) === 'failed' && !!np && state(db, idOf(next)) === 'ready', `손상 ${state(db, idOf(broken))}, 다음 ${state(db, idOf(next))}`));
+        }
+
+        // 17d 0바이트, 사진이 아닌 파일, 폴더에서 사라진 파일: failed. request는 거절되지 않고 null
+        let threw = false;
+        const results = await Promise.all([empty, fake, gone].map((f) => thumbs.request(idOf(f)).catch(() => { threw = true; return 'error'; })));
+        out.push(sub('0바이트 파일: failed', results[0] === null && state(db, idOf(empty)) === 'failed', `${results[0]}`));
+        out.push(sub('사진이 아닌 파일: failed', results[1] === null && state(db, idOf(fake)) === 'failed'));
+        out.push(sub('폴더에서 사라진 파일: failed, request는 거절되지 않음', results[2] === null && state(db, idOf(gone)) === 'failed' && !threw));
+        out.push(sub('없는 id는 null', (await thumbs.request(999999)) === null));
+
+        // 17e 다른 형식(bmp): sharp 또는 ImageMagick으로 만들어짐
+        if (bmpOk) {
+          const bpth = await thumbs.request(idOf(bmp));
+          const bm = bpth ? await maxSide(bpth) : null;
+          out.push(sub('bmp 같은 형식도 만들어짐 (sharp 또는 ImageMagick)', !!bm && bm.format === 'webp' && bm.max <= 320, bm ? JSON.stringify(bm) : '썸네일 없음'));
+        }
+
+        // 17f 낡은 임시 파일은 썸네일이 아님. 이미 만든 썸네일은 다시 만들지 않고 ready로
+        {
+          const f = db.getFile(idOf(stale));
+          const dest = thumbPath(thumbDir, f);
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.writeFileSync(dest + '.tmp-old', '깨진 임시 파일');
+          const p = await thumbs.request(f.id);
+          const m = p ? await maxSide(p) : null;
+          out.push(sub('낡은 임시 파일이 있어도 진짜 썸네일을 만듦', p === dest && !!m && m.format === 'webp', m ? JSON.stringify(m) : '썸네일 없음'));
+          const t1 = fs.statSync(dest).mtimeMs;
+          db.setThumbState(f.id, 'none');
+          const again = await thumbs.request(f.id);
+          out.push(sub('이미 있는 썸네일은 다시 만들지 않고 ready로', again === dest && fs.statSync(dest).mtimeMs === t1 && state(db, f.id) === 'ready'));
+        }
+
+        // 17g 실패 다시 시도
+        {
+          const failedIds = [empty, fake, gone].map(idOf);
+          thumbs.retryFailed(src);
+          const states = failedIds.map((id) => state(db, id));
+          const queued = db.nextThumbJobs(src, 100).map((j) => j.id);
+          out.push(sub('실패 다시 시도: failed였던 파일이 none으로', states.every((x) => x === 'none') && failedIds.every((id) => queued.includes(id)), states.join(',')));
+        }
+
+        // 17h 패널 미리보기: 사진은 긴 변 1200px, 저장하지 않음. 영상은 썸네일 파일 내용
+        {
+          const filesBefore = listAll(thumbDir);
+          const pv = await thumbs.preview(idOf(big));
+          const pm = pv ? await sharp(pv.buffer).metadata() : null;
+          out.push(sub('사진 미리보기: webp, 긴 변 1200px', !!pv && pv.type === 'image/webp' && !!pm && pm.format === 'webp' && Math.max(pm.width, pm.height) === 1200, pm ? JSON.stringify([pm.width, pm.height]) : '없음'));
+          out.push(sub('미리보기는 저장하지 않음 (썸네일 폴더 파일 그대로)', JSON.stringify(listAll(thumbDir)) === JSON.stringify(filesBefore)));
+          if (hasVideo && tools.ffmpeg.ok) {
+            const vp = await thumbs.preview(idOf(video));
+            const tp = thumbPath(thumbDir, db.getFile(idOf(video)));
+            out.push(sub('영상 미리보기는 썸네일 파일 내용', !!vp && vp.type === 'image/webp' && fs.existsSync(tp) && Buffer.compare(vp.buffer, fs.readFileSync(tp)) === 0));
+            out.push(sub('손상 영상 미리보기는 null', (await thumbs.preview(idOf(broken))) === null));
+          }
+          out.push(sub('미리보기: 없는 id, 사라진 파일은 null', (await thumbs.preview(999999)) === null && (await thumbs.preview(idOf(gone))) === null));
+        }
+
+        // 17i pvm:// 판단
+        {
+          let dbCalls = 0;
+          let thumbCalls = 0;
+          const spyDb = { getFile: (id) => { dbCalls++; return db.getFile(id); } };
+          const spyThumbs = {
+            request: (id) => { thumbCalls++; return thumbs.request(id); },
+            preview: (id) => { thumbCalls++; return thumbs.preview(id); },
+          };
+          const media = (u) => handleMedia(u, { db: spyDb, thumbs: spyThumbs });
+          const jid = idOf(jpg);
+          const t = await media('pvm://thumb/' + jid);
+          const pr = await media('pvm://preview/' + jid);
+          out.push(sub('pvm://thumb/<id> 는 200과 경로', t.status === 200 && typeof t.path === 'string' && t.path.startsWith(thumbDir) && fs.existsSync(t.path), JSON.stringify({ status: t.status, path: t.path })));
+          out.push(sub('pvm://preview/<id> 는 200과 내용', pr.status === 200 && Buffer.isBuffer(pr.buffer) && pr.buffer.length > 0 && pr.type === 'image/webp', String(pr.status)));
+          dbCalls = 0;
+          thumbCalls = 0;
+          const bad = [
+            'pvm://thumb/abc', 'pvm://thumb/..%2F..%2Fa', 'pvm://other/1', 'pvm://thumb/1%20', 'pvm://thumb/0', 'pvm://thumb/01',
+            'pvm://thumb/1/2', 'pvm://thumb/', 'pvm://thumb', 'pvm://thumb/-1', 'pvm://thumb/1.5', 'pvm://thumb/99999999999999999999',
+            'http://thumb/1', 'file:///C:/a.jpg', '이건 주소가 아니에요', '', 'pvm://user@thumb/1', 'pvm://thumb:80/1', 'pvm://preview/%2e%2e',
+          ];
+          const got = [];
+          for (const u of bad) got.push((await media(u)).status);
+          out.push(sub('잘못된 주소는 404이고 DB, 파일을 건드리지 않음', got.every((x) => x === 404) && dbCalls === 0 && thumbCalls === 0, `${got.join(',')} / DB ${dbCalls}번, 만들기 ${thumbCalls}번`));
+          const nf = await media('pvm://thumb/999999');
+          out.push(sub('DB에 없는 id는 404 (썸네일 만들기 없음)', nf.status === 404 && thumbCalls === 0));
+          if (hasVideo && tools.ffmpeg.ok) {
+            const bt = await media('pvm://thumb/' + idOf(broken));
+            const bp = await media('pvm://preview/' + idOf(broken));
+            out.push(sub('만들기에 실패한 영상은 404', bt.status === 404 && bp.status === 404, `${bt.status}, ${bp.status}`));
+          }
+          const gt = await media('pvm://thumb/' + idOf(gone));
+          out.push(sub('폴더에서 사라진 사진은 404', gt.status === 404));
+        }
+
+        await thumbs.stop();
+        out.push(sub('stop 뒤 새 요청은 null', (await thumbs.request(idOf(jpg))) === null && (await thumbs.preview(idOf(big))) === null));
+        const leftovers = listAll(thumbDir).filter((n) => !n.endsWith('.webp') && !n.endsWith('.tmp-old'));
+        out.push(sub('썸네일 폴더에 임시 파일이 남지 않음 (일부러 만든 낡은 파일 제외)', leftovers.length === 0, leftovers.join(',')));
+      });
+
+      // 17j FFmpeg 없음: 사진은 만들고 영상은 failed. 도구 정보가 아예 없어도 사진은 만듦
+      if (hasVideo) {
+        await withDb(env, 'thumbs-noffmpeg', async (db) => {
+          db.upsertFiles([rowOf(jpg), rowOf(video)]);
+          const jid = fileNamed(db, src, DAY, 'IMG_0101.jpg').id;
+          const vid = fileNamed(db, src, DAY, '영상.mp4').id;
+          const noFfmpeg = { ...tools, ffmpeg: { ok: false, path: null } };
+          const t = createThumbs({ db, thumbDir: path.join(base, 'thumbs-noffmpeg'), getTools: () => noFfmpeg, isBusy: () => false, logger: null });
+          const a = await t.request(jid);
+          const b = await t.request(vid);
+          out.push(sub('FFmpeg 없음: 사진은 만들고 영상은 failed', !!a && b === null && state(db, vid) === 'failed'));
+          const none = createThumbs({ db, thumbDir: path.join(base, 'thumbs-notools'), getTools: () => null, isBusy: () => false, logger: null });
+          out.push(sub('도구 정보가 없어도 사진은 만들어짐', !!(await none.request(jid))));
+        });
+      }
+
+      // 17k 시간 초과
+      {
+        const t0 = Date.now();
+        const r = await runCmd('node', ['-e', 'setTimeout(()=>{},30000)'], { timeoutMs: 200 });
+        const ms = Date.now() - t0;
+        out.push(sub('시간 초과: timedOut이고 5초 안에 끝남', r.timedOut === true && r.code === null && ms < 5000, `${ms}ms`));
+        const ok = await runCmd('node', ['-e', 'console.log("hi")']);
+        out.push(sub('시간 제한 없는 기존 호출은 그대로', ok.code === 0 && ok.stdout.trim() === 'hi' && !ok.timedOut));
+      }
+
+      // 17l 대기열 (가짜 maker): 최근 요청 먼저, 동시 4개, 같은 id는 한 번만
+      await withDb(env, 'thumbs-queue', async (db) => {
+        const dir = path.join(base, 'queue');
+        fs.mkdirSync(dir, { recursive: true });
+        const files = [];
+        for (let i = 1; i <= 10; i++) {
+          const f = path.join(dir, 'q' + String(i).padStart(2, '0') + '.jpg');
+          fs.writeFileSync(f, 'x');
+          files.push(f);
+        }
+        db.upsertFiles(files.map((f) => rowOf(f, dir)));
+        const ids = files.map((f) => fileNamed(db, dir, DAY, path.basename(f)).id);
+        const started = [];
+        const gates = new Map();
+        const maker = ({ file, tmpPath }) => {
+          started.push(file.name);
+          return new Promise((resolve) => gates.set(file.name, () => { fs.writeFileSync(tmpPath, 'x'); resolve(); }));
+        };
+        const t = createThumbs({ db, thumbDir: path.join(base, 'thumbs-queue'), getTools: () => tools, isBusy: () => false, logger: null, maker });
+        const ps = ids.map((id) => t.request(id));
+        const dup = t.request(ids[9]);
+        await waitUntil(() => started.length >= 4, 5000);
+        await sleep(200);
+        out.push(sub('보이는 요청은 동시에 4개까지', started.length === 4 && [...started].sort().join() === 'q01.jpg,q02.jpg,q03.jpg,q04.jpg', started.join()));
+        gates.get('q01.jpg')();
+        await waitUntil(() => started.length >= 5, 5000);
+        const fifth = started[4];
+        gates.get(fifth)();
+        await waitUntil(() => started.length >= 6, 5000);
+        out.push(sub('최근 요청 먼저 (q10, q09 순서로 시작)', fifth === 'q10.jpg' && started[5] === 'q09.jpg', started.join()));
+        for (let i = 0; i < 200 && started.length < 10; i++) {
+          for (const [n, g] of [...gates]) { g(); gates.delete(n); }
+          await sleep(20);
+        }
+        for (const g of gates.values()) g();
+        const res = await Promise.all(ps);
+        out.push(sub('모든 요청이 끝나고 같은 id는 한 번만 만듦', res.every((p) => !!p) && started.length === 10 && new Set(started).size === 10 && (await dup) === res[9], `${started.length}번 시작`));
+      });
+
+      // 17m 가져오기 우선: 바쁜 동안 백그라운드는 시작하지 않고, 끝나면 동시 2개로 만듦
+      await withDb(env, 'thumbs-bg', async (db) => {
+        const dir = path.join(base, 'bg');
+        fs.mkdirSync(dir, { recursive: true });
+        const files = [];
+        for (let i = 1; i <= 8; i++) {
+          const f = path.join(dir, 'b' + i + '.jpg');
+          fs.writeFileSync(f, 'x');
+          files.push(f);
+        }
+        db.upsertFiles(files.map((f) => rowOf(f, dir)));
+        let busy = true;
+        let calls = 0;
+        let cur = 0;
+        let peak = 0;
+        const maker = async ({ tmpPath }) => {
+          calls++;
+          cur++;
+          peak = Math.max(peak, cur);
+          await sleep(80);
+          fs.writeFileSync(tmpPath, 'x');
+          cur--;
+        };
+        const logDirBg = path.join(base, 'logs-bg');
+        const t = createThumbs({ db, thumbDir: path.join(base, 'thumbs-bg'), getTools: () => tools, isBusy: () => busy, logger: createLogger(logDirBg), maker });
+        t.startBackground(dir);
+        await sleep(800);
+        const during = calls;
+        busy = false;
+        const done = await waitUntil(() => db.nextThumbJobs(dir, 100).length === 0 && cur === 0, 15000);
+        const all8 = db.listFiles(dir, DAY, ALL).every((f) => f.thumbState === 'ready');
+        out.push(sub('가져오기 우선: 바쁜 동안 시작 안 하고, 끝나면 이어서 전부 만듦', during === 0 && done && all8 && calls === 8, `바쁜 동안 ${during}개, 끝난 뒤 ${calls}개`));
+        out.push(sub('백그라운드는 동시에 2개까지', peak === 2, `최대 ${peak}개`));
+        await t.stop();
+        const logs = fs.existsSync(logDirBg) ? fs.readdirSync(logDirBg).filter((n) => n.startsWith('gallery-thumbs_')) : [];
+        out.push(sub('gallery-thumbs 로그가 남음', logs.length >= 1, `${logs.length}개`));
+      });
+
+      // 17n stop: 만들던 것은 끝내고(임시 파일 안 남김), 대기 중 요청과 새 요청은 null
+      await withDb(env, 'thumbs-stop', async (db) => {
+        const dir = path.join(base, 'stopdir');
+        fs.mkdirSync(dir, { recursive: true });
+        const files = [];
+        for (let i = 1; i <= 6; i++) {
+          const f = path.join(dir, 's' + i + '.jpg');
+          fs.writeFileSync(f, 'x');
+          files.push(f);
+        }
+        db.upsertFiles(files.map((f) => rowOf(f, dir)));
+        const maker = async ({ tmpPath }) => {
+          await sleep(300);
+          fs.writeFileSync(tmpPath, 'x');
+        };
+        const thumbDir2 = path.join(base, 'thumbs-stop');
+        const t = createThumbs({ db, thumbDir: thumbDir2, getTools: () => tools, isBusy: () => false, logger: null, maker });
+        const ids = db.listFiles(dir, DAY, ALL).map((f) => f.id);
+        const ps = ids.map((id) => t.request(id));
+        await sleep(100);
+        await t.stop();
+        const res = await Promise.all(ps);
+        const finished = res.filter((p) => p).length;
+        const after = await t.request(ids[0]);
+        const leftovers = fs.existsSync(thumbDir2) ? listAll(thumbDir2).filter((n) => !n.endsWith('.webp')) : [];
+        out.push(sub('stop: 만들던 4개는 끝내고 대기 중 2개는 null, 이후 요청도 null', finished === 4 && res.filter((p) => p === null).length === 2 && after === null, `${finished}개 완료`));
+        out.push(sub('stop 뒤 임시 파일이 남지 않음', leftovers.length === 0, leftovers.join(',')));
+      });
+
+      // 17o 사진 폴더에는 아무것도 생기지 않음 (썸네일은 thumbs 폴더에만)
+      const afterList = listAll(src);
+      out.push(sub('사진 폴더에 파일 안 생김 (전후 파일 목록 같음)', JSON.stringify(before) === JSON.stringify(afterList) && !path.resolve(thumbDir).startsWith(path.resolve(src) + path.sep), `${before.length}개, ${afterList.length}개`));
 
       return out;
     },

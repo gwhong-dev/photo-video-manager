@@ -19,5 +19,8 @@
   "type": "commonjs",
   "devDependencies": {
     "electron": "^45.2.1"
+  },
+  "dependencies": {
+    "sharp": "^0.35.5"
   }
 }
