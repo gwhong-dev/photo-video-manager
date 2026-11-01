@@ -1338,6 +1338,23 @@ const items = [
         out.push(sub('남은 임시 파일은 처음 쓸 때 지움', temps.every((p) => !fs.existsSync(p)), temps.filter((p) => fs.existsSync(p)).length + '개 남음'));
         out.push(sub('진짜 .webp와 패턴 밖 파일은 그대로', fs.existsSync(real) && Buffer.compare(fs.readFileSync(real), realBytes) === 0 && fs.existsSync(keep)));
         out.push(sub('상대 경로 파일은 failed', rel === null && state(db, rid) === 'failed'));
+
+        // 미리보기도 같은 확인: 작업 폴더를 임시로 옮기면 상대 경로가 진짜 사진을 가리키게 되지만, 그래도 null이어야 해요
+        db.upsertFiles([row({ root: 'REL', path: path.join('src', 'IMG_0101.jpg'), name: 'rel-preview.jpg', size: 100, mtimeMs: 2 })]);
+        const pid2 = fileNamed(db, 'REL', DAY, 'rel-preview.jpg').id;
+        const t2 = createThumbs({ db, thumbDir: dir, getTools: () => tools, isBusy: () => false, logger: null });
+        const cwd0 = process.cwd();
+        let reachable = false;
+        let pv = 'x';
+        try {
+          process.chdir(base);
+          reachable = fs.existsSync(path.join('src', 'IMG_0101.jpg')); // 이 상대 경로는 실제로 읽을 수 있는 상태
+          pv = await t2.preview(pid2);
+        } finally {
+          process.chdir(cwd0);
+          await t2.stop();
+        }
+        out.push(sub('상대 경로 파일의 미리보기는 null', reachable && pv === null, `읽을 수 있는 상태 ${reachable}, 결과 ${pv === null ? 'null' : '있음'}`));
       });
 
       // 17o 사진 폴더에는 아무것도 생기지 않음 (썸네일은 thumbs 폴더에만)
