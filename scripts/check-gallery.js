@@ -559,6 +559,16 @@ const items = [
         const r5 = await lib.scan(root);
         out.push(sub('돌아오면 복원 (다시 읽지 않음)', r5.read === 0 && r5.skipped === n && r5.missing === 0 && sumTotal(db, root) === n && db.knownFiles(root).get(target).missing === 0, JSON.stringify(r5)));
 
+        // 사라진 사이에 바뀌어서 돌아온 파일: 다시 읽고 보이게 됨
+        fs.renameSync(target, away);
+        const r6 = await lib.scan(root);
+        fs.renameSync(away, target);
+        const later = new Date(Date.now() - 5 * 86400000);
+        fs.utimesSync(target, later, later);
+        const r7 = await lib.scan(root);
+        const rec7 = db.knownFiles(root).get(target);
+        out.push(sub('missing였다가 바뀌어 돌아온 파일은 다시 읽고 보임', r6.missing === 1 && r7.read === 1 && r7.skipped === n - 1 && r7.missing === 0 && sumTotal(db, root) === n && !!rec7 && rec7.missing === 0 && rec7.mtimeMs === fs.statSync(target).mtimeMs, JSON.stringify(r7)));
+
         const logs = fs.existsSync(logDir) ? fs.readdirSync(logDir).filter((f) => f.startsWith('gallery-scan_')) : [];
         const text = logs.length ? fs.readFileSync(path.join(logDir, logs[0]), 'utf8') : '';
         out.push(sub('로그에 개수가 있음', logs.length >= 1 && text.includes(`찾음 ${n}개`) && text.includes(`읽음 ${n}개`), `로그 ${logs.length}개`));
@@ -592,6 +602,26 @@ const items = [
         const r3 = await makeLib(db, et, { walkFn: racing }).scan(root);
         fs.renameSync(`${root}-racing`, root);
         out.push(sub('찾은 뒤 폴더가 사라지면 표시 안 함', r3.status === 'disconnected' && r3.missing === 0 && sumTotal(db, root) === n, JSON.stringify(r3)));
+      });
+
+      // 16b2 읽는 도중 연결이 끊기면(exiftool이 빈 결과를 줌) 그 묶음은 저장하지 않음. 연결이 돌아오면 정상으로 읽힘
+      await withDb(env, 'scan-lost', async (db) => {
+        const root = copyLibrary(env);
+        const n = listMedia(root).length;
+        if (n < 7) { out.push(sub('묶음 시험용 파일 수 (7개 이상)', false, `${n}개`)); return; }
+        const gone = `${root}-gone`;
+        const cut = fakeEt(et, (files, tags, list, count) => {
+          if (count !== 2) return list;
+          fs.renameSync(root, gone); // 두 번째 묶음을 읽는 순간 연결이 끊김
+          return [];
+        });
+        const r1 = await makeLib(db, cut, { chunkSize: 3 }).scan(root);
+        const bad = [...db.knownFiles(root).values()].filter((k) => k.readError).length;
+        out.push(sub('읽는 도중 연결 끊김: disconnected, 끊긴 묶음은 저장 안 함', r1.status === 'disconnected' && r1.read === 3 && sumTotal(db, root) === 3 && bad === 0 && r1.missing === 0, JSON.stringify(r1)));
+        fs.renameSync(gone, root);
+        const r2 = await makeLib(db, et, { chunkSize: 3 }).scan(root);
+        const bad2 = [...db.knownFiles(root).values()].filter((k) => k.readError).length;
+        out.push(sub('연결이 돌아온 뒤 정상으로 읽으면 나머지 전부, 읽기 실패 0개', r2.status === 'done' && r2.read === n - 3 && r2.skipped === 3 && sumTotal(db, root) === n && bad2 === 0, JSON.stringify(r2)));
       });
 
       // 16c 일부 폴더를 못 읽음: 그 폴더 안 파일은 missing으로 만들지 않음 (이름만 비슷한 폴더는 보호하지 않음)
@@ -729,6 +759,64 @@ const items = [
         out.push(sub('가져오기 우선: 바쁜 동안 다음 묶음을 읽지 않고 끝나면 이어 감', during === 3 && r.status === 'done' && r.read === n && sumTotal(db, root) === n, `바쁜 동안 ${during}개, 끝난 뒤 ${sumTotal(db, root)}개`));
       });
 
+      // 16h2 읽는 중에 들어온 요청: 다른 root, retryErrors, changed는 사라지지 않고 이어서 처리됨
+      const touch = (p) => { const t = new Date(Date.now() - 7 * 86400000); fs.utimesSync(p, t, t); };
+      await withDb(env, 'scan-other-root', async (db) => {
+        const rootA = copyLibrary(env);
+        const rootB = copyLibrary(env);
+        const n = listMedia(rootB).length;
+        if (n < 7) { out.push(sub('묶음 시험용 파일 수 (7개 이상)', false, `${n}개`)); return; }
+        let busy = false;
+        let changes = 0;
+        const lib = makeLib(db, et, { chunkSize: 3, isBusy: () => busy, onChanged: () => { if (++changes === 1) busy = true; } });
+        const pA = lib.scan(rootA);
+        await waitUntil(() => changes >= 1, 10000);
+        const pB = lib.scan(rootB); // A를 읽는 중에 B를 요청
+        busy = false;
+        const rA = await pA;
+        const rB = await pB;
+        out.push(sub('읽는 중 다른 root 요청: A는 superseded(missing 없음), B를 끝까지 읽음', pA !== pB && rA.status === 'superseded' && rA.missing === 0 && rA.read === 3 && rB.status === 'done' && rB.read === n && sumTotal(db, rootB) === n && sumTotal(db, rootA) === 3 && lib.isScanning() === false, `${JSON.stringify(rA)} / ${JSON.stringify(rB)}`));
+      });
+
+      await withDb(env, 'scan-retry-during', async (db) => {
+        const root = copyLibrary(env);
+        const n = listMedia(root).length;
+        const files = listMedia(root).map((f) => f.path).sort();
+        const x = files[files.length - 1];
+        const omitX = fakeEt(et, (fl, tg, list) => list.filter((m) => planner().keyOf(m.SourceFile) !== planner().keyOf(x)));
+        await makeLib(db, omitX).scan(root); // x는 읽기 실패로 남김
+        touch(files[0]); // 읽을 파일 1개를 만들어 두고, 가져오기 중인 것처럼 멈춰 세움
+        let busy = true;
+        const lib = makeLib(db, et, { isBusy: () => busy });
+        const p1 = lib.scan(root);
+        await sleep(300);
+        const same = lib.scan(root); // 똑같은 요청은 같은 Promise
+        const p2 = lib.scan(root, { retryErrors: true });
+        busy = false;
+        const r1 = await p1;
+        const r2 = await p2;
+        const fixed = db.knownFiles(root).get(x);
+        out.push(sub('같은 요청은 같은 Promise, 읽는 중 retryErrors는 이어서 처리', same === p1 && p2 !== p1 && r1.read === 1 && r2.read === 1 && !!fixed && fixed.readError === null && sumTotal(db, root) === n, `${JSON.stringify(r1)} / ${JSON.stringify(r2)}`));
+      });
+
+      await withDb(env, 'scan-changed-during', async (db) => {
+        const root = copyLibrary(env);
+        const n = listMedia(root).length;
+        const files = listMedia(root).map((f) => f.path).sort();
+        await makeLib(db, et).scan(root);
+        touch(files[0]);
+        let busy = true;
+        const lib = makeLib(db, et, { isBusy: () => busy });
+        const p1 = lib.scan(root);
+        await sleep(300); // 찾기가 끝난 뒤
+        fs.copyFileSync(files[0], path.join(root, '2026-10-30_010203_late.jpg')); // 찾은 뒤에 늘어난 파일
+        const p2 = lib.scan(root, { changed: true });
+        busy = false;
+        const r1 = await p1;
+        const r2 = await p2;
+        out.push(sub('찾은 뒤 늘어난 파일은 scan(root, { changed: true })가 읽음', p2 !== p1 && r1.read === 1 && r2.read === 1 && sumTotal(db, root) === n + 1, `${JSON.stringify(r1)} / ${JSON.stringify(r2)}`));
+      });
+
       await withDb(env, 'scan-noet', async (db) => {
         const root = copyLibrary(env);
         const n = listMedia(root).length;
@@ -736,6 +824,49 @@ const items = [
         const r = await makeLib(db, null).scan(root);
         out.push(sub('exiftool 없음: no-exiftool, 저장된 목록 유지', r.status === 'no-exiftool' && r.read === 0 && sumTotal(db, root) === n, JSON.stringify(r)));
       });
+
+      // 16j walk와 walkAsync가 같은 파일을 찾음 (제외 폴더 포함). 못 읽은 폴더도 알려 줌
+      {
+        const root = copyLibrary(env);
+        for (const d of ['2025년도', '_정리완료원본', '.숨김폴더', '$RECYCLE.BIN']) {
+          fs.mkdirSync(path.join(root, d));
+          fs.copyFileSync(path.join(root, '_날짜없음', 'noinfo.jpg'), path.join(root, d, 'x.jpg'));
+        }
+        fs.copyFileSync(path.join(root, '_날짜없음', 'noinfo.jpg'), path.join(root, '.hid.jpg'));
+        fs.copyFileSync(path.join(root, '_날짜없음', 'noinfo.jpg'), path.join(root, 'a.__tmp__.jpg'));
+        fs.writeFileSync(path.join(root, 'memo.txt'), 'x');
+        const P = planner();
+        const noop = () => {};
+        const keys = (list) => list.map((f) => P.keyOf(f.path)).sort();
+        const syncList = P.walk(root, true, [], noop, noop);
+        const asyncList = await P.walkAsync(root, true, [], noop, noop);
+        const excluded = !syncList.some((f) => /2025년도|_정리완료원본|\.숨김폴더|RECYCLE|\.hid|__tmp__|memo/.test(f.path));
+        out.push(sub('walk와 walkAsync가 같은 파일 (후가공, _정리완료원본, 숨김 제외)', JSON.stringify(keys(syncList)) === JSON.stringify(keys(asyncList)) && syncList.length > 0 && excluded && JSON.stringify(syncList.map((f) => [f.size, f.mtimeMs, f.isVideo])) === JSON.stringify(asyncList.map((f) => [f.size, f.mtimeMs, f.isVideo])), `${syncList.length}개 / ${asyncList.length}개`));
+        const topSync = keys(P.walk(root, false, [], noop, noop));
+        const topAsync = keys(await P.walkAsync(root, false, [], noop, noop));
+        out.push(sub('하위 폴더를 안 보는 경우(includeSub=false)도 같음', JSON.stringify(topSync) === JSON.stringify(topAsync) && topSync.length < syncList.length));
+
+        // 못 읽은 폴더: fs의 readdir을 잠깐 바꿔서 한 폴더만 오류가 나게 해요 (끝나면 꼭 되돌림)
+        const bad = path.join(root, '2026', '10', '27');
+        const origSync = fs.readdirSync;
+        const origAsync = fs.promises.readdir;
+        const isBad = (d) => P.keyOf(String(d)) === P.keyOf(bad);
+        const failErr = () => Object.assign(new Error('EACCES: 가짜 권한 오류'), { code: 'EACCES' });
+        fs.readdirSync = (d, ...a) => { if (isBad(d)) throw failErr(); return origSync.call(fs, d, ...a); };
+        fs.promises.readdir = async (d, ...a) => { if (isBad(d)) throw failErr(); return origAsync.call(fs.promises, d, ...a); };
+        const sErr = [];
+        const aErr = [];
+        let sFiles;
+        let aFiles;
+        try {
+          sFiles = P.walk(root, true, [], noop, (d) => sErr.push(d));
+          aFiles = await P.walkAsync(root, true, [], noop, (d) => aErr.push(d));
+        } finally {
+          fs.readdirSync = origSync;
+          fs.promises.readdir = origAsync;
+        }
+        out.push(sub('못 읽은 폴더는 둘 다 알려 주고 그 안 파일은 빠짐', sErr.length === 1 && aErr.length === 1 && P.keyOf(sErr[0]) === P.keyOf(bad) && P.keyOf(aErr[0]) === P.keyOf(bad) && JSON.stringify(keys(sFiles)) === JSON.stringify(keys(aFiles)) && sFiles.length < syncList.length, `${sErr.length}개 / ${aErr.length}개, ${sFiles.length}개 / ${aFiles.length}개`));
+      }
 
       // 16i 샘플 원본(test/samples)을 건드리지 않았는지 다시 확인 (쓰기는 임시 복사본에만 했어요)
       {
