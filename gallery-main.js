@@ -27,6 +27,8 @@ const { handleMedia } = require('./lib/media-protocol');
 const { now } = require('./lib/logger');
 const { normalizeRequest, planEdit, toPreview, MAX_TARGETS } = require('./lib/manual-edit');
 const { createJournal, recover } = require('./lib/manual-journal');
+const { buildSuggestions } = require('./lib/location-suggest');
+const { createSkips } = require('./lib/suggest-skips');
 
 const SCHEME = 'pvm';
 const TABS = ['all', 'photo', 'video', 'screenshot'];
@@ -339,10 +341,11 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
 
   // 저장이 끝난 뒤의 마무리: 로그 파일(묶음 번호, 개수, 파일별 전후 값)과 화면 알림. 실패해도 이미 저장된 작업은 그대로예요
   //   파일별 줄은 makeLines()로 이 try 안에서 만들어요 (만들다 던져도 저장된 작업을 실패로 만들지 않게)
-  function finishEdit(title, batchId, kind, count, makeLines) {
+  //   note: 머리글에 더할 줄 (값 넣기의 방법과 근거 사진)
+  function finishEdit(title, batchId, kind, count, makeLines, note = '') {
     try {
       const lines = makeLines();
-      const log = logger.newLog('manual-edit', `${title} ${now()}\n묶음 ${batchId}\n종류 ${kind}\n개수 ${count}`);
+      const log = logger.newLog('manual-edit', `${title} ${now()}\n묶음 ${batchId}\n종류 ${kind}\n개수 ${count}${note}`);
       if (lines.length) log.write(lines.join('\n')); // 수천 줄도 한 번에 써요
     } catch (err) {
       errorLog(`${title} 로그`, err);
@@ -373,20 +376,43 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     return toPreview(computePlan(root, ids, edit));
   });
 
+  // 위치 제안으로 넣기 전의 검사: 화면이 보낸 값을 믿지 않아요
+  //   위치만 넣는지, 근거 사진이 그대로 있고 파일에서 읽은 위치인지, 대상이 같은 날인지 봐요.
+  //   그 사이 위치가 생긴 대상은 덮어쓰지 않고 빼요. 돌려주는 값: { ids: 넣을 번호들, dropped: 뺀 장수 }
+  function checkSuggestEdit(root, ids, edit) {
+    checkIds(ids);
+    if (edit.source !== 'copy' || edit.location !== true || edit.date === true || edit.time === true) {
+      throw new Error('위치 제안은 위치만 넣을 수 있어요.');
+    }
+    const source = Number.isSafeInteger(edit.sourceId) && edit.sourceId > 0 ? db.getFile(edit.sourceId) : null;
+    if (!source || source.missing || source.root !== root) throw new Error('근거 사진을 찾을 수 없어요. 제안 목록을 다시 확인해 주세요.');
+    if (source.locationSource === 'manual') throw new Error('근거 사진의 위치가 직접 넣은 값으로 바뀌었어요. 제안 목록을 다시 확인해 주세요.');
+    const rows = db.getFilesByIds(ids);
+    if (rows.some((r) => r.takenDay !== source.takenDay)) throw new Error('근거 사진과 다른 날에 찍은 사진에는 넣을 수 없어요.');
+    const empty = rows.filter((r) => r.lat === null || r.lat === undefined);
+    return { ids: empty.map((r) => r.id), dropped: rows.length - empty.length };
+  }
+
   // 넣기: 다시 계산해서 바뀌는 파일만 저장해요. 바꿀 것이 없으면 아무것도 쓰지 않고 count 0
+  //   기록 파일과 로그에는 어떻게 넣었는지(via)와 근거 사진(sourcePath)을 같이 남겨요
   ipcMain.handle('gallery:apply-edit', (e, ids, edit) => {
     const root = editReady();
-    const plan = computePlan(root, ids, edit);
+    const suggested = !!edit && typeof edit === 'object' && edit.via === 'suggest';
+    if (edit && typeof edit === 'object' && edit.via !== undefined && !suggested) throw new Error('넣는 방법이 올바르지 않아요.');
+    const checked = suggested ? checkSuggestEdit(root, ids, edit) : { ids, dropped: 0 };
+    const plan = computePlan(root, checked.ids, edit);
     const changed = plan.items.filter((it) => it.status === 'changed');
-    if (!changed.length) return { batchId: null, kind: plan.kind, count: 0 };
+    if (!changed.length) return { batchId: null, kind: plan.kind, count: 0, dropped: checked.dropped };
 
     const batchId = crypto.randomUUID();
     const at = new Date().toISOString();
     const items = changed.map((it) => ({ path: it.path, before: it.beforeManual, after: it.afterManual }));
+    const via = suggested ? 'suggest' : edit.source === 'direct' ? 'direct' : 'copy';
+    const sourcePath = via === 'direct' ? null : db.getFile(edit.sourceId).path; // 근거 사진은 computePlan이 이미 확인했어요
 
     // 1) 기록 파일에 먼저. 못 쓰면 거절하고 DB는 바꾸지 않아요
     try {
-      journal.append({ type: 'apply', batchId, at, root, kind: plan.kind, items });
+      journal.append({ type: 'apply', batchId, at, root, kind: plan.kind, via, sourcePath, items });
     } catch (err) {
       errorLog('값 넣기 기록 파일 쓰기', err);
       throw new Error(`기록 파일에 쓰지 못해서 값을 넣지 않았어요${codeNote(err)}. 자세한 내용은 로그 폴더의 오류 로그에 있어요.`);
@@ -394,9 +420,38 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     // 2) DB 저장 (실패하면 void)
     saveOrVoid('apply', batchId, '값 넣기', () => db.applyManualBatch({ id: batchId, root, kind: plan.kind, createdAt: at, items }));
     // 3) 로그와 알림
-    finishEdit('직접 넣기', batchId, plan.kind, changed.length, () => changed.map((it) =>
-      `${it.path}\t날짜 ${dateText(it.before)} → ${dateText(it.after)}\t위치 ${locText(it.before)} → ${locText(it.after)}`));
-    return { batchId, kind: plan.kind, count: changed.length };
+    finishEdit(suggested ? '위치 제안 넣기' : '직접 넣기', batchId, plan.kind, changed.length, () => changed.map((it) =>
+      `${it.path}\t날짜 ${dateText(it.before)} → ${dateText(it.after)}\t위치 ${locText(it.before)} → ${locText(it.after)}`),
+    `\n방법 ${via}\n근거 ${sourcePath === null ? '없음' : sourcePath}`);
+    return { batchId, kind: plan.kind, count: changed.length, dropped: checked.dropped };
+  });
+
+  // ---------- 위치 제안 ----------
+  //   계산만 하고 값은 넣지 않아요. 넣기는 사용자가 버튼을 누르면 위의 apply-edit 로 와요
+  const skips = createSkips(path.join(base, 'suggest-skips.json'), { onError: errorLog });
+
+  // 제안 묶음 목록. 파일 경로는 화면에 주지 않아요
+  ipcMain.handle('gallery:list-suggestions', () => {
+    const root = editReady();
+    const r = buildSuggestions(db.listSuggestionRows(root), skips.paths());
+    return {
+      ...r,
+      groups: r.groups.map((g) => ({ ...g, targets: g.targets.map(({ path: _path, ...t }) => t) })),
+    };
+  });
+
+  // 건너뛰기: 번호를 경로로 바꿔 지금 백업 폴더의 사진만 더해요. saved = 파일에 저장했는지
+  ipcMain.handle('gallery:skip-suggestions', (e, ids) => {
+    const root = editReady();
+    checkIds(ids);
+    const paths = db.getFilesByIds(ids).filter((f) => f.root === root).map((f) => f.path);
+    return { saved: skips.add(paths) };
+  });
+
+  // 건너뛴 사진 다시 보기: 목록을 비워요. 사진 파일과 값에는 영향이 없어요
+  ipcMain.handle('gallery:clear-suggestion-skips', () => {
+    editReady();
+    return { saved: skips.clear() };
   });
 
   // 되돌리기: 이 백업 폴더의 마지막 묶음만. 없으면 null

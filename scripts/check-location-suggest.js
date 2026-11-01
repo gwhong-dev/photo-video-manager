@@ -259,6 +259,322 @@ const items = [
       return out;
     },
   },
+  {
+    no: 30,
+    name: '위치 제안 연결',
+    async run(env) {
+      const out = [];
+      const crypto = require('crypto');
+      const dbMod = require('../lib/db');
+      const { createJournal, recover } = require('../lib/manual-journal');
+      const { createLogger } = require('../lib/logger');
+      const { openDb } = dbMod;
+
+      // gallery-main을 불러오는 동안만 openDb를 감싸서, 점검이 같은 DB를 들여다볼 수 있게 해요 (24번과 같은 방식)
+      const opened = [];
+      const gmPath = require.resolve('../gallery-main');
+      delete require.cache[gmPath];
+      dbMod.openDb = (f, o) => {
+        const r = openDb(f, o);
+        opened.push(r.db);
+        return r;
+      };
+      let gm;
+      try {
+        gm = require('../gallery-main');
+      } finally {
+        dbMod.openDb = openDb;
+        delete require.cache[gmPath];
+      }
+
+      const base = path.join(env.tmp, 'suggest-wire');
+      fs.mkdirSync(base, { recursive: true });
+      let seq = 0;
+      const fakes = [];
+      const errOf = (p) => p.then(() => null, (e) => e.message);
+      const DAY = '2026-10-25';
+      const at = (hhmm) => `${DAY}T${hhmm}:00`;
+      const SUGGEST = (sourceId) => ({ source: 'copy', sourceId, date: false, time: false, location: true, via: 'suggest' });
+      const fingerprint = (dir) => {
+        const m = {};
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (!e.isFile()) continue;
+          const p = path.join(dir, e.name);
+          const s = fs.statSync(p);
+          m[e.name] = `${crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex')}@${s.size}@${s.mtimeMs}`;
+        }
+        return JSON.stringify(m);
+      };
+
+      // 사진 폴더와 userData를 만들고 DB에 줄을 넣어 둬요. spec: { 이름: 덮어쓸 값 }
+      const prep = (label, spec) => {
+        const dir = path.join(base, `${label}-${++seq}`);
+        const P = { root: path.resolve(dir, 'photos-root-xyz'), ud: path.join(dir, 'ud'), logDir: path.join(dir, 'logs') };
+        fs.mkdirSync(P.ud, { recursive: true });
+        fs.mkdirSync(P.root, { recursive: true });
+        const o = openDb(path.join(P.ud, 'library.db'));
+        o.db.upsertFiles(Object.entries(spec).map(([name, over]) => {
+          fs.writeFileSync(path.join(P.root, name), `사진 ${name}`);
+          return row({ root: P.root, path: path.join(P.root, name), name, takenAt: at('14:00'), takenDay: DAY, ...over });
+        }));
+        o.db.close();
+        return P;
+      };
+      // setupGallery를 가짜 ipcMain으로 띄워요
+      const makeFake = (P) => {
+        const f = { handlers: new Map(), flags: { running: false }, P };
+        const win = { isDestroyed: () => false, webContents: { send() {} } };
+        f.g = gm.setupGallery({
+          ipcMain: { handle: (ch, fn) => f.handlers.set(ch, fn) },
+          protocol: { handle() {} },
+          getWin: () => win,
+          getSettings: () => ({ backupRoot: P.root }),
+          getTools: () => ({}),
+          getEt: () => null,
+          isRunning: () => f.flags.running,
+          isPlanning: () => false,
+          logger: createLogger(P.logDir),
+          userDir: P.ud,
+          loadScreen: async () => {},
+          getJobPending: () => false,
+        });
+        f.db = opened[opened.length - 1];
+        f.call = async (ch, ...a) => f.handlers.get(ch)(null, ...a);
+        f.close = () => {
+          if (f.closed) return;
+          f.closed = true;
+          f.g.close();
+        };
+        fakes.push(f);
+        return f;
+      };
+      const idOf = (f, name) => f.db.listSuggestionRows(f.P.root).find((x) => x.name === name).id;
+      const list = (f) => f.call('gallery:list-suggestions');
+      const lastId = async (f) => (await f.call('gallery:get-state')).lastBatch.id;
+      const jlines = (P) => createJournal(path.join(P.ud, 'manual-edits.jsonl')).read().lines;
+      const scene = async (label, fn) => {
+        try {
+          await fn();
+        } catch (e) {
+          out.push(sub(`${label} 실행 중 오류`, false, String(e.stack).split('\n').slice(0, 3).join(' | ')));
+        }
+      };
+      const SRC = { lat: 37.5, lng: 127, locationSource: 'gps', takenAt: at('14:00') };
+      const BASIC = { 'src.jpg': SRC, 'a.jpg': { takenAt: at('14:10') }, 'b.jpg': { takenAt: at('14:20') } };
+
+      try {
+        await scene('30a', async () => {
+          const f = makeFake(prep('flow', BASIC));
+          const fp0 = fingerprint(f.P.root);
+          const before = await list(f);
+          const text = JSON.stringify(before);
+          out.push(sub(
+            '30a 목록은 1묶음 2장이고 응답에 파일 경로가 없음',
+            before.groups.length === 1 && before.photoCount === 2 && before.skippedCount === 0 && before.groups[0].source.id === idOf(f, 'src.jpg')
+              && !text.includes('photos-root-xyz') && !text.includes('"path"'),
+            text.slice(0, 200),
+          ));
+
+          // 30b 넣은 값은 다음 제안의 근거가 되지 않아요: a만 넣어도 b의 기준은 그대로 src
+          const a = idOf(f, 'a.jpg');
+          const r = await f.call('gallery:apply-edit', [a], SUGGEST(idOf(f, 'src.jpg')));
+          const mid = await list(f);
+          const fa = await f.call('gallery:get-file', a);
+          out.push(sub(
+            '30b 넣기 뒤 대상이 빠지고, 넣은 값은 근거가 되지 않음',
+            r.count === 1 && r.dropped === 0 && mid.photoCount === 1 && mid.groups[0].source.id === idOf(f, 'src.jpg')
+              && fa.lat === 37.5 && fa.locationSource === 'manual',
+            JSON.stringify([r, mid.photoCount]),
+          ));
+
+          // 30g 같은 묶음을 두 번 넣어도 두 번째는 0장이고 기록을 남기지 않아요
+          const linesBefore = jlines(f.P).length;
+          const twice = await f.call('gallery:apply-edit', [a], SUGGEST(idOf(f, 'src.jpg')));
+          out.push(sub('30g 두 번째 넣기는 0장, 기록 파일이 늘지 않음', twice.count === 0 && twice.batchId === null && twice.dropped === 1 && jlines(f.P).length === linesBefore, JSON.stringify(twice)));
+
+          // 30h 기록 파일의 방법과 근거 사진 (제안)
+          const line = jlines(f.P)[0];
+          out.push(sub('30h 제안의 기록 줄에 via와 sourcePath', line.via === 'suggest' && line.sourcePath === path.join(f.P.root, 'src.jpg'), JSON.stringify([line.via, line.sourcePath])));
+
+          // 30j 로그 머리글
+          const logs = fs.readdirSync(f.P.logDir).filter((n) => n.startsWith('manual-edit_'));
+          const log = logs.map((n) => fs.readFileSync(path.join(f.P.logDir, n), 'utf8')).join('\n');
+          out.push(sub('30j 로그에 방법과 근거 사진 경로', log.includes('방법 suggest') && log.includes(`근거 ${path.join(f.P.root, 'src.jpg')}`), log.slice(0, 160)));
+
+          // 30c 되돌리면 다시 제안에 나와요
+          await f.call('gallery:undo-last', await lastId(f));
+          const back = await list(f);
+          out.push(sub('30c 되돌리면 다시 제안에 나옴', back.photoCount === 2, String(back.photoCount)));
+
+          // 30k 사진 파일은 그대로
+          out.push(sub('30k 사진 파일의 지문, 크기, 수정 시각이 그대로', fingerprint(f.P.root) === fp0));
+        });
+
+        await scene('30c2', async () => {
+          const f = makeFake(prep('undo-skip', BASIC));
+          const a = idOf(f, 'a.jpg');
+          const b = idOf(f, 'b.jpg');
+          await f.call('gallery:apply-edit', [a], SUGGEST(idOf(f, 'src.jpg')));
+          await f.call('gallery:skip-suggestions', [b]);
+          await f.call('gallery:undo-last', await lastId(f));
+          const r = await list(f);
+          out.push(sub('30c 되돌려도 건너뛴 사진은 건너뛴 채로', r.photoCount === 1 && r.skippedCount === 1 && r.groups[0].targets[0].id === a, JSON.stringify([r.photoCount, r.skippedCount])));
+        });
+
+        await scene('30d', async () => {
+          const P = prep('skip', BASIC);
+          const other = prep('skip-other', { 'x.jpg': { takenAt: at('14:10') } });
+          const f = makeFake(P);
+          const a = idOf(f, 'a.jpg');
+          const b = idOf(f, 'b.jpg');
+          const saved = await f.call('gallery:skip-suggestions', [a]);
+          f.close();
+          const f2 = makeFake(P);
+          const r1 = await list(f2);
+          // 다른 폴더의 줄은 경로를 더하지 않아요 (이 DB에 다른 root 줄을 넣어서 시험)
+          f2.db.upsertFiles([row({ root: other.root, path: path.join(other.root, 'x.jpg'), name: 'x.jpg', takenAt: at('14:10'), takenDay: DAY })]);
+          const otherId = f2.db.listSuggestionRows(other.root)[0].id;
+          await f2.call('gallery:skip-suggestions', [otherId]);
+          const file = JSON.parse(fs.readFileSync(path.join(P.ud, 'suggest-skips.json'), 'utf8'));
+          const cleared = await f2.call('gallery:clear-suggestion-skips');
+          const r2 = await list(f2);
+          out.push(sub(
+            '30d 건너뛰기가 다시 켜도 남고, 다시 보기로 비워지고, 다른 폴더 사진은 안 더해짐',
+            saved.saved === true && r1.photoCount === 1 && r1.skippedCount === 1 && r1.groups[0].targets[0].id === b
+              && file.paths.length === 1 && file.paths[0] === path.join(P.root, 'a.jpg')
+              && cleared.saved === true && r2.photoCount === 2 && r2.skippedCount === 0,
+            JSON.stringify([saved, r1.photoCount, file.paths.length, r2.photoCount]),
+          ));
+        });
+
+        await scene('30e', async () => {
+          const f = makeFake(prep('reject', {
+            ...BASIC,
+            'other-day.jpg': { takenAt: '2026-10-26T14:10:00', takenDay: '2026-10-26' },
+            'gone.jpg': { lat: 37.5, lng: 127, locationSource: 'gps' },
+          }));
+          const src = idOf(f, 'src.jpg');
+          const a = idOf(f, 'a.jpg');
+          const otherDay = await errOf(f.call('gallery:apply-edit', [idOf(f, 'other-day.jpg')], SUGGEST(src)));
+          const unknown = await errOf(f.call('gallery:apply-edit', [a], { ...SUGGEST(src), via: 'robot' }));
+          const withDate = await errOf(f.call('gallery:apply-edit', [a], { ...SUGGEST(src), date: true }));
+          const goneId = idOf(f, 'gone.jpg');
+          f.db.setMissing([path.join(f.P.root, 'gone.jpg')], true);
+          const gone = await errOf(f.call('gallery:apply-edit', [a], SUGGEST(goneId)));
+          // 기준이 직접 넣은 값이 되면 거절해요
+          await f.call('gallery:apply-edit', [a], { source: 'copy', sourceId: src, date: false, time: false, location: true });
+          const manual = await errOf(f.call('gallery:apply-edit', [idOf(f, 'b.jpg')], SUGGEST(a)));
+          out.push(sub(
+            '30e 다른 날, 모르는 via, 날짜를 함께 넣기, 사라진 기준, manual 기준은 거절',
+            !!otherDay && !!unknown && !!withDate && !!gone && !!manual && !String(gone).includes('photos-root-xyz'),
+            JSON.stringify([otherDay, unknown, withDate, gone, manual]),
+          ));
+        });
+
+        await scene('30f', async () => {
+          const f = makeFake(prep('dropped', BASIC));
+          const a = idOf(f, 'a.jpg');
+          const b = idOf(f, 'b.jpg');
+          // 넣기 전에 다시 읽기로 a에 위치가 생겼어요
+          f.db.upsertFiles([row({ root: f.P.root, path: path.join(f.P.root, 'a.jpg'), name: 'a.jpg', takenAt: at('14:10'), takenDay: DAY, lat: 10, lng: 20, locationSource: 'gps' })]);
+          const r = await f.call('gallery:apply-edit', [a, b], SUGGEST(idOf(f, 'src.jpg')));
+          const fa = await f.call('gallery:get-file', a);
+          const fb = await f.call('gallery:get-file', b);
+          out.push(sub('30f 그 사이 위치가 생긴 사진은 그대로, dropped 1', r.count === 1 && r.dropped === 1 && fa.lat === 10 && fa.locationSource === 'gps' && fb.lat === 37.5, JSON.stringify(r)));
+        });
+
+        await scene('30h2', async () => {
+          const f = makeFake(prep('via', BASIC));
+          const src = idOf(f, 'src.jpg');
+          await f.call('gallery:apply-edit', [idOf(f, 'a.jpg')], { source: 'copy', sourceId: src, date: false, time: false, location: true });
+          await f.call('gallery:apply-edit', [idOf(f, 'b.jpg')], { source: 'direct', date: '2026-01-02', time: '10:00:00' });
+          const [copy, direct] = jlines(f.P);
+          out.push(sub(
+            '30h 붙여넣기는 via copy와 sourcePath, 직접 넣기는 via direct와 sourcePath null',
+            copy.via === 'copy' && copy.sourcePath === path.join(f.P.root, 'src.jpg') && direct.via === 'direct' && direct.sourcePath === null,
+            JSON.stringify([copy.via, direct.via, direct.sourcePath]),
+          ));
+        });
+
+        await scene('30i', async () => {
+          // 옛 줄(via 없음)과 새 줄(via 있음)이 섞인 기록 파일을 새 DB로 복구해도 값이 같아요
+          const P = prep('recover', BASIC);
+          const f = makeFake(P);
+          await f.call('gallery:apply-edit', [idOf(f, 'a.jpg')], SUGGEST(idOf(f, 'src.jpg')));
+          f.close();
+          const jf = path.join(P.ud, 'manual-edits.jsonl');
+          const line = JSON.parse(fs.readFileSync(jf, 'utf8').trim());
+          const old = { ...line, batchId: 'old-line', items: [{ path: path.join(P.root, 'b.jpg'), before: null, after: { takenAt: null, takenOffset: null, lat: 1, lng: 2 } }] };
+          delete old.via;
+          delete old.sourcePath;
+          fs.appendFileSync(jf, `${JSON.stringify(old)}\n`);
+          fs.mkdirSync(path.join(P.ud, 'fresh'), { recursive: true });
+          const fresh = openDb(path.join(P.ud, 'fresh', 'library.db'));
+          const r = recover(fresh.db, createJournal(jf));
+          fresh.db.upsertFiles(['a.jpg', 'b.jpg'].map((name) => row({ root: P.root, path: path.join(P.root, name), name, takenDay: DAY })));
+          const rows = fresh.db.listSuggestionRows(P.root);
+          fresh.db.close();
+          const va = rows.find((x) => x.name === 'a.jpg');
+          const vb = rows.find((x) => x.name === 'b.jpg');
+          out.push(sub(
+            '30i 새 칸이 없는 옛 줄과 새 줄이 섞여도 복구됨',
+            r.applied === 2 && va.lat === 37.5 && va.locationSource === 'manual' && vb.lat === 1 && vb.locationSource === 'manual',
+            JSON.stringify([r.applied, va.lat, vb.lat]),
+          ));
+        });
+
+        await scene('30j2', async () => {
+          const f = makeFake(prep('busy', BASIC));
+          f.flags.running = true;
+          const e = await errOf(list(f));
+          out.push(sub('30j 가져오기 중에는 목록을 거절', e === '가져오기가 끝난 뒤에 할 수 있어요', String(e)));
+        });
+      } finally {
+        for (const f of fakes) {
+          try {
+            f.close();
+          } catch (e) { /* 이미 닫혔으면 그대로 */ }
+        }
+      }
+      return out;
+    },
+  },
+  {
+    no: 31,
+    name: '위치 제안 보기 계산과 문구',
+    async run() {
+      const out = [];
+      // src의 .mjs 파일도 React가 없는 순수 계산이에요 (file:// 주소로 불러와요)
+      const { pathToFileURL } = require('url');
+      const load = (name) => import(pathToFileURL(path.join(__dirname, '..', 'src', name)).href);
+      const { groupKey, settleView } = await load('suggest-view.mjs');
+      const { gapText, suggestApplyLabel } = await load('format.mjs');
+
+      const group = (day, sourceId, ids) => ({ day, source: { id: sourceId }, targets: ids.map((id) => ({ id })) });
+      const g1 = group('2026-01-01', 1, [11, 12, 13]);
+      const g2 = group('2026-01-02', 2, [21, 22]);
+      const key1 = groupKey(g1);
+
+      const kept = settleView([g2, g1], { key: key1, unchecked: new Set([11, 99]) });
+      out.push(sub(
+        '31a 보던 묶음이 남으면 그대로, 체크 유지, 사라진 번호는 정리',
+        kept.key === key1 && kept.unchecked.size === 1 && kept.unchecked.has(11),
+        JSON.stringify([kept.key, [...kept.unchecked]]),
+      ));
+      const moved = settleView([g2], { key: key1, unchecked: new Set([11]) });
+      out.push(sub('31b 보던 묶음이 사라지면 첫 묶음, 체크는 새로', moved.key === groupKey(g2) && moved.unchecked.size === 0));
+      out.push(sub('31c 처음 열 때는 첫 묶음', settleView([g1, g2], null).key === key1));
+      out.push(sub('31d 묶음이 없으면 null', settleView([], { key: key1, unchecked: new Set() }) === null));
+
+      out.push(sub(
+        '31e 시간 차이 글',
+        gapText(0) === '1분 안' && gapText(12) === '12분 차이' && gapText(60) === '1시간 차이' && gapText(65) === '1시간 5분 차이',
+        [gapText(0), gapText(12), gapText(60), gapText(65)].join(' / '),
+      ));
+      out.push(sub('31f 넣기 버튼 글 (천 단위 쉼표), 0장은 빈 글자', suggestApplyLabel(1234) === '1,234장에 이 위치 넣기' && suggestApplyLabel(4) === '4장에 이 위치 넣기' && suggestApplyLabel(0) === ''));
+      return out;
+    },
+  },
 ];
 
 module.exports = { items };
