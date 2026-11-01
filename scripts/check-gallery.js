@@ -59,6 +59,49 @@ async function withDb(env, label, fn) {
   }
 }
 
+// 가짜 도서관 채우기: 하루 20개쯤씩 파일 count개를 db에 넣어요 (속도 점검용, 작업 8도 같이 써요)
+//   종류는 사진 90%, 영상 5%, 스크린샷 5%. 파일마다 앨범 태그 1~2개와 종류 태그 1개. 97번째마다 날짜 없음.
+//   root는 이름일 뿐 실제 폴더는 만들지 않아요 (DB에 줄만 넣음)
+const FAKE_ALBUMS = ['여행', '가족', '친구', '수원', '제주', '생일', '회사', '운동', '맛집', '강아지', '바다', '캠핑', '2026년도_44주차', 'Trip2025', '졸업식', '이사'];
+function fillFakeLibrary(db, root, count) {
+  const BATCH = 2000;
+  const startMs = Date.UTC(2018, 0, 1);
+  for (let from = 0; from < count; from += BATCH) {
+    const rows = [];
+    for (let i = from; i < Math.min(count, from + BATCH); i++) {
+      const k = i % 20;
+      const noDate = i % 97 === 96;
+      const day = new Date(startMs + Math.floor(i / 20) * 86400000).toISOString().slice(0, 10);
+      const kindTag = k === 0 ? '비디오' : k === 1 ? '스크린샷' : '사진';
+      const tags = [{ name: kindTag, source: 'mediaType' }, { name: FAKE_ALBUMS[i % FAKE_ALBUMS.length], source: 'album' }];
+      const second = FAKE_ALBUMS[(i * 7 + 3) % FAKE_ALBUMS.length];
+      if (second !== tags[1].name) tags.push({ name: second, source: 'album' });
+      const name = `IMG_${String(i).padStart(6, '0')}.${k === 0 ? 'mp4' : 'jpg'}`;
+      rows.push(row({
+        root,
+        path: `${root}/${noDate ? 'nodate' : day}/${name}`,
+        name,
+        mediaType: k === 0 ? 'video' : 'photo',
+        mtimeMs: 1000 + i,
+        takenAt: noDate ? null : `${day}T${String(i % 24).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00`,
+        takenOffset: noDate ? null : '+09:00',
+        takenDay: noDate ? null : day,
+        takenAtSource: noDate ? null : 'exif',
+        durationSec: k === 0 ? 3.5 : null,
+        tags,
+      }));
+    }
+    db.upsertFiles(rows);
+  }
+}
+
+// 걸린 시간(밀리초)과 결과
+function timeIt(fn) {
+  const t0 = process.hrtime.bigint();
+  const result = fn();
+  return { ms: Number(process.hrtime.bigint() - t0) / 1e6, result };
+}
+
 const days = (list) => list.map((d) => `${d.day}:${d.count}`).join(',');
 const ALL = { tab: 'all', sort: 'newest', query: '', tag: null };
 
@@ -260,6 +303,134 @@ const items = [
       return out;
     },
   },
+  {
+    no: 15,
+    name: '갤러리 검색',
+    async run(env) {
+      const out = [];
+      const { parseQuery } = require('../lib/search');
+      const q = (text) => ({ ...ALL, query: text });
+      const names = (db, text, tab = 'all') => db.listFiles('R1', '2026-10-25', { ...q(text), tab }).map((f) => f.name).sort().join(',');
+      const total = (db, text, tab = 'all') => db.listDays('R1', { ...q(text), tab }).reduce((n, d) => n + d.count, 0);
+
+      // 15a 검색어 해석 (날짜 모양 판단)
+      {
+        const dl = (text) => {
+          const t = parseQuery(text);
+          return t.length === 1 ? t[0].dateLike : `낱말 ${t.length}개`;
+        };
+        const want = {
+          '2026년 10월': '2026-10-%',
+          '10.28': '%-10-28',
+          수원: null,
+          2026: '2026-%',
+          '2026-10': '2026-10-%',
+          '2026.10': '2026-10-%',
+          '2026.10.28': '2026-10-28',
+          '2026-10-28': '2026-10-28',
+          '2026.1.5': '2026-01-05',
+          '2026년 10월 28일': '2026-10-28',
+          '13.40': null,
+        };
+        const bad = Object.keys(want).filter((k) => dl(k) !== want[k]).map((k) => `${k} → ${dl(k)}`);
+        out.push(sub('날짜 모양 해석표', bad.length === 0, bad.join(' / ') || '모두 맞음'));
+        const two = parseQuery('2026년 10월 수원');
+        out.push(sub('공백이 든 날짜는 한 낱말로 합쳐 두 낱말', two.length === 2 && two[0].dateLike === '2026-10-%' && two[1].dateLike === null, JSON.stringify(two)));
+        const e = parseQuery('100%_a\\');
+        out.push(sub('% _ \\ 는 이스케이프', e.length === 1 && e[0].like === '%100\\%\\_a\\\\%', e.length ? e[0].like : '없음'));
+        out.push(sub('빈 검색어는 낱말 없음', parseQuery('').length === 0 && parseQuery('   ').length === 0 && parseQuery(null).length === 0 && parseQuery(undefined).length === 0));
+      }
+
+      await withDb(env, 'search', (db) => {
+        const a = (name) => ({ name, source: 'album' });
+        db.upsertFiles([
+          row({ path: 'R1/sunset.jpg', name: 'sunset.jpg', tags: [a('여행'), a('친구')] }),
+          row({ path: 'R1/IMG_0001.jpg', name: 'IMG_0001.jpg', tags: [a('친구')] }),
+          row({ path: 'R1/IMG_0002.jpg', name: 'IMG_0002.jpg', tags: [a('여행')] }),
+          row({ path: 'R1/100%.jpg', name: '100%.jpg' }),
+          row({ path: 'R1/1000.jpg', name: '1000.jpg' }),
+          row({ path: 'R1/a_b.jpg', name: 'a_b.jpg' }),
+          row({ path: 'R1/axb.jpg', name: 'axb.jpg' }),
+          row({ path: 'R1/s.png', name: 's.png', tags: [{ name: '스크린샷', source: 'mediaType' }] }),
+        ]);
+
+        // 15b 이름, 두 글자 태그, AND
+        out.push(sub('파일 이름 찾기', names(db, 'sunset') === 'sunset.jpg' && names(db, 'SUNSET') === 'sunset.jpg', names(db, 'sunset')));
+        out.push(sub('두 글자 태그 찾기 (친구)', names(db, '친구') === 'IMG_0001.jpg,sunset.jpg', names(db, '친구')));
+        out.push(sub('낱말 두 개 AND', names(db, '친구 여행') === 'sunset.jpg' && names(db, '여행 친구') === 'sunset.jpg' && names(db, '친구 없는말') === '', names(db, '친구 여행')));
+        out.push(sub('종류 태그(스크린샷)도 검색됨', names(db, '스크린샷') === 's.png' && names(db, '스크린샷', 'screenshot') === 's.png' && names(db, '스크린샷', 'photo') === '', names(db, '스크린샷')));
+
+        // 15c % _ 글자 그대로, 따옴표 등은 값으로만 쓰임
+        out.push(sub('% 글자 그대로 (100%는 100%.jpg만)', names(db, '100%') === '100%.jpg', names(db, '100%')));
+        out.push(sub('_ 글자 그대로 (a_b는 a_b.jpg만)', names(db, 'a_b') === 'a_b.jpg', names(db, 'a_b')));
+        let inj;
+        try { inj = total(db, "' OR 1=1 --") + total(db, '"; DROP TABLE files; --'); } catch (e) { inj = e.message; }
+        out.push(sub('따옴표와 SQL 모양 글자는 그냥 글자', inj === 0 && db.summary('R1').total === 8, String(inj)));
+
+        // 15d 빈 검색어는 전부, 개수 일치, missing 제외
+        out.push(sub('빈 검색어는 전부', total(db, '') === 8 && total(db, '   ') === 8 && total(db, undefined) === 8, String(total(db, ''))));
+        out.push(sub('listDays와 listFiles 검색 결과 일치', total(db, '친구') === 2 && days(db.listDays('R1', q('친구'))) === '2026-10-25:2'));
+        db.setMissing(['R1/sunset.jpg'], 1);
+        out.push(sub('사라진 파일은 검색에서도 빠짐', names(db, '친구') === 'IMG_0001.jpg'));
+      });
+
+      // 15e 날짜 낱말
+      await withDb(env, 'search-date', (db) => {
+        db.upsertFiles([
+          row({ path: 'R1/new1.jpg', name: 'new1.jpg', takenDay: '2026-10-28', takenAt: '2026-10-28T09:00:00' }),
+          row({ path: 'R1/new2.jpg', name: 'new2.jpg', takenDay: '2026-03-05', takenAt: '2026-03-05T09:00:00' }),
+          row({ path: 'R1/old.jpg', name: 'old.jpg', takenDay: '2019-10-28', takenAt: '2019-10-28T09:00:00' }),
+          row({ path: 'R1/week.jpg', name: 'week.jpg', takenDay: '2019-11-02', takenAt: '2019-11-02T09:00:00', tags: [{ name: '2026년도_44주차', source: 'album' }] }),
+          row({ path: 'R1/nodate.jpg', name: 'nodate.jpg', takenDay: null, takenAt: null }),
+        ]);
+        const found = (text) => db.listDays('R1', q(text)).flatMap((d) => db.listFiles('R1', d.day, q(text)).map((f) => f.name)).sort().join(',');
+        out.push(sub('2026 → 2026년 사진 + 태그에 2026이 든 사진', found('2026') === 'new1.jpg,new2.jpg,week.jpg', found('2026')));
+        out.push(sub('2026년도_44주차 태그 이름 그대로', found('2026년도_44주차') === 'week.jpg', found('2026년도_44주차')));
+        out.push(sub('2026년 10월 / 2026-10 / 2026.10', ['2026년 10월', '2026-10', '2026.10'].every((t) => found(t) === 'new1.jpg'), found('2026년 10월')));
+        out.push(sub('2026.10.28 / 2026-10-28 정확한 하루', ['2026.10.28', '2026-10-28', '2026년 10월 28일'].every((t) => found(t) === 'new1.jpg'), found('2026.10.28')));
+        out.push(sub('10.28 은 해마다', found('10.28') === 'new1.jpg,old.jpg', found('10.28')));
+        out.push(sub('날짜 낱말 + 다른 낱말 AND', found('2026 44주차') === 'week.jpg' && found('10.28 2019') === 'old.jpg', `${found('2026 44주차')} / ${found('10.28 2019')}`));
+        out.push(sub('날짜 없는 사진은 날짜 낱말에 안 나옴', !found('2026').includes('nodate') && !found('10.28').includes('nodate')));
+      });
+
+      // 15f 가짜 6만 건 속도: 하나라도 1000ms를 넘으면 실패 (목표는 200ms)
+      {
+        const { openDb } = require('../lib/db');
+        const LIMIT = 1000;
+        const file = newDbPath(env, 'fake60k');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        const opened = openDb(file);
+        const t = {};
+        try {
+          const db = opened.db;
+          fillFakeLibrary(db, 'FAKE', 60000);
+          const n = db.summary('FAKE').total;
+          const dayList = db.listDays('FAKE', ALL);
+          const mid = dayList[Math.floor(dayList.length / 2)].day;
+          t['listDays 전체'] = timeIt(() => db.listDays('FAKE', ALL)).ms;
+          t['listFiles 하루'] = timeIt(() => db.listFiles('FAKE', mid, ALL)).ms;
+          t['검색 listDays (여행)'] = timeIt(() => db.listDays('FAKE', q('여행'))).ms;
+          t['검색 listDays (2026 여행)'] = timeIt(() => db.listDays('FAKE', q('2026 여행'))).ms;
+          t['검색 listDays (없는낱말)'] = timeIt(() => db.listDays('FAKE', q('없는낱말'))).ms;
+          t['검색 listFiles 하루'] = timeIt(() => db.listFiles('FAKE', mid, q('여행'))).ms;
+          t['nextThumbJobs 50'] = timeIt(() => db.nextThumbJobs('FAKE', 50)).ms;
+          const found = db.listDays('FAKE', q('여행')).reduce((s, d) => s + d.count, 0);
+          out.push(sub('가짜 6만 건 채움과 검색 결과', n === 60000 && found > 0 && found < n, `${n}건, 여행 ${found}건`));
+        } finally {
+          opened.db.close();
+        }
+        // 다시 열기: openDb는 열 때마다 quick_check를 해요
+        const reopen = timeIt(() => openDb(file));
+        reopen.result.db.close();
+        t['openDb 다시 열기'] = reopen.ms;
+        const detail = Object.entries(t).map(([k, v]) => `${k} ${Math.round(v)}ms`).join(', ');
+        const slow = Object.entries(t).filter(([, v]) => v > LIMIT).map(([k]) => k);
+        out.push(sub('가짜 6만 건 속도 (1000ms 이하)', slow.length === 0, detail));
+      }
+
+      return out;
+    },
+  },
 ];
 
-module.exports = { items };
+module.exports = { items, fillFakeLibrary };
