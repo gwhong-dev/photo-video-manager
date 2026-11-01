@@ -6,7 +6,7 @@
 //   바로 끝내요. 대화상자는 사용자 화면에서 점검을 멈춰 세워요. 다른 require보다 먼저 있어야 해요
 if (process.env.PVM_USER_DATA) process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
 
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -139,7 +139,8 @@ function createWindow() {
     width: 1200,
     height: 860,
     title: '사진/영상 관리 프로그램',
-    webPreferences: { preload: path.join(__dirname, 'preload.js') },
+    // spellcheck: false = 맞춤법 검사를 끔. 아래 whenReady 쪽 설명처럼 사전 내려받기를 막으려는 것 (점검 34k)
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), spellcheck: false },
   });
   showStartScreen();
   // 창이 처음 다 열리면 갤러리가 백업 폴더 읽기를 시작해요
@@ -421,6 +422,10 @@ if (!gotLock) {
 }
 
 app.whenReady().then(async () => {
+  // 맞춤법 검사 끄기: 켜 두면 Chromium이 처음 켤 때 한국어 사전을 구글 서버(gvt1.com)에서 내려받아요.
+  //   창 설정 spellcheck: false 와 setSpellCheckerEnabled(false) 만으로는 내려받기가 안 멈췄고, 언어 목록을 비워야 멈췄어요 (점검 34k)
+  session.defaultSession.setSpellCheckerEnabled(false);
+  session.defaultSession.setSpellCheckerLanguages([]);
   if (!gotLock) return;
   settings = loadSettings();
   logger = createLogger(logDir());

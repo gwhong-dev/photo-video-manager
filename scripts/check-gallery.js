@@ -1643,6 +1643,7 @@ const items = [
         const handlers = new Map();
         const appEvents = new Map();
         let dialogCalls = 0;
+        const spellCalls = [];
         let readyRun = null;
         const win = {
           webContents: { once() {}, send() {} },
@@ -1665,6 +1666,8 @@ const items = [
           dialog: { showOpenDialog: async () => { dialogCalls++; return { canceled: true, filePaths: [] }; }, showMessageBoxSync: () => 1, showMessageBox: async () => ({}) },
           shell: { trashItem: async () => {}, openPath: async () => '' },
           protocol: { registerSchemesAsPrivileged() {}, handle() {} },
+          // 맞춤법 검사 끄기 호출을 기록해요 (main.js의 whenReady 첫머리)
+          session: { defaultSession: { setSpellCheckerEnabled: (v) => spellCalls.push(['enabled', v]), setSpellCheckerLanguages: (v) => spellCalls.push(['languages', v]) } },
         };
         const origLoad = Module._load;
         const listenersBefore = process.listeners('uncaughtException');
@@ -1686,6 +1689,7 @@ const items = [
           else process.env.PVM_USER_DATA = envBefore;
           for (const l of process.listeners('uncaughtException')) if (!listenersBefore.includes(l)) process.removeListener('uncaughtException', l); // main.js가 점검용으로 붙인 종료 처리는 이 점검에 필요 없어요
         }
+        out.push(sub('켜질 때 맞춤법 검사를 끄고 사전 언어 목록을 비움 (구글 서버 사전 내려받기 방지)', JSON.stringify(spellCalls) === JSON.stringify([['enabled', false], ['languages', []]]), JSON.stringify(spellCalls)));
         out.push(sub('가짜 electron으로 main.js를 불러와 핸들러가 등록됨', loadError === '' && handlers.has('check-tools') && handlers.has('pick-tool') && handlers.has('make-plan') && handlers.has('trash-info'), loadError || [...handlers.keys()].join(',').slice(0, 80)));
 
         if (loadError === '') {

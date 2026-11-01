@@ -357,6 +357,14 @@ const items = [
         out.push(sub('34b 범위 밖, 글자, 빠진 값은 거절', notRejected.length === 0, JSON.stringify(notRejected)));
       }
 
+      // 34k 맞춤법 사전 내려받기 끄기: main.js 글을 읽어 세 줄이 모두 있는지 봄 (진짜 내려받는지는 네트워크 기록으로 따로 확인함)
+      {
+        const mainText = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+        const need = ['spellcheck: false', 'setSpellCheckerEnabled(false)', 'setSpellCheckerLanguages([])'];
+        const missing = need.filter((t) => !mainText.includes(t));
+        out.push(sub('34k main.js가 맞춤법 검사를 끄고 사전 언어 목록을 비움 (구글 서버 사전 내려받기 방지)', missing.length === 0, missing.join(', ')));
+      }
+
       // gallery-main을 불러오는 동안만 openDb를 감싸서, 점검이 같은 DB를 들여다볼 수 있게 해요 (항목 30과 같은 방식)
       const opened = [];
       const gmPath = require.resolve('../gallery-main');
