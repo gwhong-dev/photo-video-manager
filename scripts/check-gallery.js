@@ -91,7 +91,7 @@ const items = [
         out.push(sub('없는 id는 null', db.getFile(999999) === null));
       });
 
-      // 14b 탭 필터: 사진 1 + 영상 1 + 스크린샷(사진+태그) 1
+      // 14b 탭 필터: 사진 1 + 영상 1 + 스크린샷(사진+태그) 1. 탭은 겹치지 않아요 (스크린샷은 사진 탭에서 빠짐)
       await withDb(env, 'tabs', (db) => {
         db.upsertFiles([
           row({ path: 'R1/p.jpg', name: 'p.jpg' }),
@@ -100,8 +100,11 @@ const items = [
         ]);
         const count = (tab) => db.listDays('R1', { ...ALL, tab }).reduce((n, d) => n + d.count, 0);
         const got = { all: count('all'), photo: count('photo'), video: count('video'), screenshot: count('screenshot') };
-        out.push(sub('탭 필터 (전체 3, 사진 2, 영상 1, 스크린샷 1)', got.all === 3 && got.photo === 2 && got.video === 1 && got.screenshot === 1, JSON.stringify(got)));
+        out.push(sub('탭 필터 (전체 3, 사진 1, 영상 1, 스크린샷 1)', got.all === 3 && got.photo === 1 && got.video === 1 && got.screenshot === 1, JSON.stringify(got)));
         const v = db.listFiles('R1', '2026-10-25', { ...ALL, tab: 'video' });
+        const ph = db.listFiles('R1', '2026-10-25', { ...ALL, tab: 'photo' }).map((f) => f.name).join(',');
+        const sc = db.listFiles('R1', '2026-10-25', { ...ALL, tab: 'screenshot' }).map((f) => f.name).join(',');
+        out.push(sub('스크린샷은 사진 탭에서 빠지고 스크린샷 탭에만 나옴', ph === 'p.jpg' && sc === 's.png', `사진 ${ph} / 스크린샷 ${sc}`));
         out.push(sub('영상 탭 파일 목록 값', v.length === 1 && v[0].name === 'v.mp4' && v[0].mediaType === 'video' && v[0].durationSec === 3.5 && v[0].thumbState === 'none', JSON.stringify(v)));
       });
 
@@ -209,6 +212,49 @@ const items = [
         } finally {
           again.db.close();
         }
+      }
+
+      // 14h 깨진 게 아닌 오류(다른 연결이 쓰는 중 등)는 멀쩡한 DB의 이름을 바꾸지 않고 오류를 던짐
+      {
+        const { DatabaseSync } = require('node:sqlite');
+        const { openDb, isCorruptionError } = require('../lib/db');
+        const file = newDbPath(env, 'locked');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        const first = openDb(file);
+        first.db.upsertFiles([row()]);
+        first.db.close();
+
+        // 다른 연결이 DB를 통째로 잠가요 (journal을 DELETE 방식으로 바꾼 뒤 BEGIN EXCLUSIVE)
+        const locker = new DatabaseSync(file);
+        let threw = null;
+        let leftAlone = false;
+        try {
+          locker.exec('PRAGMA journal_mode = DELETE');
+          locker.exec('BEGIN EXCLUSIVE');
+          try {
+            openDb(file, { busyTimeoutMs: 100 }).db.close();
+          } catch (e) {
+            threw = e;
+          }
+          const names = fs.readdirSync(path.dirname(file));
+          leftAlone = names.includes('library.db') && !names.some((n) => n.includes('.broken-'));
+        } finally {
+          try { locker.exec('ROLLBACK'); } catch (e) { /* 잠금이 없을 수도 */ }
+          locker.close();
+        }
+        out.push(sub('잠긴 DB는 이름을 바꾸지 않고 오류를 던짐', !!threw && leftAlone, threw ? `${threw.errstr || threw.message} (errcode ${threw.errcode})` : '오류 없이 열림'));
+        const after = openDb(file);
+        try {
+          out.push(sub('잠금이 풀리면 데이터 그대로 열림', after.recovered === false && after.db.summary('R1').total === 1, `recovered ${after.recovered}, total ${after.db.summary('R1').total}`));
+        } finally {
+          after.db.close();
+        }
+
+        // 오류 분류: 깨진 파일(NOTADB 26, CORRUPT 11, 세부 코드 포함)만 true, 잠김 5, 읽기 전용 8, 디스크 가득 13, 열기 불가 14, 권한 3은 false
+        const cls = (code) => isCorruptionError(Object.assign(new Error('x'), { errcode: code }));
+        const truthy = [26, 11, 26 | (1 << 8), 11 | (3 << 8)].every(cls);
+        const falsy = [5, 6, 3, 8, 13, 14, 10, 1, 5 | (1 << 8), 13 | (2 << 8)].every((c) => !cls(c));
+        out.push(sub('오류 분류: 깨짐만 이름 바꾸기 대상', truthy && falsy && !isCorruptionError(new Error('코드 없음')) && !isCorruptionError(null)));
       }
 
       return out;
