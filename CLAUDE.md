@@ -6,6 +6,7 @@
 - docs/개발개요-v3.md : 전체 방향, 기능 목록, 결정 사항, 다음 할 일
 - docs/기능명세-가져오기-변환-v1.1.md : v1.1 가져오기·변환·날짜 폴더 정리 상세 규칙
 - docs/claude-code-플러그인-가이드.md : 사용하는 플러그인
+- docs/작업환경-옮기기.md : 여러 PC와 클라우드에서 이어서 작업하는 방법, 환경별로 할 수 있는 일
 
 ## 화면 디자인
 - Figma: https://www.figma.com/design/QM0MduYMErt4ZpcamBQ19s (v0.2)
