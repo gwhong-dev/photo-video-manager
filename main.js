@@ -2,7 +2,11 @@
 // 역할: 프로그램의 뇌 🧠 — 창 만들기 + 화면(index.html)의 부탁 처리
 // 실제 작업은 lib 폴더의 파일들이 해요.
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+// 점검 전용(PVM_USER_DATA가 있을 때): 불러오는 중 오류가 나면 Electron의 "main process 오류" 대화상자를 띄우지 않고
+//   바로 끝내요. 대화상자는 사용자 화면에서 점검을 멈춰 세워요. 다른 require보다 먼저 있어야 해요
+if (process.env.PVM_USER_DATA) process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
+
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -15,6 +19,7 @@ const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals } = require('./
 const { createDriveKindOf } = require('./lib/platform');
 const { createLogger } = require('./lib/logger');
 const { writePlanLog, nextTodo, checkSpace, runBatch } = require('./lib/runner');
+const { setupGallery, registerScheme } = require('./gallery-main');
 
 // ---------- 상태 ----------
 let win = null;
@@ -26,6 +31,8 @@ let job = null;        // 지금 작업 (이어하기용)
 let lastPlan = null;   // 미리보기 결과 (아직 실행 전)
 let running = false;   // 실행 중인지
 let pauseAsked = false; // 일시정지 눌렀는지
+let planning = false;  // 미리보기를 만드는 중인지 (화면을 바꾸면 늦게 끝난 미리보기가 다른 화면의 계획을 덮어쓸 수 있어서 막아요)
+let gallery = null;    // 갤러리 연결 (gallery-main.js). 아직 없으면 null
 
 const userDir = () => app.getPath('userData');
 const settingsPath = () => path.join(userDir(), 'settings.json');
@@ -47,10 +54,28 @@ function saveSettings() {
 }
 
 // ---------- 도구 찾기 ----------
+// 가져오기 실행·미리보기 중에는 쓰던 exiftool을 닫으면 남은 파일이 전부 실패로 기록돼서 도구를 새로 찾지 않아요
+const TOOLS_BUSY_MSG = '가져오기 실행이나 미리보기가 끝난 뒤에 도구를 다시 찾을 수 있어요';
+const toolsBusy = () => running || planning;
+
 async function refreshTools() {
-  tools = await detectTools(settings, __dirname);
-  if (et) et.close();
+  const found = await detectTools(settings, __dirname);
+  // 찾는 동안(몇백 ms) 작업이 시작됐을 수 있어서, 바꾸기 직전에 한 번 더 확인해요
+  if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG);
+  tools = found;
+  const old = et;
+  // 같은 exiftool이면 켜 둔 것을 그대로 써요 (읽기 중인 갤러리를 방해하지 않게)
+  if (old && !old.closed && tools.exiftool.ok && old.exePath === tools.exiftool.path) return tools;
+  if (old) old.close();
   et = tools.exiftool.ok ? new ExifTool(tools.exiftool.path) : null;
+  // 갤러리 읽기는 옛 exiftool이 닫히면 오류로 끝나거나(읽는 중), 'exiftool 없음'으로 끝났을 수 있어서 한 번 다시 읽어요
+  if (gallery) {
+    try {
+      gallery.onToolsChanged();
+    } catch (err) {
+      try { logger.newLog('gallery-error', `onToolsChanged 오류: ${err && err.message ? err.message : err}`); } catch (e2) { /* 로그 실패는 무시 */ }
+    }
+  }
   return tools;
 }
 
@@ -115,7 +140,11 @@ function createWindow() {
     title: '사진/영상 관리 프로그램',
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
   });
-  win.loadFile(path.join(__dirname, 'index.html'));
+  showStartScreen();
+  // 창이 처음 다 열리면 갤러리가 백업 폴더 읽기를 시작해요
+  win.webContents.once('did-finish-load', () => {
+    if (gallery) gallery.onWindowReady();
+  });
 
   // 실행 중에 닫으려고 하면 한 번 물어보기
   win.on('close', (e) => {
@@ -131,6 +160,43 @@ function createWindow() {
   });
 }
 
+// ---------- 화면 바꾸기 ----------
+// 시작 화면은 갤러리예요. 갤러리 화면은 Vite로 만든 dist/renderer 에 있어요 (npm start 가 먼저 만들어 줘요)
+//   PVM_START_SCREEN=import 는 점검(npm run check) 전용이에요. 사용자는 쓰지 않아요
+const GALLERY_FILE = path.join(__dirname, 'dist', 'renderer', 'index.html');
+const IMPORT_FILE = path.join(__dirname, 'index.html');
+
+async function loadScreen(name) {
+  if (!win || win.isDestroyed()) return;
+  if (name === 'gallery') {
+    if (!fs.existsSync(GALLERY_FILE)) {
+      throw new Error('갤러리 화면 파일이 아직 없어요. 터미널에서 npm start 로 실행하면 만들어져요');
+    }
+    await win.loadFile(GALLERY_FILE);
+  } else {
+    await win.loadFile(IMPORT_FILE);
+  }
+}
+
+function showStartScreen() {
+  // 갤러리 연결이 실패했으면(gallery가 null) 갤러리 화면은 아무것도 못 해서 가져오기 화면으로 열어요
+  const wantGallery = process.env.PVM_START_SCREEN !== 'import' && !!gallery;
+  if (wantGallery && !fs.existsSync(GALLERY_FILE)) {
+    // 빈 창 대신 이유를 알려 주고 가져오기 화면으로 열어요 (가져오기는 만들기 없이 쓸 수 있어요)
+    win.loadFile(IMPORT_FILE);
+    // 점검(PVM_USER_DATA)에서는 대화상자를 띄우지 않아요. 사용자 화면에서 점검이 멈춰 서지 않게
+    if (!process.env.PVM_USER_DATA) {
+      dialog.showMessageBox(win, {
+        type: 'warning',
+        message: '갤러리 화면 파일이 아직 없어요',
+        detail: '터미널에서 npm start 로 실행해 주세요. 화면을 먼저 만든 뒤 프로그램이 켜져요.\n지금은 가져오기 화면으로 열었어요.',
+      });
+    }
+    return;
+  }
+  win.loadFile(wantGallery ? GALLERY_FILE : IMPORT_FILE);
+}
+
 const send = (ch, data) => {
   if (win && !win.isDestroyed()) win.webContents.send(ch, data);
 };
@@ -144,16 +210,21 @@ ipcMain.handle('get-state', async () => {
 });
 
 // 도구 다시 찾기
-ipcMain.handle('check-tools', async () => refreshTools());
+ipcMain.handle('check-tools', async () => {
+  if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG);
+  return refreshTools();
+});
 
 // 도구 위치 직접 고르기 (exe 파일 선택)
 ipcMain.handle('pick-tool', async (e, name) => {
+  if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG);
   const r = await dialog.showOpenDialog(win, {
     title: `${name} 실행 파일 선택`,
     properties: ['openFile'],
     filters: process.platform === 'win32' ? [{ name: '실행 파일', extensions: ['exe'] }] : [],
   });
   if (r.canceled) return tools;
+  if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG); // 창을 고르는 사이에 작업이 시작됐을 수 있어요
   settings[name] = r.filePaths[0];
   saveSettings();
   return refreshTools();
@@ -171,8 +242,10 @@ ipcMain.handle('select-folder', async (e, title, defaultPath) => {
 
 // 설정 저장 (폴더 경로, 하위 폴더 포함, 한 번에 개수)
 ipcMain.handle('save-settings', async (e, patch) => {
+  const rootBefore = settings.backupRoot;
   Object.assign(settings, patch);
   saveSettings();
+  if (gallery && settings.backupRoot !== rootBefore) gallery.onRootChanged(); // 백업 폴더가 바뀌면 갤러리가 새 폴더를 읽어요
   return settings;
 });
 
@@ -187,7 +260,12 @@ ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
   const v = validateFolders(source, backupRoot);
   if (!v.ok) throw new Error(v.reason);
 
-  lastPlan = await makePlan({ source, backupRoot, includeSub }, et, (msg) => send('plan-status', msg));
+  planning = true;
+  try {
+    lastPlan = await makePlan({ source, backupRoot, includeSub }, et, (msg) => send('plan-status', msg));
+  } finally {
+    planning = false;
+  }
   return { stats: lastPlan.stats, ...rowsOf(lastPlan, 'all') };
 });
 
@@ -249,6 +327,15 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
     return { ...r, job: jobInfo() };
   } finally {
     running = false;
+    // 새로 들어온 파일을 갤러리가 다시 읽어요 (오류로 멈춰도 이미 옮긴 파일이 있을 수 있어요).
+    //   갤러리 쪽 오류가 가져오기 결과를 바꾸면 안 돼서 여기서 잡고 로그만 남겨요
+    if (gallery) {
+      try {
+        gallery.onBatchDone();
+      } catch (err) {
+        try { logger.newLog('gallery-error', `onBatchDone 오류: ${err && err.message ? err.message : err}`); } catch (e2) { /* 로그 실패는 무시 */ }
+      }
+    }
   }
 });
 
@@ -317,6 +404,10 @@ ipcMain.handle('open-folder', async (e, p) => {
 // ---------- 시작 / 종료 ----------
 // 프로그램은 하나만 켜지게 (두 개가 같은 작업 기록을 동시에 건드리면 안 돼서요)
 //   이미 켜져 있으면 → 새로 켠 쪽은 바로 끄고, 원래 창을 앞으로 보여줘요
+// 점검 전용: PVM_USER_DATA가 있으면 설정·DB·로그를 그 폴더에 써요 (진짜 사용자 설정을 건드리지 않게).
+//   프로그램은 하나만 켜지게 하는 잠금도 이 폴더 기준이라, 잠금보다 먼저 정해야 해요
+if (process.env.PVM_USER_DATA) app.setPath('userData', process.env.PVM_USER_DATA);
+registerScheme(protocol); // pvm:// 이미지 주소 등록 (앱이 준비되기 전에 해야 해요)
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -328,7 +419,7 @@ if (!gotLock) {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!gotLock) return;
   settings = loadSettings();
   logger = createLogger(logDir());
@@ -338,6 +429,32 @@ app.whenReady().then(() => {
   } catch (e) {
     job = null;
   }
+  // 갤러리가 폴더를 읽으려면 exiftool이 필요해서 창을 열기 전에 도구부터 찾아요
+  try {
+    await refreshTools();
+  } catch (e) {
+    logger.newLog('startup', `도구 찾기 실패 ${e.message}`);
+  }
+  try {
+    gallery = setupGallery({
+      ipcMain,
+      protocol,
+      getWin: () => win,
+      getSettings: () => settings,
+      getTools: () => tools,
+      getEt: () => et,
+      isRunning: () => running,
+      isPlanning: () => planning,
+      logger,
+      userDir,
+      loadScreen,
+      getJobPending: () => !!job,
+    });
+  } catch (e) {
+    // 갤러리를 못 켜도 가져오기는 쓸 수 있어야 해요
+    gallery = null;
+    console.error('갤러리 연결 실패:', e);
+  }
   createWindow();
 });
 
@@ -345,7 +462,8 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
-// 종료할 때 exiftool도 같이 끄기
+// 종료할 때 갤러리 DB와 exiftool도 같이 끄기
 app.on('will-quit', () => {
+  if (gallery) gallery.close(); // 썸네일 만들던 프로그램을 기다리지 않고 DB를 닫아요
   if (et) et.close();
 });

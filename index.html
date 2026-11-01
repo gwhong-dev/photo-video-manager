@@ -96,7 +96,10 @@
   </style>
 </head>
 <body>
-  <h1>📸 사진/영상 관리 프로그램</h1>
+  <div class="row" style="justify-content:space-between;margin:0 0 14px">
+    <h1 style="margin:0">📸 사진/영상 관리 프로그램</h1>
+    <button id="galleryBtn">갤러리 화면 열기</button>
+  </div>
 
   <!-- 1. 도구 상태 -->
   <div class="card">
@@ -210,8 +213,9 @@
     // 버튼 켜고 끄기
     function setBusy(on, isRunning = false) {
       busy = on;
-      ['previewBtn', 'srcBtn', 'destBtn', 'nextBtn', 'trashBtn', 'finishBtn', 'cancelBtn', 'includeSub', 'batchSize']
+      ['previewBtn', 'srcBtn', 'destBtn', 'nextBtn', 'trashBtn', 'finishBtn', 'cancelBtn', 'includeSub', 'batchSize', 'recheckBtn']
         .forEach((id) => ($(id).disabled = on));
+      document.querySelectorAll('#tools button').forEach((b) => (b.disabled = on)); // "위치 지정"도 작업 중에는 막아요 (쓰던 exiftool을 닫으면 안 돼서)
       $('runBtn').disabled = on || !planReady;
       $('pauseBtn').disabled = !isRunning;
       $('pauseBtn').textContent = '⏸ 일시정지';
@@ -233,13 +237,26 @@
           const b = document.createElement('button');
           b.className = 'small';
           b.textContent = '위치 지정';
-          b.onclick = async () => renderTools(await api.pickTool(key));
+          b.disabled = busy;
+          b.onclick = async () => {
+            try {
+              renderTools(await api.pickTool(key));
+            } catch (e) {
+              setStatus('⚠ ' + cleanErr(e));
+            }
+          };
           span.appendChild(b);
         }
         box.appendChild(span);
       }
     }
-    $('recheckBtn').onclick = async () => renderTools(await api.checkTools());
+    $('recheckBtn').onclick = async () => {
+      try {
+        renderTools(await api.checkTools());
+      } catch (e) {
+        setStatus('⚠ ' + cleanErr(e)); // 작업 중이라 거절됐을 때도 이유를 보여줘요
+      }
+    };
 
     // ---------- 이어하기 배너 ----------
     function setJob(info) {
@@ -569,6 +586,14 @@
     };
 
     // ---------- 기타 버튼 ----------
+    // 갤러리 화면으로 (작업 중이면 main이 거절하고 이유를 알려 줘요)
+    $('galleryBtn').onclick = async () => {
+      try {
+        await api.gallery.openScreen('gallery');
+      } catch (e) {
+        setStatus('⚠ ' + cleanErr(e));
+      }
+    };
     $('logBtn').onclick = () => api.openLogs();
     $('openBtn').onclick = async () => {
       if (!(await api.openFolder(state.backupRoot))) alert('백업 폴더를 먼저 골라 주세요');

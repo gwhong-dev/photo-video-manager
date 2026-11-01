@@ -15,7 +15,8 @@
 | ⏸️ 나눠서 작업 | 한 번에 N개(기본 2,000) + 일시정지 + 다음에 켜면 이어하기 |
 | 🧹 원본 정리 | 회차가 끝날 때마다 물어보고 정리. 하드디스크는 휴지통, USB·SD·네트워크는 `가져올 폴더\_정리완료원본`으로 이동 (실패한 건 남김) |
 | 💾 공간 확인 | 실행 전 백업 폴더 남은 공간 확인 (부족하면 중단, 80% 넘으면 경고) |
-| 📝 로그 | 계획 / 실행 / 원본 정리 기록을 모두 파일로 저장 |
+| 🖼️ 갤러리 | 백업 폴더를 읽어 날짜별 썸네일 격자로 보기. 파일 이름, 태그, 날짜 검색, 오른쪽 패널에 찍은 시각과 위치 표시. 사진은 읽기만 하고, 목록과 썸네일은 `%APPDATA%`에 따로 저장 |
+| 📝 로그 | 계획 / 실행 / 원본 정리 / 갤러리 읽기 기록을 모두 파일로 저장 |
 
 ## 안전 규칙
 
@@ -46,10 +47,16 @@ npm install
 npm start
 ```
 
+- Node.js 22.5 이상이 필요해요 (`package.json`의 `engines`). 갤러리 목록 파일(SQLite)을 Node에 들어 있는 기능으로 쓰기 때문이에요
+
+- `npm start`는 화면(갤러리)을 먼저 만든 뒤(`vite build`) 앱을 켜요. 화면을 고친 뒤에는 `npm start`로 다시 켜면 돼요
+- 더블클릭으로 하려면 `git pull` 한 뒤 `scripts\start.bat` (설치와 `npm start`를 한 번에 해요)
+- 처음 켜면 갤러리가 백업 폴더를 읽고 썸네일을 만들어서 오래 걸려요 (`docs/실사용-테스트.md` 8절)
+
 ## 자동 점검
 
 ```
-npm run check     # 12개 항목 점검 (docs/점검-푸시-절차.md)
+npm run check     # 19개 항목 점검, 화면을 먼저 빌드해요 (docs/점검-푸시-절차.md)
 npm run samples   # 자동 샘플 다시 만들기 (test/samples/auto, 없는 파일만)
 ```
 
@@ -69,8 +76,10 @@ npm run samples   # 자동 샘플 다시 만들기 (test/samples/auto, 없는 �
 ```
 photo-video-manager
 ├─ main.js        ← 프로그램의 뇌 (창 + 화면 부탁 처리)
+├─ gallery-main.js← 갤러리 연결 (DB 열기, 폴더 읽기 시작, 이미지 전달)
 ├─ preload.js     ← 화면과 뇌를 이어주는 다리
-├─ index.html     ← 화면
+├─ index.html     ← 가져오기 화면
+├─ src            ← 갤러리 화면 (React, `vite build`로 dist/renderer에 만듦)
 ├─ lib
 │  ├─ exiftool.js ← exiftool 계속 켜 두고 쓰기 (빠름)
 │  ├─ tools.js    ← 외부 프로그램 찾기/실행
@@ -80,9 +89,14 @@ photo-video-manager
 │  ├─ runner.js   ← 실행 (공간 확인 → N개 처리)
 │  ├─ cleaner.js  ← 원본 정리 (대상 고르기 → 휴지통 / 이동)
 │  ├─ platform.js ← 드라이브 종류 등 OS마다 다른 코드
+│  ├─ db.js       ← 갤러리 목록 파일(SQLite), 모든 SQL
+│  ├─ search.js   ← 검색어 해석
+│  ├─ library.js  ← 백업 폴더 읽기 (바뀐 파일만, 사라진 파일은 표시만)
+│  ├─ thumbs.js   ← 썸네일 만들기
+│  ├─ media-protocol.js ← pvm:// 이미지 요청 판단
 │  ├─ logger.js   ← 로그 파일 (절대 덮어쓰지 않음)
 │  └─ job.js      ← 작업 목록 저장 & 이어하기
-├─ scripts        ← npm run check / samples
+├─ scripts        ← npm run check / samples / start.bat
 ├─ test/samples   ← 점검용 샘플 (auto: git에 있음, manual: 직접 넣음)
 └─ package.json
 ```
@@ -93,9 +107,12 @@ photo-video-manager
 
 - `settings.json` — 폴더 경로, 도구 위치, 한 번에 처리할 개수
 - `jobs\` — 진행 중인 작업 (이어하기용)
-- `logs\` — `plan_*.txt` / `run_*.txt` / `clean_*.txt` (예전 버전은 `trash_*.txt`)
+- `library.db` — 갤러리 목록 (사진에서 다시 만들 수 있어요)
+- `thumbs\` — 갤러리 썸네일 (6만 장 기준 약 0.6GB)
+- `logs\` — `plan_*.txt` / `run_*.txt` / `clean_*.txt` (예전 버전은 `trash_*.txt`), 갤러리는 `gallery-*.txt`
 
 ## 기술 스택
 
 - Electron, Node.js (`fs`, `crypto`, `child_process`)
+- 갤러리: React, Vite, `node:sqlite`, sharp, @tanstack/react-virtual
 - exiftool (stay_open 모드), ImageMagick, FFmpeg

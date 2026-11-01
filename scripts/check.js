@@ -1,5 +1,5 @@
 // 파일 위치: scripts/check.js
-// 역할: 자동 점검 (npm run check) — docs/점검-푸시-절차.md 의 13개 항목
+// 역할: 자동 점검 (npm run check) — docs/점검-푸시-절차.md 의 19개 항목
 //
 // ⚠️ 샘플(test/samples)은 절대 직접 쓰지 않아요.
 //    임시 폴더(%TEMP%\pvm-check-시각)에 복사한 뒤 그 복사본으로만 실행해요.
@@ -114,8 +114,11 @@ const ITEMS = [
   {
     no: 1,
     name: '앱 실행',
-    async run() {
-      const r = await launchCheck(APP);
+    async run(env) {
+      // 가져오기 화면으로 띄워서 도구 표시를 확인해요. 임시 userData를 써서 진짜 설정을 읽지 않아요
+      const userData = path.join(env.tmp, 'launch-import');
+      fs.mkdirSync(userData, { recursive: true });
+      const r = await launchCheck(APP, { env: { PVM_USER_DATA: userData, PVM_START_SCREEN: 'import' } });
       return [
         sub('창이 뜨고 정상 종료', r.exitCode === 0 && r.title === '사진/영상 관리 프로그램', `제목 "${r.title}", 종료 코드 ${r.exitCode}`),
         sub('화면 오류 없음', r.errors.length === 0, r.errors.join(' / ')),
@@ -797,6 +800,8 @@ const ITEMS = [
       return out;
     },
   },
+  // 14번부터는 갤러리 점검 (scripts/check-gallery.js)
+  ...require('./check-gallery').items,
 ];
 
 // ---------- 점검 임시 폴더 정리 ----------

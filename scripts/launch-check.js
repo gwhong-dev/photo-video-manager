@@ -3,14 +3,54 @@
 //   버튼은 하나도 누르지 않아요.
 //   remote debugging = 프로그램 밖에서 화면 내용을 읽는 통로 (이 PC 안에서만 열림)
 
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
+
+// 앱을 띄우기 전에 main 쪽 파일 문법부터 확인해요.
+//   문법 오류가 있는 채로 Electron을 켜면 "main process 오류" 대화상자가 사용자 화면에 떠서 점검이 멈춰 버려요
+const MAIN_FILES = ['main.js', 'gallery-main.js', 'preload.js'];
+function syntaxErrors(appDir) {
+  const errors = [];
+  for (const f of MAIN_FILES) {
+    const full = path.join(appDir, f);
+    if (!fs.existsSync(full)) continue;
+    const r = spawnSync(process.execPath, ['--check', full], { encoding: 'utf8' });
+    if (r.status !== 0) errors.push(`${f} 문법 오류: ${String(r.stderr || r.error || '').trim().split(/\r?\n/).slice(0, 6).join(' ')}`);
+  }
+  return errors;
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function launchCheck(appDir, { port = 9333, waitMs = 4000 } = {}) {
-  const exe = path.join(appDir, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
-  const child = spawn(exe, ['.', `--remote-debugging-port=${port}`], { cwd: appDir });
+// env: 앱에 더 넘길 환경변수 (점검 전용 PVM_USER_DATA, PVM_START_SCREEN)
+//   PVM_USER_DATA를 안 주면 임시 pvm-check- 폴더를 만들어 넘기고 끝나면 지워요 (진짜 사용자 설정을 읽지 않게. 직접 실행도 마찬가지)
+// exe: 점검용으로 다른 Electron 실행 파일을 쓸 때 (기본은 appDir 안의 것)
+async function launchCheck(appDir, opts = {}) {
+  const env = { ...(opts.env || {}) };
+  let made = null;
+  if (!env.PVM_USER_DATA) {
+    made = fs.mkdtempSync(path.join(os.tmpdir(), 'pvm-check-'));
+    env.PVM_USER_DATA = made;
+  }
+  try {
+    return await launchOnce(appDir, { ...opts, env });
+  } finally {
+    if (made) {
+      try {
+        fs.rmSync(made, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch (e) { /* 못 지워도 점검 임시 폴더라 나중에 check.js가 정리해요 */ }
+    }
+  }
+}
+
+// until: 화면 글자에 이 글이 나올 때까지 더 기다려요 (최대 untilMs). probe: 화면에서 더 읽고 싶은 값(자바스크립트 식)
+async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: exeOverride, until = '', untilMs = 20000, probe = '' } = {}) {
+  const bad = syntaxErrors(appDir);
+  if (bad.length) return { ok: false, title: '', text: '', errors: bad, exitCode: null, mainOut: '' };
+  const exe = exeOverride || path.join(appDir, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
+  const child = spawn(exe, ['.', `--remote-debugging-port=${port}`], { cwd: appDir, env: { ...process.env, ...env } });
   let mainOut = '';
   child.stdout.on('data', (d) => (mainOut += d));
   child.stderr.on('data', (d) => (mainOut += d));
@@ -37,7 +77,9 @@ async function launchCheck(appDir, { port = 9333, waitMs = 4000 } = {}) {
   if (!page) {
     child.kill();
     const why = spawnError ? `Electron을 실행하지 못함 (${spawnError.code || spawnError.message}). npm install로 Electron을 다시 받아 주세요` : '창이 뜨지 않음';
-    return { ok: false, title: '', text: '', errors: [why], exitCode, mainOut };
+    // Electron이 일찍 끝났으면 main 쪽 출력(불러오다 난 오류)의 앞부분도 같이 알려요
+    const hint = exitCode !== null && mainOut.trim() ? ` / 출력: ${mainOut.trim().split(/\r?\n/).slice(0, 3).join(' ')}` : '';
+    return { ok: false, title: '', text: '', errors: [why + hint], exitCode, mainOut };
   }
 
   const ws = new WebSocket(page.webSocketDebuggerUrl);
@@ -65,8 +107,13 @@ async function launchCheck(appDir, { port = 9333, waitMs = 4000 } = {}) {
   await send('Log.enable');
 
   await sleep(waitMs); // 도구 찾기가 끝날 시간
+  const readText = async () => (await send('Runtime.evaluate', { expression: 'document.body.innerText', returnByValue: true })).result.result.value;
+  if (until) {
+    for (let waited = 0; waited < untilMs && !String(await readText()).includes(until); waited += 500) await sleep(500);
+  }
   const title = (await send('Runtime.evaluate', { expression: 'document.title', returnByValue: true })).result.result.value;
-  const text = (await send('Runtime.evaluate', { expression: 'document.body.innerText', returnByValue: true })).result.result.value;
+  const text = await readText();
+  const probed = probe ? (await send('Runtime.evaluate', { expression: probe, returnByValue: true })).result.result.value : undefined;
 
   // 창 닫기 → 앱이 스스로 종료 (exiftool 정리 포함)
   send('Runtime.evaluate', { expression: 'window.close()' });
@@ -80,7 +127,7 @@ async function launchCheck(appDir, { port = 9333, waitMs = 4000 } = {}) {
   } catch (e) {
     // 이미 닫힘
   }
-  return { ok: errors.length === 0 && exitCode === 0, title, text, errors, exitCode, mainOut };
+  return { ok: errors.length === 0 && exitCode === 0, title, text, probed, errors, exitCode, mainOut };
 }
 
 module.exports = { launchCheck };

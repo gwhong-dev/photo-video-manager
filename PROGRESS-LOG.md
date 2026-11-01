@@ -17,3 +17,5 @@
 | 2026-11-01 | feature/video-playable-check | 이 커밋 | ✅ 13개 통과 (13 추가) + 손상 영상 복사본으로 실제 앱 확인 | origin/feature/video-playable-check | 재생할 수 없는 영상을 복사하지 않고 `⚠ 재생 불가`로 표시, 원본 정리 대상에서 뺌 (명세 v1.3). main 합치기는 사용자 확인 후 |
 | 2026-11-01 | feature/video-playable-check → main | 이 커밋 | 문서만 변경, 코드는 51c3a5f에서 ✅ 13개 통과 | origin/feature/video-playable-check, origin/main | 사용자 확인 후 main에 합침 (fast-forward, PR 없이 진행). 복사본 실행은 Claude가 진행했고, 사용자가 직접 실행하지 않은 채 사용자 결정으로 합침 |
 | 2026-11-01 | feature/project-guidelines | 이 커밋 | ✅ 13개 통과 (문서와 CI 파일만 변경) | origin/feature/project-guidelines | 프로젝트 지침을 CLAUDE.md에 합침, PROGRESS.md와 이 파일 추가, 기록 표를 점검-푸시-절차.md에서 옮김, CI 추가 |
+| 2026-11-01 | feature/electron-upgrade | b7735f6, 5d38e07 | ✅ 13개 통과, CI 통과 | PR #2 머지 | Electron 45.2.1, 설치 때 실행 파일을 받도록 postinstall 추가 |
+| 2026-11-01 | feature/gallery | 174b8b9 ~ 이 커밋 | ✅ 19개 통과 | PR #3 | 읽기 전용 갤러리. 복사본 563개: 첫 읽기 7초, 썸네일 41초, 전후 파일 동일. 6만 개 어림: 첫 읽기 13분, 썸네일 77분, 0.6GB |
