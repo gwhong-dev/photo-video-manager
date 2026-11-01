@@ -2,8 +2,10 @@
 // 역할: 갤러리를 main.js에 연결 — DB 열기, 폴더 읽기 시작 시점, 화면의 부탁(IPC), pvm:// 이미지 전달
 //   실제 일은 lib/ 의 파일들이 해요: lib/db.js, lib/library.js, lib/thumbs.js, lib/media-protocol.js
 //   (docs/superpowers/specs/2026-11-01-gallery-design.md 4, 7, 8절)
+//   날짜와 위치 직접 넣기: lib/manual-edit.js (미리보기 계산), lib/manual-journal.js (기록 파일, 복구)
+//   (docs/superpowers/specs/2026-11-01-missing-info-design.md 5, 6, 7, 9, 10절)
 //
-// ⚠️ 사진 파일은 읽기만 해요. 쓰는 곳은 userData 안의 library.db, thumbs 폴더, logs 폴더뿐이에요.
+// ⚠️ 사진 파일은 읽기만 해요. 쓰는 곳은 userData 안의 library.db, manual-edits.jsonl, thumbs 폴더, logs 폴더뿐이에요.
 // ⚠️ Electron이 필요한 것은 모두 main.js에서 받아요 (net만 pvm:// 파일 응답 때 그때그때 불러와서, 일반 Node에서도 이 파일을 불러올 수 있어요)
 //
 // 모양: registerScheme(protocol)  — app.whenReady 전에 한 번 (pvm:// 를 안전한 주소로 등록)
@@ -15,6 +17,7 @@
 //   isPlanning(): 미리보기를 만드는 중인지 (중이면 화면 전환을 막아요)
 
 const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { openDb } = require('./lib/db');
@@ -22,10 +25,13 @@ const { createLibrary } = require('./lib/library');
 const { createThumbs } = require('./lib/thumbs');
 const { handleMedia } = require('./lib/media-protocol');
 const { now } = require('./lib/logger');
+const { normalizeRequest, planEdit, toPreview, MAX_TARGETS } = require('./lib/manual-edit');
+const { createJournal, recover } = require('./lib/manual-journal');
 
 const SCHEME = 'pvm';
 const TABS = ['all', 'photo', 'video', 'screenshot'];
 const SORTS = ['newest', 'oldest'];
+const INFOS = ['noLocation', 'noDate', 'manual']; // 정보 없는 사진 화면의 탭
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const PROGRESS_GAP_MS = 100; // 읽기 진행 알림 최소 간격 (파일 찾는 동안 수천 번 보내지 않게)
 
@@ -53,8 +59,25 @@ function cleanFilter(f) {
     sort: SORTS.includes(x.sort) ? x.sort : 'newest',
     query: typeof x.query === 'string' ? x.query.slice(0, 200) : '',
     tag: typeof x.tag === 'string' && x.tag ? x.tag.slice(0, 200) : null,
+    info: INFOS.includes(x.info) ? x.info : null,
   };
 }
+
+// 화면에서 온 id 배열 검사: 1 이상의 안전한 정수만, 한 번에 최대 MAX_TARGETS개
+function checkIds(ids) {
+  // 너무 많이 골랐을 때는 이유를 그대로 알려 줘요
+  if (Array.isArray(ids) && ids.length > MAX_TARGETS) {
+    throw new Error(`한 번에 ${MAX_TARGETS.toLocaleString('en-US')}장까지만 넣을 수 있어요. 선택을 줄여 주세요.`);
+  }
+  if (!Array.isArray(ids) || !ids.every((n) => Number.isSafeInteger(n) && n > 0)) {
+    throw new Error('파일 번호 목록이 올바르지 않아요');
+  }
+  return ids;
+}
+
+// 화면에 보여 줄 오류 글에는 파일 경로가 들어가면 안 돼요. 원래 오류 글(경로가 섞여 있을 수 있어요)은 로그에만 남기고,
+// 화면에는 정해진 문장과 오류 코드(EISDIR, EACCES 같은 짧은 영문 대문자)만 보여요
+const codeNote = (e) => (e && typeof e.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(e.code) ? ` (${e.code})` : '');
 
 function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning }) {
   const base = typeof userDir === 'function' ? userDir() : userDir;
@@ -102,6 +125,23 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     try {
       logger.newLog('gallery-error', `갤러리 오류 ${now()}\n${where}: ${e && e.message ? e.message : e}`);
     } catch (err) { /* 로그를 못 써도 프로그램은 계속 */ }
+  }
+
+  // ---------- 직접 넣은 값의 기록 파일 ----------
+  //   userData/manual-edits.jsonl 에 넣기와 되돌리기를 먼저 적어 둬요. DB가 새로 만들어져도 켤 때 여기서 값을 되살려요
+  const journal = createJournal(path.join(base, 'manual-edits.jsonl'));
+  if (db) {
+    // 복구가 실패해도 갤러리는 켜요 (오류 로그만 남김). recover 는 줄 하나가 틀려도 던지지 않지만 혹시 몰라 한 번 더 감싸요
+    try {
+      const r = recover(db, journal);
+      if (r.applied || r.undone || r.skipped) {
+        // 건너뛴 이유도 같이 남겨요 (묶음 번호, 종류, 이유). 사진 파일 경로는 안 들어가는 글만이에요
+        const why = (r.errors || []).map((x) => `  건너뜀: ${x.batchId ? `묶음 ${x.batchId} ` : ''}(${x.type}) ${x.message}`);
+        startupLog([`기록 파일에서 직접 넣은 값을 복구했어요: 넣기 ${r.applied}개, 되돌리기 ${r.undone}개, 건너뜀 ${r.skipped}개`, ...why]);
+      }
+    } catch (e) {
+      errorLog('직접 넣은 값 복구', e);
+    }
   }
 
   // ---------- 화면에 알리기 ----------
@@ -172,6 +212,10 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       connected: !!root && isDir(root),
       total: 0,
       noDate: 0,
+      noLocation: 0,
+      noInfo: 0,
+      manualCount: 0,
+      lastBatch: null,
       tagCount: 0,
       tags: [],
       scan: { ...scan },
@@ -187,6 +231,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     if (db && root) {
       try {
         Object.assign(out, db.summary(root));
+        out.lastBatch = db.lastBatch(root); // { id, kind, count, createdAt } 또는 null (되돌리기 버튼용)
       } catch (err) {
         out.dbError = `목록을 읽지 못했어요: ${err && err.message ? err.message : err}`;
       }
@@ -203,6 +248,12 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     if (day !== null && !(typeof day === 'string' && DAY_RE.test(day))) throw new Error('날짜 모양이 올바르지 않아요');
     const root = rootNow();
     return db && root ? db.listFiles(root, day, cleanFilter(filter)) : [];
+  });
+
+  // 조건에 맞는 파일 id 전체 ("목록 전체 선택"용). 순서는 화면 목록과 같아요
+  ipcMain.handle('gallery:list-ids', (e, filter) => {
+    const root = rootNow();
+    return db && root ? db.listIds(root, cleanFilter(filter)) : [];
   });
 
   // 패널에 보일 정보. 파일 경로(path, root)는 화면에 주지 않아요 (화면은 경로를 몰라도 돼요)
@@ -234,6 +285,141 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     if (planningNow) throw new Error('미리보기가 끝난 뒤에 화면을 바꿀 수 있어요');
     await loadScreen(name);
     return true;
+  });
+
+  // ---------- 날짜와 위치 직접 넣기 ----------
+  //   순서: 검사 → 다시 계산 → 기록 파일에 먼저 적기 → DB 저장 → (저장이 실패하면 void) → 로그 → 화면 알림
+  //   화면이 본 미리보기는 믿지 않고, 넣을 때 main이 처음부터 다시 계산해서 저장해요.
+  //   ⚠️ 사진 파일은 건드리지 않아요. 쓰는 곳은 DB, 기록 파일(manual-edits.jsonl), 로그뿐이에요.
+  //   백업 폴더가 연결되지 않아도 돼요 (DB와 기록 파일만 쓰므로)
+
+  // 가져오기 중이거나 DB, 백업 폴더가 없으면 못 해요. 준비됐으면 지금 백업 폴더(root)를 돌려줘요
+  function editReady() {
+    if (busy()) throw new Error('가져오기가 끝난 뒤에 할 수 있어요');
+    // 원인(경로가 섞일 수 있음)은 시작 로그에 있어서 화면에는 정해진 문장만 보여요
+    if (!db) throw new Error('목록 파일(library.db)을 열지 못해서 할 수 없어요. 프로그램을 다시 켜 보세요');
+    const root = rootNow();
+    if (!root) throw new Error('백업 폴더를 먼저 정해 주세요');
+    return root;
+  }
+
+  // 검사하고 다시 계산해요: ids, edit 모양 → 기준 사진 확인 → 미리보기 계산 (DB는 읽기만)
+  //   기준 사진이 없거나 사라졌거나(missing) 다른 폴더 것이면 sourceRow 를 비워서 "다시 복사해 주세요"로 거절돼요
+  function computePlan(root, ids, edit) {
+    checkIds(ids);
+    let sourceRow = null;
+    if (edit && typeof edit === 'object' && edit.source === 'copy' && Number.isSafeInteger(edit.sourceId) && edit.sourceId > 0) {
+      const s = db.getFile(edit.sourceId);
+      if (s && !s.missing && s.root === root) sourceRow = s;
+    }
+    const resolved = normalizeRequest(edit, { sourceRow, year: new Date().getFullYear() });
+    return planEdit(db.getFilesByIds(ids), resolved, (p) => db.getManual(p), root);
+  }
+
+  // DB에 저장하는 일만 try 로 감싸요. 실패하면 기록 파일에 void 를 적어서 다음에 켤 때 이 작업이 다시 적용되지 않게 해요.
+  //   (저장이 끝난 뒤의 로그, 알림이 실패한 것을 void 로 적으면 안 되니까 저장 한 줄만 이 안에 둬요)
+  //   void 마저 적지 못하면 그 사실을 오류 글에 같이 알려요
+  //   오류 글에는 정해진 문장과 오류 코드만 써요 (원래 오류 글은 경로가 섞일 수 있어서 로그에만 남겨요)
+  //   of: 'apply' | 'undo', what: 오류 글에 쓸 이름
+  function saveOrVoid(of, batchId, what, save) {
+    try {
+      save();
+    } catch (err) {
+      let voidNote = '';
+      try {
+        journal.append({ type: 'void', of, batchId });
+      } catch (err2) {
+        errorLog(`${what} 취소 표시(void) 쓰기`, err2);
+        voidNote = ` 취소 표시도 기록 파일에 남기지 못해서, 다음에 프로그램을 켜면 이 ${what}가 다시 적용될 수 있어요.`;
+      }
+      errorLog(`${what} DB 저장`, err);
+      throw new Error(`${what}를 저장하지 못했어요${codeNote(err)}. 자세한 내용은 로그 폴더의 오류 로그에 있어요.${voidNote}`);
+    }
+  }
+
+  // 저장이 끝난 뒤의 마무리: 로그 파일(묶음 번호, 개수, 파일별 전후 값)과 화면 알림. 실패해도 이미 저장된 작업은 그대로예요
+  //   파일별 줄은 makeLines()로 이 try 안에서 만들어요 (만들다 던져도 저장된 작업을 실패로 만들지 않게)
+  function finishEdit(title, batchId, kind, count, makeLines) {
+    try {
+      const lines = makeLines();
+      const log = logger.newLog('manual-edit', `${title} ${now()}\n묶음 ${batchId}\n종류 ${kind}\n개수 ${count}`);
+      if (lines.length) log.write(lines.join('\n')); // 수천 줄도 한 번에 써요
+    } catch (err) {
+      errorLog(`${title} 로그`, err);
+    }
+    try {
+      send('gallery:library-changed');
+    } catch (err) {
+      errorLog(`${title} 화면 알림`, err);
+    }
+  }
+
+  const locText = (v) => (!v || v.lat === null || v.lat === undefined ? '없음' : `${v.lat},${v.lng}`);
+  const dateText = (v) => (v && v.takenAt ? v.takenAt : '없음');
+
+  // 복사할 기준 사진의 값 요약 (파일 경로 없음). 없거나 사라졌거나 다른 폴더 것이면 null
+  ipcMain.handle('gallery:get-copy-source', (e, id) => {
+    if (!Number.isSafeInteger(id) || id < 1) throw new Error('파일 번호가 올바르지 않아요');
+    const root = rootNow();
+    if (!db || !root) return null;
+    const f = db.getFile(id);
+    if (!f || f.missing || f.root !== root) return null;
+    return { id: f.id, name: f.name, takenAt: f.takenAt, lat: f.lat, lng: f.lng };
+  });
+
+  // 미리보기: 아무것도 저장하지 않아요
+  ipcMain.handle('gallery:preview-edit', (e, ids, edit) => {
+    const root = editReady();
+    return toPreview(computePlan(root, ids, edit));
+  });
+
+  // 넣기: 다시 계산해서 바뀌는 파일만 저장해요. 바꿀 것이 없으면 아무것도 쓰지 않고 count 0
+  ipcMain.handle('gallery:apply-edit', (e, ids, edit) => {
+    const root = editReady();
+    const plan = computePlan(root, ids, edit);
+    const changed = plan.items.filter((it) => it.status === 'changed');
+    if (!changed.length) return { batchId: null, kind: plan.kind, count: 0 };
+
+    const batchId = crypto.randomUUID();
+    const at = new Date().toISOString();
+    const items = changed.map((it) => ({ path: it.path, before: it.beforeManual, after: it.afterManual }));
+
+    // 1) 기록 파일에 먼저. 못 쓰면 거절하고 DB는 바꾸지 않아요
+    try {
+      journal.append({ type: 'apply', batchId, at, root, kind: plan.kind, items });
+    } catch (err) {
+      errorLog('값 넣기 기록 파일 쓰기', err);
+      throw new Error(`기록 파일에 쓰지 못해서 값을 넣지 않았어요${codeNote(err)}. 자세한 내용은 로그 폴더의 오류 로그에 있어요.`);
+    }
+    // 2) DB 저장 (실패하면 void)
+    saveOrVoid('apply', batchId, '값 넣기', () => db.applyManualBatch({ id: batchId, root, kind: plan.kind, createdAt: at, items }));
+    // 3) 로그와 알림
+    finishEdit('직접 넣기', batchId, plan.kind, changed.length, () => changed.map((it) =>
+      `${it.path}\t날짜 ${dateText(it.before)} → ${dateText(it.after)}\t위치 ${locText(it.before)} → ${locText(it.after)}`));
+    return { batchId, kind: plan.kind, count: changed.length };
+  });
+
+  // 되돌리기: 이 백업 폴더의 마지막 묶음만. 없으면 null
+  //   화면이 버튼에 적힌 묶음의 번호(batchId)를 같이 보내요. 마지막 묶음이 그 사이 바뀌었으면 거절해요
+  //   (두 번 눌러서 이미 되돌린 줄 모르고 그 앞 묶음까지 되돌리는 일을 막으려고. 기록 파일도 DB도 건드리지 않아요)
+  ipcMain.handle('gallery:undo-last', (e, batchId) => {
+    const root = editReady();
+    if (typeof batchId !== 'string' || !batchId || batchId.length > 100) throw new Error('되돌릴 작업 번호가 올바르지 않아요.');
+    const last = db.lastBatch(root);
+    if (!last) return null;
+    if (last.id !== batchId) throw new Error('마지막으로 넣은 작업이 바뀌었어요. 화면을 확인하고 다시 눌러 주세요.');
+    const at = new Date().toISOString();
+    try {
+      journal.append({ type: 'undo', batchId: last.id, at });
+    } catch (err) {
+      errorLog('되돌리기 기록 파일 쓰기', err);
+      throw new Error(`기록 파일에 쓰지 못해서 되돌리지 않았어요${codeNote(err)}. 자세한 내용은 로그 폴더의 오류 로그에 있어요.`);
+    }
+    saveOrVoid('undo', last.id, '되돌리기', () => db.undoBatch(last.id, at));
+    // 되돌리기 로그: 파일별로 "되돌리기 전(넣었던 값) → 되돌린 뒤(그 전 값, 직접 넣은 값이 없었으면 없음)"
+    finishEdit('직접 넣은 값 되돌리기', last.id, last.kind, last.count, () => db.batchItems(last.id).map((it) =>
+      `${it.path}\t직접 넣은 날짜 ${dateText(it.after)} → ${dateText(it.before)}\t직접 넣은 위치 ${locText(it.after)} → ${locText(it.before)}`));
+    return { kind: last.kind, count: last.count };
   });
 
   // ---------- pvm:// 이미지 전달 ----------

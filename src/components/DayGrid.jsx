@@ -4,6 +4,8 @@
 //   - 창 너비는 ResizeObserver로 재서 한 줄 칸 수를 정해요 (창을 줄이면 칸 수가 줄어요)
 //   - 날짜별 파일 목록은 화면에 들어온 날만 한 번 가져와 기억해요. 필터가 바뀌면 싹 비우고,
 //     목록이 갱신되면(gen이 오르면) 옛 목록을 보여 둔 채 새로 받아 바꿔 끼워요 (깜빡이거나 스크롤이 튀지 않게)
+//   - 선택(selection)은 App이 들고 있어요. 칸은 "골랐는지"만 true/false로 받아서, 선택이 바뀌어도 바뀐 칸만 다시 그려요
+//     클릭(Ctrl, Shift 포함)과 우클릭은 App에 알리기만 하고, 계산은 selection.mjs가 해요
 
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -33,14 +35,25 @@ export function computeLayout(width) {
 const rowKey = (row) => `${row.day === null ? 'none' : row.day}|${row.dayRowIndex}`;
 
 // 칸 하나. 같은 사진이면 다시 그리지 않아요 (스크롤할 때 가벼워지게)
-const Cell = memo(function Cell({ file, selected, onSelect }) {
+//   칸에 넘기는 값은 모두 글자, 숫자, true/false, 안 바뀌는 함수라서 선택이 바뀌어도 다른 칸은 그대로 있어요
+const Cell = memo(function Cell({ file, day, selected, onClick, onMenu }) {
   const [broken, setBroken] = useState(false);
   // 썸네일 상태가 바뀌면(만드는 중 → 완료) 한 번 더 시도해요. 같은 상태에서는 다시 시도하지 않아요
   useEffect(() => setBroken(false), [file.thumbState]);
   const failed = broken || file.thumbState === 'failed';
   const duration = file.mediaType === 'video' ? formatDuration(file.durationSec) : '';
   return (
-    <button type="button" className={`cell${selected ? ' selected' : ''}`} aria-label={file.name} aria-pressed={selected} onClick={() => onSelect(file.id)}>
+    <button
+      type="button"
+      className={`cell${selected ? ' selected' : ''}`}
+      aria-label={file.name}
+      aria-pressed={selected}
+      onClick={(e) => onClick(file, e, day)}
+      onContextMenu={(e) => {
+        e.preventDefault(); // 우클릭 메뉴는 앱이 직접 그려요
+        onMenu(file, e);
+      }}
+    >
       {failed ? (
         <span className="no-preview">미리보기 없음</span>
       ) : (
@@ -51,7 +64,7 @@ const Cell = memo(function Cell({ file, selected, onSelect }) {
   );
 });
 
-function DayLabel({ row }) {
+function DayLabel({ row, onSelectDay }) {
   const label = formatDayLabel(row.day);
   return (
     <div className="day-label">
@@ -59,12 +72,17 @@ function DayLabel({ row }) {
       <div className={`day-date${label.weekday ? '' : ' nodate'}`}>{label.date}</div>
       {label.weekday && <div className="day-weekday">{label.weekday}</div>}
       <div className="day-count">{formatCount(row.dayCount)}장</div>
+      <button type="button" className="link-button day-select" onClick={() => onSelectDay(row.day)}>이 날 모두 선택</button>
     </div>
   );
 }
 
 // view = { key, filter, days, gen }: 지금 화면에 보이는 목록 (key는 필터가 같은지, gen은 몇 번째 갱신인지)
-export default function DayGrid({ view, selectedId, onSelect }) {
+// selection = { ids, anchor, focus } (selection.mjs)
+// onCellClick(file, event, dayFiles): 칸 클릭. dayFiles는 그 날의 파일 목록 (Shift+클릭 범위를 구하는 데 써요)
+// onCellMenu(file, event): 칸 우클릭
+// onSelectDay(day): 날짜 칸의 "이 날 모두 선택"
+export default function DayGrid({ view, selection, onCellClick, onCellMenu, onSelectDay }) {
   const scrollRef = useRef(null);
   const [width, setWidth] = useState(0);
   const layout = useMemo(() => computeLayout(width), [width]);
@@ -121,6 +139,16 @@ export default function DayGrid({ view, selectedId, onSelect }) {
   }, [view.key]);
 
   const cache = cacheRef.current && cacheRef.current.key === view.key ? cacheRef.current : null;
+
+  // 칸에 넘기는 함수는 한 번만 만들어요 (새로 만들면 모든 칸이 다시 그려져요). 최신 props는 ref로 읽어요
+  const handlers = useRef({ onCellClick, onCellMenu });
+  handlers.current = { onCellClick, onCellMenu };
+  const handleClick = useCallback((file, event, day) => {
+    const c = cacheRef.current;
+    const entry = c && c.map.get(day);
+    handlers.current.onCellClick(file, event, entry ? entry.files : [file]);
+  }, []);
+  const handleMenu = useCallback((file, event) => handlers.current.onCellMenu(file, event), []);
 
   // 화면에 보이는 날 목록 (이 글자가 바뀔 때만 새로 가져와요)
   const visibleDays = [];
@@ -214,12 +242,12 @@ export default function DayGrid({ view, selectedId, onSelect }) {
           const entry = cache && cache.map.get(row.day);
           return (
             <div key={it.key} className="day-row" style={{ height: it.size, transform: `translateY(${it.start}px)` }}>
-              <div className="date-col">{row.isFirstOfDay && <DayLabel row={row} />}</div>
+              <div className="date-col">{row.isFirstOfDay && <DayLabel row={row} onSelectDay={onSelectDay} />}</div>
               <div className="cells">
                 {Array.from({ length: row.count }, (_, k) => {
                   const file = entry && entry.files[row.startIndex + k];
                   return file ? (
-                    <Cell key={file.id} file={file} selected={file.id === selectedId} onSelect={onSelect} />
+                    <Cell key={file.id} file={file} day={row.day} selected={selection.ids.has(file.id)} onClick={handleClick} onMenu={handleMenu} />
                   ) : (
                     <div key={`empty-${k}`} className="cell empty" />
                   );

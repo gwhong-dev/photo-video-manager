@@ -1,6 +1,6 @@
 // 파일 위치: scripts/launch-check.js
 // 역할: 앱 창을 띄워서 화면 글자와 오류만 읽고, 창을 닫아 정상 종료시키기 (점검 항목 1)
-//   버튼은 하나도 누르지 않아요.
+//   버튼은 기본으로 하나도 누르지 않아요. clickText 를 주면 그 글자가 든 버튼 하나만 눌러 봐요 (메뉴 이동 확인용)
 //   remote debugging = 프로그램 밖에서 화면 내용을 읽는 통로 (이 PC 안에서만 열림)
 
 const { spawn, spawnSync } = require('child_process');
@@ -46,7 +46,9 @@ async function launchCheck(appDir, opts = {}) {
 }
 
 // until: 화면 글자에 이 글이 나올 때까지 더 기다려요 (최대 untilMs). probe: 화면에서 더 읽고 싶은 값(자바스크립트 식)
-async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: exeOverride, until = '', untilMs = 20000, probe = '' } = {}) {
+// clickText: until 을 기다린 뒤 이 글자가 든 버튼 하나를 눌러요. clickUntil: 누른 뒤 화면 글자에 이 글이 나올 때까지 기다려요 (최대 untilMs)
+//   결과의 clicked 는 버튼을 찾아 눌렀는지예요 (clickText 를 안 주면 undefined)
+async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: exeOverride, until = '', untilMs = 20000, probe = '', clickText = '', clickUntil = '' } = {}) {
   const bad = syntaxErrors(appDir);
   if (bad.length) return { ok: false, title: '', text: '', errors: bad, exitCode: null, mainOut: '' };
   const exe = exeOverride || path.join(appDir, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
@@ -111,6 +113,14 @@ async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: e
   if (until) {
     for (let waited = 0; waited < untilMs && !String(await readText()).includes(until); waited += 500) await sleep(500);
   }
+  let clicked;
+  if (clickText) {
+    const expr = `(() => { const b = Array.from(document.querySelectorAll('button')).find((x) => (x.innerText || '').includes(${JSON.stringify(clickText)})); if (!b) return false; b.click(); return true; })()`;
+    clicked = (await send('Runtime.evaluate', { expression: expr, returnByValue: true })).result.result.value === true;
+    if (clicked && clickUntil) {
+      for (let waited = 0; waited < untilMs && !String(await readText()).includes(clickUntil); waited += 500) await sleep(500);
+    }
+  }
   const title = (await send('Runtime.evaluate', { expression: 'document.title', returnByValue: true })).result.result.value;
   const text = await readText();
   const probed = probe ? (await send('Runtime.evaluate', { expression: probe, returnByValue: true })).result.result.value : undefined;
@@ -127,7 +137,7 @@ async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: e
   } catch (e) {
     // 이미 닫힘
   }
-  return { ok: errors.length === 0 && exitCode === 0, title, text, probed, errors, exitCode, mainOut };
+  return { ok: errors.length === 0 && exitCode === 0, title, text, probed, clicked, errors, exitCode, mainOut };
 }
 
 module.exports = { launchCheck };
