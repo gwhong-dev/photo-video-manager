@@ -1263,6 +1263,83 @@ const items = [
         out.push(sub('stop 뒤 임시 파일이 남지 않음', leftovers.length === 0, leftovers.join(',')));
       });
 
+      // 17p 시간 초과로 끈 프로그램은 완전히 끝난 뒤에 돌아와요 (윈도우에서 임시 파일이 잡힌 채 남지 않게)
+      {
+        const hangDir = path.join(base, 'hang');
+        fs.mkdirSync(hangDir, { recursive: true });
+        const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+        // 자기 pid를 파일에 적고 멈춰 있는 프로그램을 짧은 제한으로 실행 → 돌아온 시점에 그 프로그램이 없어야 해요
+        const pidFile = path.join(hangDir, 'pid.txt');
+        const r = await runCmd(process.execPath, ['-e', 'require("fs").writeFileSync(process.argv[1], String(process.pid)); setTimeout(() => {}, 30000)', pidFile], { timeoutMs: 1500 });
+        const pid = fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, 'utf8')) : 0;
+        out.push(sub('시간 초과 뒤 멈춘 프로그램은 실제로 없어짐', r.timedOut === true && pid > 0 && !alive(pid), `pid ${pid}, timedOut ${r.timedOut}`));
+
+        // 진짜 FFmpeg의 복사본(고유한 이름)에 아주 짧은 제한을 줘서 시간 초과 경로를 지나가요
+        if (!hasVideo || !tools.ffmpeg.ok || process.platform !== 'win32') {
+          out.push({ label: '영상 시간 초과', status: 'skip', detail: '영상 또는 FFmpeg 없음, 윈도우 아님' });
+        } else {
+          let exe = tools.ffmpeg.path;
+          if (!path.isAbsolute(exe)) {
+            // PATH 폴더에서 직접 찾아요 (where 출력은 한글 경로가 깨져요)
+            const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+            const hit = dirs.map((d) => path.join(d, exe.endsWith('.exe') ? exe : exe + '.exe')).find((p) => fs.existsSync(p));
+            exe = hit || '';
+          }
+          const exeName = `pvm-hang-ffmpeg-${process.pid}.exe`;
+          const copy = path.join(hangDir, exeName);
+          let usable = false;
+          try {
+            if (exe) {
+              fs.copyFileSync(exe, copy);
+              usable = (await runCmd(copy, ['-version'], { timeoutMs: 20000 })).code === 0;
+            }
+          } catch (e) { usable = false; }
+          if (!usable) {
+            out.push({ label: '영상 시간 초과', status: 'skip', detail: 'FFmpeg 복사본을 실행할 수 없음' });
+          } else {
+            await withDb(env, 'thumbs-hang', async (db) => {
+              db.upsertFiles([rowOf(video)]);
+              const vid = fileNamed(db, src, DAY, '영상.mp4').id;
+              const hangThumbs = path.join(base, 'thumbs-hang');
+              const t = createThumbs({ db, thumbDir: hangThumbs, getTools: () => ({ ...tools, ffmpeg: { ok: true, path: copy } }), isBusy: () => false, logger: null, ffmpegTimeoutMs: 30 });
+              const got = await t.request(vid);
+              await t.stop();
+              const left = fs.existsSync(hangThumbs) ? listAll(hangThumbs) : [];
+              const running = await runCmd('tasklist', ['/FI', `IMAGENAME eq ${exeName}`, '/NH']);
+              out.push(sub('FFmpeg 시간 초과: failed, 썸네일 폴더에 남은 파일 없음, 프로그램도 없음', got === null && state(db, vid) === 'failed' && left.length === 0 && !running.stdout.includes(exeName), `${state(db, vid)}, 남은 파일 ${left.join(',') || '없음'}`));
+            });
+          }
+        }
+      }
+
+      // 17q 꺼지다 남은 임시 파일은 처음 쓸 때 치우고, 진짜 썸네일은 건드리지 않음. 상대 경로 파일은 failed
+      await withDb(env, 'thumbs-sweep', async (db) => {
+        const dir = path.join(base, 'thumbs-sweep');
+        const hex = 'ab' + 'c'.repeat(38);
+        fs.mkdirSync(path.join(dir, 'ab'), { recursive: true });
+        fs.mkdirSync(path.join(dir, 'cd'), { recursive: true });
+        const real = path.join(dir, 'ab', `${hex}.webp`);
+        await sharp({ create: { width: 10, height: 10, channels: 3, background: '#223344' } }).webp().toFile(real);
+        const realBytes = fs.readFileSync(real);
+        const temps = [
+          path.join(dir, 'ab', `${hex}.webp.tmp-1-1`),
+          path.join(dir, 'ab', `${hex}.webp.tmp-1-1.frame.jpg`),
+          path.join(dir, 'ab', `${hex}.webp.tmp-1-2.magick.jpg`),
+          path.join(dir, 'preview-1-1.magick.jpg'),
+        ];
+        for (const t of temps) fs.writeFileSync(t, '남은 임시 파일');
+        const keep = path.join(dir, 'cd', '메모.txt'); // 패턴에 안 맞는 파일은 그대로
+        fs.writeFileSync(keep, '남겨 둬요');
+        db.upsertFiles([row({ root: 'REL', path: 'rel/x.jpg', name: 'x.jpg', size: 5, mtimeMs: 1 })]);
+        const rid = fileNamed(db, 'REL', DAY, 'x.jpg').id;
+        const t = createThumbs({ db, thumbDir: dir, getTools: () => tools, isBusy: () => false, logger: null });
+        const rel = await t.request(rid); // 첫 사용 → 임시 파일 정리
+        await t.stop();
+        out.push(sub('남은 임시 파일은 처음 쓸 때 지움', temps.every((p) => !fs.existsSync(p)), temps.filter((p) => fs.existsSync(p)).length + '개 남음'));
+        out.push(sub('진짜 .webp와 패턴 밖 파일은 그대로', fs.existsSync(real) && Buffer.compare(fs.readFileSync(real), realBytes) === 0 && fs.existsSync(keep)));
+        out.push(sub('상대 경로 파일은 failed', rel === null && state(db, rid) === 'failed'));
+      });
+
       // 17o 사진 폴더에는 아무것도 생기지 않음 (썸네일은 thumbs 폴더에만)
       const afterList = listAll(src);
       out.push(sub('사진 폴더에 파일 안 생김 (전후 파일 목록 같음)', JSON.stringify(before) === JSON.stringify(afterList) && !path.resolve(thumbDir).startsWith(path.resolve(src) + path.sep), `${before.length}개, ${afterList.length}개`));
