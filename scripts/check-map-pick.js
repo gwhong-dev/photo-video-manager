@@ -113,6 +113,22 @@ const items = [
         out.push(sub('33f 429, 네트워크 오류, 다른 형식, 2MB 초과는 502 + 한 번만 시도 (2MB 딱은 통과)', problems.length === 0, problems.join(' / ')));
       }
 
+      // 33f2 제한시간이 지나면 fetch가 TimeoutError(DOMException)를 던져요. 한 번만 시도하고 로그에는 이름이 남아요 (DOMException의 code는 숫자 23이라 이름을 써야 해요)
+      {
+        const timeout = () => { throw new DOMException('시간 초과', 'TimeoutError'); };
+        const f = harness(timeout);
+        const r = await f.net.tile('pvm://tile/2/1/1');
+        out.push(sub('33f2 지도 그림 제한시간: 502 + 한 번만 시도 + 로그에 TimeoutError', r.status === 502 && f.calls.length === 1 && f.errs.length === 1 && f.errs[0].where === 'tile' && f.errs[0].code === 'TimeoutError', JSON.stringify([r.status, f.calls.length, f.errs])));
+        const g = harness(timeout);
+        let message = '';
+        try {
+          await g.net.search('시간 초과 시험');
+        } catch (e) {
+          message = e.message;
+        }
+        out.push(sub('33f3 검색 제한시간: 정해진 문장으로 거절 + 한 번만 시도 + 로그에 TimeoutError', message === '장소를 찾지 못했어요. 잠시 뒤 다시 눌러 주세요.' && g.calls.length === 1 && g.errs.length === 1 && g.errs[0].code === 'TimeoutError', JSON.stringify([message, g.calls.length, g.errs])));
+      }
+
       // 33g 지도 그림 실패 로그는 60초에 한 번
       {
         const f = harness(() => new Response('', { status: 500 }));
@@ -363,6 +379,11 @@ const items = [
         const need = ['spellcheck: false', 'setSpellCheckerEnabled(false)', 'setSpellCheckerLanguages([])'];
         const missing = need.filter((t) => !mainText.includes(t));
         out.push(sub('34k main.js가 맞춤법 검사를 끄고 사전 언어 목록을 비움 (구글 서버 사전 내려받기 방지)', missing.length === 0, missing.join(', ')));
+        // 잠금을 못 얻은 두 번째 실행은 아무것도 하지 않고, 끄기가 실패해도 앱은 계속 켜져요
+        const lockAt = mainText.indexOf('if (!gotLock) return');
+        const spellAt = mainText.indexOf('session.defaultSession.setSpellCheckerEnabled(false)');
+        const before = mainText.slice(Math.max(0, spellAt - 40), spellAt);
+        out.push(sub('34k2 맞춤법 끄기는 잠금 확인 뒤에 있고 try로 감싸져 있음', lockAt > 0 && spellAt > lockAt && /try \{\s*$/.test(before), JSON.stringify([lockAt, spellAt])));
       }
 
       // gallery-main을 불러오는 동안만 openDb를 감싸서, 점검이 같은 DB를 들여다볼 수 있게 해요 (항목 30과 같은 방식)
@@ -608,7 +629,7 @@ const items = [
 
       // ---------- 순수 계산 (React와 Leaflet 없이) ----------
       const { pathToFileURL } = require('url');
-      const { pinFrom, nextPin, createLatest, nearLng } = await import(pathToFileURL(path.join(APP, 'src', 'map-view.mjs')).href);
+      const { pinFrom, nextPin, createLatest, nearLng, canPlacePin } = await import(pathToFileURL(path.join(APP, 'src', 'map-view.mjs')).href);
       out.push(sub('35g 경도 감기', pinFrom(37, 190).lng === -170 && pinFrom(37, -190).lng === 170 && pinFrom(0, 0).lat === 0, JSON.stringify([pinFrom(37, 190), pinFrom(37, -190)])));
       out.push(sub('35h 반올림', pinFrom(37.12345678, 127).lat === 37.123457));
       // 35d 늦은 검색 응답: 새 검색이나 창 닫기 뒤의 옛 번호는 버려요
@@ -624,6 +645,8 @@ const items = [
       out.push(sub('35e 넣는 중에는 핀이 안 바뀜', nextPin(here, there, true) === here && nextPin(here, there, false) === there));
       // 35e2 날짜변경선 근처에서 지도를 눌러도 핀이 보던 화면 안에 있어요 (값은 감긴 그대로)
       out.push(sub('35e2 핀은 보고 있는 지구 복사본에 그림', nearLng(-170, 170) === 190 && nearLng(170, -170) === -190 && nearLng(127, 127) === 127, String(nearLng(-170, 170))));
+      // 35m 지도가 보일 때만 눌러서 핀을 놓아요 (빈 지도를 눌러 엉뚱한 곳에 넣지 않게)
+      out.push(sub('35m 지도 클릭 허용: 그림이 하나 이상 떴고 실패 문장이 없을 때만', canPlacePin({ tilesLoaded: true, mapFailed: false }) === true && canPlacePin({ tilesLoaded: true, mapFailed: true }) === false && canPlacePin({ tilesLoaded: false, mapFailed: false }) === false && canPlacePin({ tilesLoaded: false, mapFailed: true }) === false));
       // 35i 화면이 직접 나가지 않아요
       const html = fs.readFileSync(path.join(APP, 'src', 'index.html'), 'utf8');
       const csp = (html.match(/http-equiv="Content-Security-Policy"\s+content="([^"]*)"/) || [])[1];
@@ -656,8 +679,11 @@ const items = [
       out.push(sub('35b2 확대 버튼을 눌러도 창 주소가 그대로', q.zoomClicked === true && q.sameUrl === true, seen));
       out.push(sub('35b3 검색 안내 문장', q.searchHint === '검색어는 OpenStreetMap 서버로 보내요. 이름이나 전화번호 같은 개인정보는 적지 마세요.', seen));
       out.push(sub('35c 끊긴 상태의 문장', q.mapError === '지도를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.' && q.searchError === '장소를 찾지 못했어요. 잠시 뒤 다시 눌러 주세요.', seen));
-      // 넣지는 않고 그만둬요
-      out.push(sub('35f 지도를 누르면 핀이 놓이고 미리보기가 만들어져 넣기 버튼이 켜짐', !!q.afterClick && q.afterClick.button.endsWith('위치 넣기') && q.afterClick.pending === false && q.afterClick.pin === true && q.afterClick.disabled === false, seen));
+      // 그림이 없는 지도를 눌러도 핀이 놓이지 않아요. 잘 뜰 때 핀이 놓이는 것은 진짜 서버가 필요해서 손으로 확인해요
+      out.push(sub('35f 실패한 지도를 누르면 핀이 안 놓이고 넣기 버튼은 그대로 꺼져 있고 안내가 보임', !!q.afterClick && q.afterClick.button === '지도에서 위치를 골라 주세요' && q.afterClick.pending === true && q.afterClick.pin === false && q.afterClick.disabled === true && q.afterClick.refused === '지도가 보일 때 눌러 주세요. 검색 결과는 지금도 고를 수 있어요.', seen));
+      // 실패한 칸은 가만히 있으면 다시 받지 않고, 사용자가 움직이면 다시 받아요 (설계서 4-4)
+      out.push(sub('35n 지도를 가만히 두면 지도 칸 요청이 늘지 않음', q.tilesSettled > 0 && q.tilesSettled === q.tilesAfterWait, seen));
+      out.push(sub('35o 지도를 조금 옮기면 실패한 칸을 다시 받음', q.tilesAfterPan > q.tilesAfterWait, seen));
       out.push(sub('35j 창 안의 Tab 순환과 Esc 닫기 (지도에 초점이 있어도)', q.tabWraps === true && q.shiftTabWraps === true && q.closedByEsc === true && q.undoBar === false, seen));
       // 끊긴 상태라 지도 칸 실패 로그는 당연히 나와요. 그 밖의 화면 오류는 없어야 해요
       const realErrors = r.errors.filter((e) => !/Failed to load resource/.test(e));
@@ -681,6 +707,17 @@ async function mapProbe() {
   };
   const byText = (sel, text) => [...document.querySelectorAll(sel)].find((b) => (b.innerText || '').includes(text));
   const q = {};
+  // 지도 칸 그림 하나가 요청 하나예요. 실패한 칸은 곧 치워지므로, 만들어질 때마다 세어 둬요
+  let tilesMade = 0;
+  new MutationObserver((records) => {
+    for (const r of records) {
+      for (const n of r.addedNodes) {
+        if (n.nodeType === 1 && n.matches('img.leaflet-tile')) tilesMade++;
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+  const pause = (ms) => new Promise((res) => setTimeout(res, ms));
+  const key = (el, opts) => el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...opts }));
   const cell = await wait(() => document.querySelector('button.cell'));
   if (!cell) return { stop: '사진 칸이 없어요' };
   cell.click();
@@ -699,9 +736,9 @@ async function mapProbe() {
   q.focused = document.activeElement.tagName;
   q.title = dialog.querySelector('.dialog-title').innerText;
   q.start = { pin: !!dialog.querySelector('.map-pin'), button: foot().innerText, disabled: foot().disabled };
-  await wait(() => dialog.querySelector('.leaflet-tile'));
+  await wait(() => tilesMade > 0);
   q.mapHeight = canvas.offsetHeight;
-  q.tileCount = dialog.querySelectorAll('.leaflet-tile').length;
+  q.tileCount = tilesMade;
   q.creditText = (dialog.querySelector('.map-credit') || {}).innerText;
   q.externalLinks = document.querySelectorAll('a[href^="http"]').length;
   q.attribution = document.querySelectorAll('.leaflet-control-attribution').length;
@@ -711,6 +748,19 @@ async function mapProbe() {
   // 지도 그림 실패 문장
   const mapError = await wait(() => dialog.querySelector('.map-error'));
   q.mapError = mapError ? mapError.innerText : '';
+
+  // 가만히 두면 지도 칸 요청이 늘지 않아요
+  await pause(1000);
+  q.tilesSettled = tilesMade;
+  await pause(2500);
+  q.tilesAfterWait = tilesMade;
+
+  // 화살표 키로 조금 옮기면 실패한 칸을 다시 받아요
+  canvas.focus();
+  canvas.dispatchEvent(new FocusEvent('focus'));
+  key(canvas, { key: 'ArrowRight', keyCode: 39 });
+  await wait(() => tilesMade > q.tilesAfterWait, 8000);
+  q.tilesAfterPan = tilesMade;
 
   // 검색 실패 문장
   const input = dialog.querySelector('.map-search input');
@@ -729,20 +779,20 @@ async function mapProbe() {
   await new Promise((res) => setTimeout(res, 400));
   q.sameUrl = location.href === before;
 
-  // 지도 가운데를 누르면 핀이 놓이고 미리보기가 만들어져요
+  // 그림이 없는 지도를 누르면 핀이 놓이지 않고 안내가 나와요
   const box = canvas.getBoundingClientRect();
   canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 }));
-  await wait(() => foot().innerText.endsWith('위치 넣기') && !foot().disabled);
+  const refused = await wait(() => dialog.querySelector('.map-refused'), 3000);
   q.afterClick = {
     button: foot().innerText,
     disabled: foot().disabled,
     pending: dialog.innerText.includes('지도에서 위치를 골라 주세요'),
     pin: !!dialog.querySelector('.map-pin'),
+    refused: refused ? refused.innerText : '',
   };
 
   // Tab 순환: 마지막 버튼에서 Tab이면 검색칸으로, 검색칸에서 Shift+Tab이면 마지막 버튼으로
-  const key = (el, opts) => el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...opts }));
-  const last = foot();
+  const last = [...dialog.querySelectorAll('.dialog-foot button:not(:disabled)')].pop();
   last.focus();
   key(last, { key: 'Tab' });
   q.tabWraps = document.activeElement === input;

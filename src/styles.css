@@ -355,7 +355,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .map-canvas { height: 320px; border: 1px solid var(--line); }
 .map-canvas.leaflet-container { background: var(--panel); font-family: inherit; font-size: 13px; }
 .map-canvas:focus-visible { outline: 2px solid var(--sub); outline-offset: 1px; }
-.map-error { position: absolute; z-index: 1001; top: 8px; left: 56px; right: 8px; margin: 0; padding: 6px 10px; background: var(--sidebar); border-left: 3px solid var(--line); font-size: 13px; pointer-events: none; }
+.map-notes { position: absolute; z-index: 1001; top: 8px; left: 56px; right: 8px; display: flex; flex-direction: column; gap: 4px; pointer-events: none; }
+.map-error, .map-refused { margin: 0; padding: 6px 10px; background: var(--sidebar); border-left: 3px solid var(--line); font-size: 13px; }
 .map-credit { position: absolute; z-index: 1001; right: 1px; bottom: 1px; padding: 2px 8px; border: 0; border-radius: 0; background: var(--bg); color: var(--sub); font-size: 12px; }
 .map-credit:hover:not(:disabled) { color: var(--text); }
 .map-coords { margin: 0; font-size: 13px; color: var(--sub); }

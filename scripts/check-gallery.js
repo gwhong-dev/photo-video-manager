@@ -1638,7 +1638,10 @@ const items = [
         const destDir = path.join(env.tmp, 'main-fake-dest');
         for (const d of [ud, srcDir, destDir]) fs.mkdirSync(d, { recursive: true });
         fs.copyFileSync(path.join(APP, 'test', 'samples', 'auto', 'IMG_0101.jpg'), path.join(srcDir, 'IMG_0101.jpg'));
-        fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: destDir }), 'utf8');
+        // 서비스 주소는 닿지 않는 값이에요 (이 점검은 지도 서버에 요청하지 않아요). 화면이 바꾸지 못하는지 아래에서 봐요
+        const FIXED_TILE = 'https://127.0.0.1:1/{z}/{x}/{y}.png';
+        const FIXED_SEARCH = 'https://127.0.0.1:1/search';
+        fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: destDir, mapTileUrl: FIXED_TILE, placeSearchUrl: FIXED_SEARCH }), 'utf8');
 
         const handlers = new Map();
         const appEvents = new Map();
@@ -1696,6 +1699,13 @@ const items = [
           const call = (ch, ...args) => handlers.get(ch)({}, ...args);
           const errOf = (pr) => pr.then(() => null, (e) => (e && e.message ? e.message : String(e)));
           const korean = (m) => typeof m === 'string' && /[가-힣]/.test(m) && m.includes('끝난 뒤');
+
+          // 지도와 검색 서버 주소는 settings.json에서만 바꿔요. 화면이 보낸 값은 버리고 다른 칸은 저장해요 (설계서 4-3)
+          const savedBack = await call('save-settings', { mapTileUrl: 'https://evil.example/{z}/{x}/{y}.png', placeSearchUrl: 'https://evil.example/search', includeSub: true });
+          const onDisk = JSON.parse(fs.readFileSync(path.join(ud, 'settings.json'), 'utf8'));
+          out.push(sub('화면은 지도와 검색 서버 주소를 바꾸지 못함 (다른 칸은 저장됨)',
+            savedBack.mapTileUrl === FIXED_TILE && savedBack.placeSearchUrl === FIXED_SEARCH && onDisk.mapTileUrl === FIXED_TILE && onDisk.placeSearchUrl === FIXED_SEARCH && onDisk.includeSub === true,
+            JSON.stringify({ tile: onDisk.mapTileUrl, search: onDisk.placeSearchUrl, includeSub: onDisk.includeSub })));
 
           // 아무 일도 안 할 때는 다시 찾기가 됨
           const t0 = await call('check-tools');

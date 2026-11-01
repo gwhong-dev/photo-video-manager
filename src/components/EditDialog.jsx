@@ -194,7 +194,7 @@ export default function EditDialog({ mode, ids, source, prefer, startAt, onPinCh
         {map ? (
           <div className="dialog-pick">
             <MapPicker value={pin} onChange={(next) => setPin((p) => nextPin(p, next, applying))} startAt={startAt} disabled={applying} />
-            <p className="map-coords">{pin ? `고른 위치 ${formatCoords(pin.lat, pin.lng)}` : '지도를 누르면 핀이 놓여요. 핀은 끌어서 옮길 수 있어요.'}</p>
+            <p className="map-coords">{pin ? `고른 위치 ${formatCoords(pin.lat, pin.lng)}${pin.name ? ` (${pin.name})` : ''}` : '지도를 누르면 핀이 놓여요. 핀은 끌어서 옮길 수 있어요.'}</p>
           </div>
         ) : copy ? (
           <fieldset className="dialog-pick">

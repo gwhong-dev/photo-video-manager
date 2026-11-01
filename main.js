@@ -245,7 +245,9 @@ ipcMain.handle('select-folder', async (e, title, defaultPath) => {
 // 설정 저장 (폴더 경로, 하위 폴더 포함, 한 번에 개수)
 ipcMain.handle('save-settings', async (e, patch) => {
   const rootBefore = settings.backupRoot;
-  Object.assign(settings, patch);
+  // 지도와 검색 서버 주소는 settings.json에서만 바꿔요 (설계서 4-3). 화면이 보낸 값은 버려요
+  const { mapTileUrl, placeSearchUrl, ...allowed } = patch || {};
+  Object.assign(settings, allowed);
   saveSettings();
   if (gallery && settings.backupRoot !== rootBefore) gallery.onRootChanged(); // 백업 폴더가 바뀌면 갤러리가 새 폴더를 읽어요
   return settings;
@@ -422,13 +424,18 @@ if (!gotLock) {
 }
 
 app.whenReady().then(async () => {
-  // 맞춤법 검사 끄기: 켜 두면 Chromium이 처음 켤 때 한국어 사전을 구글 서버(gvt1.com)에서 내려받아요.
-  //   창 설정 spellcheck: false 와 setSpellCheckerEnabled(false) 만으로는 내려받기가 안 멈췄고, 언어 목록을 비워야 멈췄어요 (점검 34k)
-  session.defaultSession.setSpellCheckerEnabled(false);
-  session.defaultSession.setSpellCheckerLanguages([]);
   if (!gotLock) return;
   settings = loadSettings();
   logger = createLogger(logDir());
+  // 맞춤법 검사 끄기: 켜 두면 Chromium이 처음 켤 때 한국어 사전을 구글 서버(gvt1.com)에서 내려받아요.
+  //   창 설정 spellcheck: false 와 setSpellCheckerEnabled(false) 만으로는 내려받기가 안 멈췄고, 언어 목록을 비워야 멈췄어요 (점검 34k)
+  //   실패해도 앱은 계속 켜져요
+  try {
+    session.defaultSession.setSpellCheckerEnabled(false);
+    session.defaultSession.setSpellCheckerLanguages([]);
+  } catch (e) {
+    logger.newLog('startup', `맞춤법 검사 끄기 실패 ${e.message}`);
+  }
   store = new JobStore(path.join(userDir(), 'jobs'));
   try {
     job = store.load(); // 이어할 작업이 있으면 불러오기

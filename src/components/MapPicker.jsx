@@ -9,7 +9,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api, errorText } from '../api.js';
 import { formatCoords } from '../format.mjs';
-import { createLatest, nearLng, pinFrom } from '../map-view.mjs';
+import { canPlacePin, createLatest, nearLng, pinFrom } from '../map-view.mjs';
 
 const KOREA = { center: [36.5, 127.8], zoom: 7 }; // 고른 곳이 없을 때 처음 위치
 const START_ZOOM = 15; // 이번 실행에서 마지막으로 고른 곳을 열 때
@@ -17,6 +17,7 @@ const RESULT_ZOOM = 16; // 검색 결과를 눌렀을 때
 const MAX_RESULTS = 5;
 
 const MAP_ERROR = '지도를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.';
+const CLICK_REFUSED = '지도가 보일 때 눌러 주세요. 검색 결과는 지금도 고를 수 있어요.';
 const NO_RESULT = '찾은 곳이 없어요. 근처 지역을 검색한 뒤 지도에서 눌러 주세요.';
 const SEARCH_HINT = '검색어는 OpenStreetMap 서버로 보내요. 이름이나 전화번호 같은 개인정보는 적지 마세요.';
 
@@ -49,14 +50,16 @@ const QuietTileLayer = L.TileLayer.extend({
   },
 });
 
-// value = 놓인 핀 { lat, lng } 또는 null, onChange(핀): 사용자가 핀을 골랐을 때
+// value = 놓인 핀 { lat, lng, name? } 또는 null, onChange(핀): 사용자가 핀을 골랐을 때. name은 검색 결과를 눌렀을 때만 있어요
 // startAt = 처음 보여 줄 곳 (없으면 대한민국 전체), disabled = 넣는 중 (핀과 검색을 막아요)
 export default function MapPicker({ value, onChange, startAt, disabled }) {
   const holderRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
+  const draggingRef = useRef(false); // 핀을 끄는 중인지
   const searchSeq = useRef(null); // 검색 번호표
   const [mapFailed, setMapFailed] = useState(false);
+  const [clickRefused, setClickRefused] = useState(false); // 그림이 없는 지도를 눌렀을 때 안내
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState({ busy: false, results: null, error: '' });
 
@@ -85,18 +88,34 @@ export default function MapPicker({ value, onChange, startAt, disabled }) {
     });
     mapRef.current = map;
     L.control.zoom({ zoomInTitle: '크게 보기', zoomOutTitle: '작게 보기' }).addTo(map);
-    new QuietTileLayer('pvm://tile/{z}/{x}/{y}', { maxZoom: 19, bounds: [[-85.06, -180], [85.06, 180]] })
-      .on('tileerror', () => setMapFailed(true))
-      .on('tileload', () => setMapFailed(false))
-      .addTo(map);
+    let tilesLoaded = false; // 그림이 하나라도 떴는지
+    let failed = false; // 실패 문장이 보이는 중인지
+    const tiles = new QuietTileLayer('pvm://tile/{z}/{x}/{y}', { maxZoom: 19, bounds: [[-85.06, -180], [85.06, 180]] });
+    tiles.on('tileerror', (e) => {
+      failed = true;
+      setMapFailed(true);
+      // Leaflet은 실패한 칸을 그대로 들고 있어서 조금 옮겨도 다시 받지 않아요. 치워 두면 사용자가 움직일 때 다시 받아요
+      //   칸을 새로 받는 일은 지도가 움직일 때만 일어나서, 가만히 있으면 저절로 되풀이되지 않아요 (설계서 4-4)
+      tiles._removeTile(tiles._tileCoordsToKey(e.coords));
+    });
+    tiles.on('tileload', () => {
+      tilesLoaded = true;
+      failed = false;
+      setMapFailed(false);
+      setClickRefused(false);
+    });
+    tiles.addTo(map);
     map.on('click', (e) => {
       if (latest.current.disabled) return;
+      if (!canPlacePin({ tilesLoaded, mapFailed: failed })) {
+        setClickRefused(true);
+        return;
+      }
       latest.current.onChange(pinFrom(e.latlng.lat, e.latlng.lng));
     });
     // 옆으로 돌리거나 지구 복사본을 건너뛰어도 핀이 화면에서 사라지지 않게 해요. 끄는 중에는 건드리지 않아요
     map.on('moveend', () => {
-      const marker = markerRef.current;
-      if (marker && !(marker.dragging && marker.dragging.moved())) drawMarker();
+      if (!draggingRef.current) drawMarker();
     });
     // 창 크기가 바뀌면 지도에 알려요
     const watcher = new ResizeObserver(() => map.invalidateSize());
@@ -120,7 +139,9 @@ export default function MapPicker({ value, onChange, startAt, disabled }) {
     }
     if (!markerRef.current) {
       const marker = L.marker([value.lat, value.lng], { icon: PIN_ICON, draggable: true, title: '고른 위치', alt: '고른 위치' });
+      marker.on('dragstart', () => { draggingRef.current = true; });
       marker.on('dragend', () => {
+        draggingRef.current = false;
         // 끄는 사이에 넣기가 시작됐으면 핀을 원래 자리로 돌려놔요
         if (latest.current.disabled) {
           drawMarker();
@@ -162,7 +183,8 @@ export default function MapPicker({ value, onChange, startAt, disabled }) {
   const chooseResult = (place) => {
     if (disabled) return;
     mapRef.current.setView([place.lat, place.lng], RESULT_ZOOM);
-    onChange(pinFrom(place.lat, place.lng));
+    onChange({ ...pinFrom(place.lat, place.lng), name: place.name });
+    setClickRefused(false);
     setSearch({ busy: false, results: null, error: '' });
     holderRef.current.focus({ preventScroll: true });
   };
@@ -198,7 +220,12 @@ export default function MapPicker({ value, onChange, startAt, disabled }) {
       )}
       <div className="map-frame">
         <div ref={holderRef} className="map-canvas" />
-        {mapFailed && <p className="map-error" role="alert">{MAP_ERROR}</p>}
+        {(mapFailed || clickRefused) && (
+          <div className="map-notes">
+            {mapFailed && <p className="map-error" role="alert">{MAP_ERROR}</p>}
+            {clickRefused && <p className="map-refused" role="alert">{CLICK_REFUSED}</p>}
+          </div>
+        )}
         {/* 못 열어도 지도는 그대로 쓸 수 있어서 따로 알리지 않아요 (main이 오류 로그를 남겨요) */}
         <button type="button" className="map-credit" onClick={() => api.openMapCredit().catch(() => {})}>© OpenStreetMap 기여자</button>
       </div>

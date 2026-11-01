@@ -2,6 +2,7 @@
 // 역할: 지도 창의 순수 계산 (React와 Leaflet이 없어서 점검에서 바로 불러올 수 있어요)
 //   pinFrom    : 지도 좌표를 저장할 값으로 바꿔요 (경도 감기, 소수점 6자리)
 //   nextPin    : 넣는 중에는 핀을 바꾸지 않아요
+//   canPlacePin: 지도가 보일 때만 눌러서 핀을 놓을 수 있어요
 //   nearLng    : 핀을 지금 보고 있는 지구 복사본 위에 그릴 경도를 구해요
 //   createLatest: 가장 최근 요청만 살려 두는 번호표 (늦게 온 옛 검색 응답을 버려요)
 
@@ -23,6 +24,11 @@ export function pinFrom(lat, lng) {
 // 핀의 다음 값. disabled(넣는 중)이면 지금 값을 그대로 돌려줘요
 export function nextPin(current, candidate, disabled) {
   return disabled ? current : candidate;
+}
+
+// 지도를 눌러 핀을 놓아도 되는지. 그림이 하나도 안 떴거나 실패 문장이 보이면 어디를 누르는지 알 수 없어서 막아요
+export function canPlacePin({ tilesLoaded, mapFailed }) {
+  return tilesLoaded && !mapFailed;
 }
 
 // 지도는 옆으로 끝없이 이어져요. 값은 감겨 있어도 핀은 보고 있는 쪽에 그려야 화면에서 사라지지 않아요
