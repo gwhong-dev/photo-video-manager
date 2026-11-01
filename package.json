@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "samples": "node scripts/make-samples.js",
-    "check": "node scripts/check.js"
+    "check": "node scripts/check.js",
+    "postinstall": "node node_modules/electron/install.js"
   },
   "keywords": [
     "electron",
@@ -17,6 +18,6 @@
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
-    "electron": "^38.0.0"
+    "electron": "^45.2.1"
   }
 }

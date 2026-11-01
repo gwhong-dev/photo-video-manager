@@ -15,7 +15,13 @@ async function launchCheck(appDir, { port = 9333, waitMs = 4000 } = {}) {
   child.stdout.on('data', (d) => (mainOut += d));
   child.stderr.on('data', (d) => (mainOut += d));
   let exitCode = null;
+  let spawnError = null;
   child.on('exit', (c) => (exitCode = c));
+  // 실행 파일이 없거나 시작에 실패하면 (예: npm install 때 Electron을 못 받음) 기다리지 않고 바로 끝내기
+  child.on('error', (e) => {
+    spawnError = e;
+    if (exitCode === null) exitCode = -1; // 기다림 반복문이 바로 끝나게
+  });
 
   // 창(페이지)이 뜰 때까지 기다리기 (최대 30초)
   let page = null;
@@ -30,7 +36,8 @@ async function launchCheck(appDir, { port = 9333, waitMs = 4000 } = {}) {
   }
   if (!page) {
     child.kill();
-    return { ok: false, title: '', text: '', errors: ['창이 뜨지 않음'], exitCode, mainOut };
+    const why = spawnError ? `Electron을 실행하지 못함 (${spawnError.code || spawnError.message}). npm install로 Electron을 다시 받아 주세요` : '창이 뜨지 않음';
+    return { ok: false, title: '', text: '', errors: [why], exitCode, mainOut };
   }
 
   const ws = new WebSocket(page.webSocketDebuggerUrl);
