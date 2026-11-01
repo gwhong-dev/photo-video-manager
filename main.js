@@ -6,7 +6,7 @@
 //   바로 끝내요. 대화상자는 사용자 화면에서 점검을 멈춰 세워요. 다른 require보다 먼저 있어야 해요
 if (process.env.PVM_USER_DATA) process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
 
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -39,7 +39,8 @@ const settingsPath = () => path.join(userDir(), 'settings.json');
 const logDir = () => path.join(userDir(), 'logs');
 
 // ---------- 설정 저장/불러오기 ----------
-const DEFAULTS = { source: '', backupRoot: '', includeSub: true, batchSize: 2000, exiftool: '', magick: '', ffmpeg: '' };
+// mapTileUrl, placeSearchUrl: 지도 그림과 장소 검색 서버 주소. 비워 두면 기본 주소를 써요 (https 만. 화면에는 설정 칸이 없고 settings.json 에서 바꿔요)
+const DEFAULTS = { source: '', backupRoot: '', includeSub: true, batchSize: 2000, exiftool: '', magick: '', ffmpeg: '', mapTileUrl: '', placeSearchUrl: '' };
 
 function loadSettings() {
   try {
@@ -138,7 +139,8 @@ function createWindow() {
     width: 1200,
     height: 860,
     title: '사진/영상 관리 프로그램',
-    webPreferences: { preload: path.join(__dirname, 'preload.js') },
+    // spellcheck: false = 맞춤법 검사를 끔. 아래 whenReady 쪽 설명처럼 사전 내려받기를 막으려는 것 (점검 34k)
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), spellcheck: false },
   });
   showStartScreen();
   // 창이 처음 다 열리면 갤러리가 백업 폴더 읽기를 시작해요
@@ -243,7 +245,9 @@ ipcMain.handle('select-folder', async (e, title, defaultPath) => {
 // 설정 저장 (폴더 경로, 하위 폴더 포함, 한 번에 개수)
 ipcMain.handle('save-settings', async (e, patch) => {
   const rootBefore = settings.backupRoot;
-  Object.assign(settings, patch);
+  // 지도와 검색 서버 주소는 settings.json에서만 바꿔요 (설계서 4-3). 화면이 보낸 값은 버려요
+  const { mapTileUrl, placeSearchUrl, ...allowed } = patch || {};
+  Object.assign(settings, allowed);
   saveSettings();
   if (gallery && settings.backupRoot !== rootBefore) gallery.onRootChanged(); // 백업 폴더가 바뀌면 갤러리가 새 폴더를 읽어요
   return settings;
@@ -423,6 +427,15 @@ app.whenReady().then(async () => {
   if (!gotLock) return;
   settings = loadSettings();
   logger = createLogger(logDir());
+  // 맞춤법 검사 끄기: 켜 두면 Chromium이 처음 켤 때 한국어 사전을 구글 서버(gvt1.com)에서 내려받아요.
+  //   창 설정 spellcheck: false 와 setSpellCheckerEnabled(false) 만으로는 내려받기가 안 멈췄고, 언어 목록을 비워야 멈췄어요 (점검 34k)
+  //   실패해도 앱은 계속 켜져요
+  try {
+    session.defaultSession.setSpellCheckerEnabled(false);
+    session.defaultSession.setSpellCheckerLanguages([]);
+  } catch (e) {
+    logger.newLog('startup', `맞춤법 검사 끄기 실패 ${e.message}`);
+  }
   store = new JobStore(path.join(userDir(), 'jobs'));
   try {
     job = store.load(); // 이어할 작업이 있으면 불러오기
@@ -449,6 +462,10 @@ app.whenReady().then(async () => {
       userDir,
       loadScreen,
       getJobPending: () => !!job,
+      // 지도용 인터넷과 브라우저 열기. 갤러리는 Electron을 직접 부르지 않고 여기서 받아요
+      mapFetch: (...a) => net.fetch(...a),
+      openExternal: (u) => shell.openExternal(u),
+      appVersion: app.getVersion(),
     });
   } catch (e) {
     // 갤러리를 못 켜도 가져오기는 쓸 수 있어야 해요

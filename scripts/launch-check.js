@@ -130,7 +130,8 @@ async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: e
   }
   const title = (await send('Runtime.evaluate', { expression: 'document.title', returnByValue: true })).result.result.value;
   const text = await readText();
-  const probed = probe ? (await send('Runtime.evaluate', { expression: probe, returnByValue: true })).result.result.value : undefined;
+  // probe가 약속(비동기 함수)이면 끝날 때까지 기다려요
+  const probed = probe ? (await send('Runtime.evaluate', { expression: probe, returnByValue: true, awaitPromise: true })).result.result.value : undefined;
 
   // 창 닫기 → 앱이 스스로 종료 (exiftool 정리 포함)
   send('Runtime.evaluate', { expression: 'window.close()' });

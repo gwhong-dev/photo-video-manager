@@ -1638,11 +1638,15 @@ const items = [
         const destDir = path.join(env.tmp, 'main-fake-dest');
         for (const d of [ud, srcDir, destDir]) fs.mkdirSync(d, { recursive: true });
         fs.copyFileSync(path.join(APP, 'test', 'samples', 'auto', 'IMG_0101.jpg'), path.join(srcDir, 'IMG_0101.jpg'));
-        fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: destDir }), 'utf8');
+        // 서비스 주소는 닿지 않는 값이에요 (이 점검은 지도 서버에 요청하지 않아요). 화면이 바꾸지 못하는지 아래에서 봐요
+        const FIXED_TILE = 'https://127.0.0.1:1/{z}/{x}/{y}.png';
+        const FIXED_SEARCH = 'https://127.0.0.1:1/search';
+        fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: destDir, mapTileUrl: FIXED_TILE, placeSearchUrl: FIXED_SEARCH }), 'utf8');
 
         const handlers = new Map();
         const appEvents = new Map();
         let dialogCalls = 0;
+        const spellCalls = [];
         let readyRun = null;
         const win = {
           webContents: { once() {}, send() {} },
@@ -1654,6 +1658,7 @@ const items = [
           app: {
             setPath() {},
             getPath: () => ud,
+            getVersion: () => '0.0.0-check', // 지도 서버에 보내는 앱 이름표용 (main.js 가 갤러리를 켤 때 읽어요)
             requestSingleInstanceLock: () => true,
             on: (ev, fn) => appEvents.set(ev, fn),
             quit() {},
@@ -1664,6 +1669,8 @@ const items = [
           dialog: { showOpenDialog: async () => { dialogCalls++; return { canceled: true, filePaths: [] }; }, showMessageBoxSync: () => 1, showMessageBox: async () => ({}) },
           shell: { trashItem: async () => {}, openPath: async () => '' },
           protocol: { registerSchemesAsPrivileged() {}, handle() {} },
+          // 맞춤법 검사 끄기 호출을 기록해요 (main.js의 whenReady 첫머리)
+          session: { defaultSession: { setSpellCheckerEnabled: (v) => spellCalls.push(['enabled', v]), setSpellCheckerLanguages: (v) => spellCalls.push(['languages', v]) } },
         };
         const origLoad = Module._load;
         const listenersBefore = process.listeners('uncaughtException');
@@ -1685,12 +1692,20 @@ const items = [
           else process.env.PVM_USER_DATA = envBefore;
           for (const l of process.listeners('uncaughtException')) if (!listenersBefore.includes(l)) process.removeListener('uncaughtException', l); // main.js가 점검용으로 붙인 종료 처리는 이 점검에 필요 없어요
         }
+        out.push(sub('켜질 때 맞춤법 검사를 끄고 사전 언어 목록을 비움 (구글 서버 사전 내려받기 방지)', JSON.stringify(spellCalls) === JSON.stringify([['enabled', false], ['languages', []]]), JSON.stringify(spellCalls)));
         out.push(sub('가짜 electron으로 main.js를 불러와 핸들러가 등록됨', loadError === '' && handlers.has('check-tools') && handlers.has('pick-tool') && handlers.has('make-plan') && handlers.has('trash-info'), loadError || [...handlers.keys()].join(',').slice(0, 80)));
 
         if (loadError === '') {
           const call = (ch, ...args) => handlers.get(ch)({}, ...args);
           const errOf = (pr) => pr.then(() => null, (e) => (e && e.message ? e.message : String(e)));
           const korean = (m) => typeof m === 'string' && /[가-힣]/.test(m) && m.includes('끝난 뒤');
+
+          // 지도와 검색 서버 주소는 settings.json에서만 바꿔요. 화면이 보낸 값은 버리고 다른 칸은 저장해요 (설계서 4-3)
+          const savedBack = await call('save-settings', { mapTileUrl: 'https://evil.example/{z}/{x}/{y}.png', placeSearchUrl: 'https://evil.example/search', includeSub: true });
+          const onDisk = JSON.parse(fs.readFileSync(path.join(ud, 'settings.json'), 'utf8'));
+          out.push(sub('화면은 지도와 검색 서버 주소를 바꾸지 못함 (다른 칸은 저장됨)',
+            savedBack.mapTileUrl === FIXED_TILE && savedBack.placeSearchUrl === FIXED_SEARCH && onDisk.mapTileUrl === FIXED_TILE && onDisk.placeSearchUrl === FIXED_SEARCH && onDisk.includeSub === true,
+            JSON.stringify({ tile: onDisk.mapTileUrl, search: onDisk.placeSearchUrl, includeSub: onDisk.includeSub })));
 
           // 아무 일도 안 할 때는 다시 찾기가 됨
           const t0 = await call('check-tools');

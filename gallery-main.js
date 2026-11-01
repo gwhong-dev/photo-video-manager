@@ -7,14 +7,21 @@
 //
 // ⚠️ 사진 파일은 읽기만 해요. 쓰는 곳은 userData 안의 library.db, manual-edits.jsonl, thumbs 폴더, logs 폴더뿐이에요.
 // ⚠️ Electron이 필요한 것은 모두 main.js에서 받아요 (net만 pvm:// 파일 응답 때 그때그때 불러와서, 일반 Node에서도 이 파일을 불러올 수 있어요)
+// ⚠️ 인터넷에 나가는 예외는 지도 하나예요: 지도 그림(pvm://tile)과 장소 검색(gallery:search-place)을 lib/map-net.js 가 대신 받아 와요.
+//    나가는 것은 지도 번호, 검색어, 앱 이름표뿐이에요 (사진, 파일 이름, 경로, 좌표 목록은 안 나가요). 창을 열거나 목록을 읽을 때는 나가지 않아요
+//    지도 출처 링크는 gallery:open-map-credit 이 고정 주소 하나만 기본 브라우저로 열어요
+//    (docs/superpowers/specs/2026-11-02-map-pick-design.md 4, 5절)
 //
 // 모양: registerScheme(protocol)  — app.whenReady 전에 한 번 (pvm:// 를 안전한 주소로 등록)
 //       setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir,
-//                      loadScreen, getJobPending, isPlanning })
+//                      loadScreen, getJobPending, isPlanning, mapFetch, openExternal, appVersion })
 //         → { onWindowReady(), onBatchDone(), onRootChanged(), onToolsChanged(), close() }
 //   loadScreen(name): 'import' | 'gallery' 화면으로 창을 바꿔요 (main.js가 해요)
 //   getJobPending(): 이어할 가져오기 작업이 있는지
 //   isPlanning(): 미리보기를 만드는 중인지 (중이면 화면 전환을 막아요)
+//   mapFetch(url, init): 지도용 인터넷 요청 (main.js 가 net.fetch 를 넘겨요). 없으면 지도를 쓸 때만 실패해요
+//   openExternal(url): 기본 브라우저로 열기 (main.js 가 shell.openExternal 을 넘겨요)
+//   appVersion: 앱 버전 글자 (지도 서버에 보내는 앱 이름표에 들어가요)
 
 const fs = require('fs');
 const crypto = require('crypto');
@@ -29,12 +36,14 @@ const { normalizeRequest, planEdit, toPreview, MAX_TARGETS } = require('./lib/ma
 const { createJournal, recover } = require('./lib/manual-journal');
 const { buildSuggestions } = require('./lib/location-suggest');
 const { createSkips } = require('./lib/suggest-skips');
+const { createMapNet } = require('./lib/map-net');
 
 const SCHEME = 'pvm';
 const TABS = ['all', 'photo', 'video', 'screenshot'];
 const SORTS = ['newest', 'oldest'];
 const INFOS = ['noLocation', 'noDate', 'manual']; // 정보 없는 사진 화면의 탭
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAP_CREDIT_URL = 'https://www.openstreetmap.org/copyright'; // 지도 출처 링크 (고정 주소. 화면이 주소를 정하지 못해요)
 const PROGRESS_GAP_MS = 100; // 읽기 진행 알림 최소 간격 (파일 찾는 동안 수천 번 보내지 않게)
 
 // pvm:// 주소를 쓰려면 앱이 준비되기 전에 한 번 등록해야 해요 (app.whenReady 전에 불러요)
@@ -81,7 +90,7 @@ function checkIds(ids) {
 // 화면에는 정해진 문장과 오류 코드(EISDIR, EACCES 같은 짧은 영문 대문자)만 보여요
 const codeNote = (e) => (e && typeof e.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(e.code) ? ` (${e.code})` : '');
 
-function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning }) {
+function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning, mapFetch, openExternal, appVersion }) {
   const base = typeof userDir === 'function' ? userDir() : userDir;
   // 백업 폴더 경로. 끝의 \ 나 / 가 달라도 같은 폴더로 보게 path.resolve 로 한 번만 다듬어요 (대소문자는 그대로 둬요).
   //   DB의 root 열쇠가 되니 모든 곳이 이 함수 하나를 써요
@@ -128,6 +137,16 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       logger.newLog('gallery-error', `갤러리 오류 ${now()}\n${where}: ${e && e.message ? e.message : e}`);
     } catch (err) { /* 로그를 못 써도 프로그램은 계속 */ }
   }
+
+  // ---------- 지도 인터넷 연결 ----------
+  //   만들기만 해서는 인터넷에 나가지 않아요 (지도 그림이나 검색을 요청받을 때만 나가요)
+  //   로그에는 어디서(where)와 상태 코드만 남겨요. 검색어와 설정 주소 값은 map-net 이 넘기지 않아요
+  const mapNet = createMapNet({
+    fetchImpl: (...a) => mapFetch(...a), // mapFetch 가 없으면 쓸 때 오류가 나고, map-net 이 실패로 처리해요
+    getSettings,
+    version: appVersion,
+    onError: (where, code) => errorLog(`지도 ${where}`, code),
+  });
 
   // ---------- 직접 넣은 값의 기록 파일 ----------
   //   userData/manual-edits.jsonl 에 넣기와 되돌리기를 먼저 적어 둬요. DB가 새로 만들어져도 켤 때 여기서 값을 되살려요
@@ -407,8 +426,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     const batchId = crypto.randomUUID();
     const at = new Date().toISOString();
     const items = changed.map((it) => ({ path: it.path, before: it.beforeManual, after: it.afterManual }));
-    const via = suggested ? 'suggest' : edit.source === 'direct' ? 'direct' : 'copy';
-    const sourcePath = via === 'direct' ? null : db.getFile(edit.sourceId).path; // 근거 사진은 computePlan이 이미 확인했어요
+    const via = suggested ? 'suggest' : edit.source === 'direct' ? 'direct' : edit.source === 'pin' ? 'map' : 'copy';
+    const sourcePath = edit.source !== 'copy' ? null : db.getFile(edit.sourceId).path; // 직접 넣기와 지도 핀은 근거 사진이 없어요. 복사는 computePlan이 이미 확인했어요
 
     // 1) 기록 파일에 먼저. 못 쓰면 거절하고 DB는 바꾸지 않아요
     try {
@@ -420,7 +439,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     // 2) DB 저장 (실패하면 void)
     saveOrVoid('apply', batchId, '값 넣기', () => db.applyManualBatch({ id: batchId, root, kind: plan.kind, createdAt: at, items }));
     // 3) 로그와 알림
-    finishEdit(suggested ? '위치 제안 넣기' : '직접 넣기', batchId, plan.kind, changed.length, () => changed.map((it) =>
+    finishEdit(suggested ? '위치 제안 넣기' : via === 'map' ? '지도로 넣기' : '직접 넣기', batchId, plan.kind, changed.length, () => changed.map((it) =>
       `${it.path}\t날짜 ${dateText(it.before)} → ${dateText(it.after)}\t위치 ${locText(it.before)} → ${locText(it.after)}`),
     `\n방법 ${via}\n근거 ${sourcePath === null ? '없음' : sourcePath}`);
     return { batchId, kind: plan.kind, count: changed.length, dropped: checked.dropped };
@@ -477,11 +496,32 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     return { kind: last.kind, count: last.count };
   });
 
+  // ---------- 장소 검색과 지도 출처 ----------
+  //   검색어 검사와 실패 문장은 map-net 이 정해요. 거절 문장을 그대로 화면에 넘겨요 (검색어는 로그에 안 남아요)
+  ipcMain.handle('gallery:search-place', (e, query) => mapNet.search(query));
+
+  // 지도 출처 링크: 화면은 주소를 보내지 않고, 고정 주소 하나만 기본 브라우저로 열어요
+  ipcMain.handle('gallery:open-map-credit', async () => {
+    try {
+      await openExternal(MAP_CREDIT_URL);
+    } catch (err) {
+      errorLog('지도 출처 링크 열기', err);
+      throw new Error('브라우저를 열지 못했어요.');
+    }
+    return true;
+  });
+
   // ---------- pvm:// 이미지 전달 ----------
   //   화면은 pvm://thumb/<id>, pvm://preview/<id> 로만 요청해요. 판단은 lib/media-protocol.js 가 해요 (이상한 주소는 404)
+  //   pvm://tile/<z>/<x>/<y> 는 지도 그림이에요. 사진 번호를 쓰지 않아서 DB가 없어도 되고, map-net 이 인터넷에서 받아 와요
   const notFound = () => new Response(null, { status: 404 });
   protocol.handle(SCHEME, async (request) => {
     try {
+      if (new URL(request.url).hostname === 'tile') {
+        const t = await mapNet.tile(request.url);
+        if (t.status !== 200) return notFound();
+        return new Response(t.buffer, { status: 200, headers: { 'Content-Type': t.type, 'Cache-Control': 'no-cache' } });
+      }
       if (!db) return notFound();
       const r = await handleMedia(request.url, { db, thumbs });
       if (r.status !== 200) return notFound();

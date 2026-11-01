@@ -806,6 +806,8 @@ const ITEMS = [
   ...require('./check-missing-info').items,
   // 28번부터는 위치 제안 점검 (scripts/check-location-suggest.js)
   ...require('./check-location-suggest').items,
+  // 33번부터는 지도에서 위치 고르기 점검 (scripts/check-map-pick.js)
+  ...require('./check-map-pick').items,
 ];
 
 // ---------- 점검 임시 폴더 정리 ----------

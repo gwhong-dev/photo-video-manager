@@ -28,6 +28,9 @@ export const api = {
   listSuggestions: () => gallery().listSuggestions(),
   skipSuggestions: (ids) => gallery().skipSuggestions(ids),
   clearSuggestionSkips: () => gallery().clearSuggestionSkips(),
+  // 지도에서 위치 고르기
+  searchPlace: (query) => gallery().searchPlace(query),
+  openMapCredit: () => gallery().openMapCredit(),
   rescan: () => gallery().rescan(),
   openScreen: (name) => gallery().openScreen(name),
   // 구독을 끊는 함수를 돌려줘요 (React에서 정리할 때 써요)
