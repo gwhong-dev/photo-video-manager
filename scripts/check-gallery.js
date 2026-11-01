@@ -1654,6 +1654,7 @@ const items = [
           app: {
             setPath() {},
             getPath: () => ud,
+            getVersion: () => '0.0.0-check', // 지도 서버에 보내는 앱 이름표용 (main.js 가 갤러리를 켤 때 읽어요)
             requestSingleInstanceLock: () => true,
             on: (ev, fn) => appEvents.set(ev, fn),
             quit() {},

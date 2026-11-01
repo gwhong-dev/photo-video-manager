@@ -11,7 +11,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { sub } = require('./check-gallery');
+const { row, sub } = require('./check-gallery');
 
 // 가짜 PNG (앞 8바이트는 PNG 표시, 나머지는 아무 값)
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 1)]);
@@ -319,6 +319,275 @@ const items = [
           logs));
       }
 
+      return out;
+    },
+  },
+  {
+    no: 34,
+    name: '핀 위치 저장과 지도 연결 (가짜 setupGallery)',
+    async run(env) {
+      const out = [];
+      const dbMod = require('../lib/db');
+      const { normalizeRequest } = require('../lib/manual-edit');
+      const { createJournal, recover } = require('../lib/manual-journal');
+      const { createLogger } = require('../lib/logger');
+      const { openDb } = dbMod;
+      const throws = (fn) => {
+        try {
+          fn();
+          return false;
+        } catch (e) {
+          return e instanceof Error;
+        }
+      };
+
+      // 34a, 34b 값 검사와 반올림 (DB 없이 계산만)
+      {
+        const r = normalizeRequest({ source: 'pin', lat: 37.12345678, lng: 0 });
+        out.push(sub('34a 핀 요청은 소수점 6자리로 줄이고 0도 살림 (위치만, 근거 사진 없음)', r.kind === 'location' && r.location.lat === 37.123457 && r.location.lng === 0 && r.sourceId === null && r.date === null, JSON.stringify(r)));
+        const bad = [
+          { source: 'pin', lat: 91, lng: 0 },
+          { source: 'pin', lat: 0, lng: -181 },
+          { source: 'pin', lat: '37', lng: 127 },
+          { source: 'pin', lat: NaN, lng: 127 },
+          { source: 'pin', lat: 37 },
+          { source: 'pin' },
+        ];
+        const notRejected = bad.filter((b) => !throws(() => normalizeRequest(b)));
+        out.push(sub('34b 범위 밖, 글자, 빠진 값은 거절', notRejected.length === 0, JSON.stringify(notRejected)));
+      }
+
+      // gallery-main을 불러오는 동안만 openDb를 감싸서, 점검이 같은 DB를 들여다볼 수 있게 해요 (항목 30과 같은 방식)
+      const opened = [];
+      const gmPath = require.resolve('../gallery-main');
+      delete require.cache[gmPath];
+      dbMod.openDb = (f, o) => {
+        const r = openDb(f, o);
+        opened.push(r.db);
+        return r;
+      };
+      let gm;
+      try {
+        gm = require('../gallery-main');
+      } finally {
+        dbMod.openDb = openDb;
+        delete require.cache[gmPath];
+      }
+
+      const base = path.join(env.tmp, 'map-wire');
+      fs.mkdirSync(base, { recursive: true });
+      let seq = 0;
+      const fakes = [];
+      const errOf = (p) => p.then(() => null, (e) => e.message);
+      const DAY = '2026-10-25';
+      const at = (hhmm) => `${DAY}T${hhmm}:00`;
+      const FILE_LAT = 35.1;
+      const FILE_LNG = 129.2;
+      const PIN = (lat, lng) => ({ source: 'pin', lat, lng });
+      const SEARCH_JSON = JSON.stringify([{ lat: '37.5', lon: '127', display_name: '가짜 장소' }]);
+      const SEARCH_FAIL = '장소를 찾지 못했어요. 잠시 뒤 다시 눌러 주세요.';
+
+      // 사진 폴더와 userData를 만들고 DB에 줄을 넣어 둬요. spec: { 이름: 덮어쓸 값 }
+      const prep = (label, spec) => {
+        const dir = path.join(base, `${label}-${++seq}`);
+        const P = { root: path.resolve(dir, 'photos-root-xyz'), ud: path.join(dir, 'ud'), logDir: path.join(dir, 'logs') };
+        fs.mkdirSync(P.ud, { recursive: true });
+        fs.mkdirSync(P.root, { recursive: true });
+        const o = openDb(path.join(P.ud, 'library.db'));
+        o.db.upsertFiles(Object.entries(spec).map(([name, over]) => {
+          fs.writeFileSync(path.join(P.root, name), `사진 ${name}`);
+          return row({ root: P.root, path: path.join(P.root, name), name, takenAt: at('14:00'), takenDay: DAY, ...over });
+        }));
+        o.db.close();
+        return P;
+      };
+      // setupGallery를 가짜 ipcMain, 가짜 protocol, 가짜 인터넷으로 띄워요.
+      //   wire: false 면 mapFetch, openExternal, appVersion 을 아예 안 넘겨요 (이 기능이 생기기 전의 점검과 같은 모양)
+      const makeFake = (P, { wire = true, mapFetch } = {}) => {
+        const f = { handlers: new Map(), P, fetchCalls: [], opened: [], protocolHandler: null };
+        const win = { isDestroyed: () => false, webContents: { send() {} } };
+        const args = {
+          ipcMain: { handle: (ch, fn) => f.handlers.set(ch, fn) },
+          protocol: { handle: (scheme, fn) => { f.protocolHandler = fn; } },
+          getWin: () => win,
+          getSettings: () => ({ backupRoot: P.root }),
+          getTools: () => ({}),
+          getEt: () => null,
+          isRunning: () => false,
+          isPlanning: () => false,
+          logger: createLogger(P.logDir),
+          userDir: P.ud,
+          loadScreen: async () => {},
+          getJobPending: () => false,
+        };
+        if (wire) {
+          args.mapFetch = async (url, init) => {
+            f.fetchCalls.push({ url, init });
+            return mapFetch ? mapFetch(url, init) : png();
+          };
+          args.openExternal = async (u) => { f.opened.push(u); };
+          args.appVersion = '9.9.9';
+        }
+        f.g = gm.setupGallery(args);
+        f.db = opened[opened.length - 1];
+        f.call = async (ch, ...a) => f.handlers.get(ch)(null, ...a);
+        f.close = () => {
+          if (f.closed) return;
+          f.closed = true;
+          f.g.close();
+        };
+        fakes.push(f);
+        return f;
+      };
+      const idOf = (f, name) => f.db.listSuggestionRows(f.P.root).find((x) => x.name === name).id;
+      const jlines = (P) => createJournal(path.join(P.ud, 'manual-edits.jsonl')).read().lines;
+      const logsOf = (P, prefix) => (fs.existsSync(P.logDir) ? fs.readdirSync(P.logDir) : []).filter((n) => n.startsWith(prefix)).map((n) => fs.readFileSync(path.join(P.logDir, n), 'utf8')).join('\n');
+      const scene = async (label, fn) => {
+        try {
+          await fn();
+        } catch (e) {
+          out.push(sub(`${label} 실행 중 오류`, false, String(e.stack).split('\n').slice(0, 3).join(' | ')));
+        }
+      };
+      const BASIC = { 'a.jpg': {}, 'b.jpg': { takenAt: at('14:10') }, 'file.jpg': { lat: FILE_LAT, lng: FILE_LNG, locationSource: 'gps' } };
+      const request = (u) => ({ url: u });
+
+      try {
+        await scene('34c', async () => {
+          const f = makeFake(prep('pin', BASIC));
+          const file = idOf(f, 'file.jpg');
+          const a = idOf(f, 'a.jpg');
+          const edit = PIN(37.12345678, 127.5);
+          // 34c 파일 위치가 있는 사진이 섞이면 원래 값 있음으로 세고, 되돌리면 파일 값으로 돌아와요
+          const pv = await f.call('gallery:preview-edit', [a, file], edit);
+          const r = await f.call('gallery:apply-edit', [a, file], edit);
+          const after = await f.call('gallery:get-file', file);
+          const afterA = await f.call('gallery:get-file', a);
+          await f.call('gallery:undo-last', r.batchId);
+          const undone = await f.call('gallery:get-file', file);
+          out.push(sub('34c 핀 미리보기: 파일 위치 있는 사진은 덮어씀으로 셈, 저장은 6자리, 되돌리면 파일 값',
+            pv.kind === 'location' && pv.counts.changed === 2 && pv.counts.overwrite === 1
+            && r.count === 2 && r.kind === 'location' && after.lat === 37.123457 && after.lng === 127.5 && after.locationSource === 'manual' && afterA.lat === 37.123457
+            && undone.lat === FILE_LAT && undone.lng === FILE_LNG,
+            JSON.stringify([pv.counts, r, after.lat, undone.lat])));
+
+          // 34d 기록 파일과 로그
+          const line = jlines(f.P)[0];
+          const log = logsOf(f.P, 'manual-edit_');
+          out.push(sub('34d 기록 파일 via map + sourcePath null, 로그에 제목 지도로 넣기, 방법 map, 근거 없음',
+            line.via === 'map' && line.sourcePath === null && line.kind === 'location' && log.includes('지도로 넣기') && log.includes('방법 map') && log.includes('근거 없음'),
+            `${JSON.stringify([line.via, line.sourcePath])} ${log.slice(0, 80)}`));
+
+          // 34f 핀과 위치 제안이 섞이거나 모르는 via 가 오면 거절
+          const withSuggest = await errOf(f.call('gallery:apply-edit', [a], { ...edit, via: 'suggest' }));
+          const withRobot = await errOf(f.call('gallery:apply-edit', [a], { ...edit, via: 'robot' }));
+          out.push(sub('34f via suggest 와 함께 온 핀은 거절, 모르는 via 도 거절',
+            withSuggest === '위치 제안은 위치만 넣을 수 있어요.' && withRobot === '넣는 방법이 올바르지 않아요.', JSON.stringify([withSuggest, withRobot])));
+        });
+
+        await scene('34e', async () => {
+          // 34e 켤 때 복구: 기록 파일로 DB를 새로 만들어도 핀 값이 살아나요
+          const P = prep('recover', BASIC);
+          const f = makeFake(P);
+          await f.call('gallery:apply-edit', [idOf(f, 'a.jpg')], PIN(10.5, -20.25));
+          f.close();
+          fs.mkdirSync(path.join(P.ud, 'fresh'), { recursive: true });
+          const fresh = openDb(path.join(P.ud, 'fresh', 'library.db'));
+          const r = recover(fresh.db, createJournal(path.join(P.ud, 'manual-edits.jsonl')));
+          fresh.db.upsertFiles([row({ root: P.root, path: path.join(P.root, 'a.jpg'), name: 'a.jpg', takenDay: DAY })]);
+          const va = fresh.db.listSuggestionRows(P.root).find((x) => x.name === 'a.jpg');
+          fresh.db.close();
+          out.push(sub('34e 기록 파일에서 핀 값이 복구됨 (출처 manual)', r.applied === 1 && va.lat === 10.5 && va.lng === -20.25 && va.locationSource === 'manual', JSON.stringify([r.applied, va.lat, va.lng, va.locationSource])));
+        });
+
+        await scene('34g', async () => {
+          // 34g 시작과 목록 읽기만으로는 mapFetch를 부르지 않아요
+          const f = makeFake(prep('lazy', BASIC));
+          f.g.onWindowReady();
+          await f.call('gallery:get-state');
+          await f.call('gallery:list-days', {});
+          await f.call('gallery:list-files', null, {});
+          await f.call('gallery:list-suggestions');
+          out.push(sub('34g 시작, 읽기 시작, 목록 읽기만으로는 mapFetch를 부르지 않음', f.fetchCalls.length === 0 && typeof f.protocolHandler === 'function', String(f.fetchCalls.length)));
+
+          // mapFetch 등을 안 넘겨도 켜지고, 쓸 때만 실패해요 (옛 점검과 같은 방식)
+          const bare = makeFake(prep('bare', BASIC), { wire: false });
+          const st = await bare.call('gallery:get-state');
+          const tileRes = await bare.protocolHandler(request('pvm://tile/5/27/12'));
+          const searchErr = await errOf(bare.call('gallery:search-place', '서울'));
+          const creditErr = await errOf(bare.call('gallery:open-map-credit'));
+          out.push(sub('34g2 mapFetch, openExternal, appVersion 없이도 켜지고 쓸 때만 실패',
+            st.root === bare.P.root && tileRes.status === 404 && searchErr === SEARCH_FAIL && typeof creditErr === 'string' && creditErr !== '',
+            JSON.stringify([tileRes.status, searchErr, creditErr])));
+        });
+
+        await scene('34h', async () => {
+          // 34h pvm://tile 은 DB가 없어도 응답하고 사진 번호를 쓰지 않아요. pvm://thumb 은 그대로
+          const f = makeFake(prep('tile', BASIC));
+          const ok = await f.protocolHandler(request('pvm://tile/5/27/12'));
+          const body = Buffer.from(await ok.arrayBuffer());
+          const headersOk = ok.status === 200 && ok.headers.get('content-type') === 'image/png' && ok.headers.get('cache-control') === 'no-cache' && body.equals(PNG);
+          const fetched = f.fetchCalls.map((c) => c.url);
+          const ua = f.fetchCalls[0].init.headers['User-Agent'];
+          const bad = await f.protocolHandler(request('pvm://tile/20/0/0'));
+          const thumb = await f.protocolHandler(request('pvm://thumb/999'));
+          const onlyOne = f.fetchCalls.length === 1; // 그림 한 번만 나갔고, 잘못된 주소와 thumb 은 안 나감
+          f.close();
+
+          // DB를 못 여는 상태 (파일 자리에 폴더): 그래도 지도는 나와요
+          const P2 = { root: path.resolve(base, 'nodb', 'photos'), ud: path.join(base, 'nodb', 'ud'), logDir: path.join(base, 'nodb', 'logs') };
+          fs.mkdirSync(path.join(P2.ud, 'library.db'), { recursive: true });
+          const g = makeFake(P2);
+          const st = await g.call('gallery:get-state');
+          const t2 = await g.protocolHandler(request('pvm://tile/3/1/2'));
+          const th2 = await g.protocolHandler(request('pvm://thumb/1'));
+          out.push(sub('34h pvm://tile: 200 + image/png + no-cache, 서버 주소와 이름표 사용, 잘못된 주소와 thumb 은 404 (인터넷 안 나감), DB가 없어도 지도는 나오고 thumb 은 404',
+            headersOk && fetched[0] === 'https://tile.openstreetmap.org/5/27/12.png' && ua === 'photo-video-manager/9.9.9 (https://github.com/gwhong-dev/photo-video-manager)'
+            && bad.status === 404 && thumb.status === 404 && onlyOne
+            && typeof st.dbError === 'string' && t2.status === 200 && g.fetchCalls.length === 1 && th2.status === 404,
+            JSON.stringify({ headersOk, fetched, bad: bad.status, thumb: thumb.status, dbError: !!st.dbError, t2: t2.status, th2: th2.status })));
+
+          // 서버가 실패하면 화면에는 404, 오류 로그에는 상태만
+          const h = makeFake(prep('tile-fail', BASIC), { mapFetch: () => new Response('', { status: 429 }) });
+          const failed = await h.protocolHandler(request('pvm://tile/5/27/12'));
+          const errLog = logsOf(h.P, 'gallery-error_');
+          out.push(sub('34h2 지도 서버가 실패하면 화면에는 404, 오류 로그에는 상태만', failed.status === 404 && errLog.includes('HTTP 429') && !errLog.includes('tile.openstreetmap'), errLog.slice(0, 120)));
+        });
+
+        await scene('34i', async () => {
+          // 34i 검색 IPC가 숫자, 객체를 거절하고 credit IPC는 인자를 무시하고 고정 주소만 열어요
+          const f = makeFake(prep('ipc', BASIC), { mapFetch: () => new Response(SEARCH_JSON, { headers: { 'content-type': 'application/json' } }) });
+          const BAD_QUERY = '검색어는 1자부터 200자까지 적어 주세요.';
+          const num = await errOf(f.call('gallery:search-place', 123));
+          const obj = await errOf(f.call('gallery:search-place', { q: '서울' }));
+          const empty = await errOf(f.call('gallery:search-place', '  '));
+          const noFetchYet = f.fetchCalls.length === 0;
+          const found = await f.call('gallery:search-place', ' 서울 ');
+          await f.call('gallery:open-map-credit', 'https://evil.example/', 123);
+          await f.call('gallery:open-map-credit');
+          const first = new URL(f.fetchCalls[0].url);
+          out.push(sub('34i 검색 IPC는 숫자, 객체, 빈 값을 거절하고 올바른 검색어는 결과를 돌려줌',
+            num === BAD_QUERY && obj === BAD_QUERY && empty === BAD_QUERY && noFetchYet && JSON.stringify(found) === JSON.stringify([{ name: '가짜 장소', lat: 37.5, lng: 127 }])
+            && first.origin + first.pathname === 'https://nominatim.openstreetmap.org/search' && first.searchParams.get('q') === '서울',
+            JSON.stringify([num, obj, empty, found])));
+          out.push(sub('34i2 credit IPC는 인자를 무시하고 고정 주소만 엶', f.opened.length === 2 && f.opened.every((u) => u === 'https://www.openstreetmap.org/copyright'), JSON.stringify(f.opened)));
+
+          // 34j 검색 실패 로그에는 검색어가 없어요
+          const secret = '비밀검색어SECRETQUERY';
+          const g = makeFake(prep('ipc-fail', BASIC), { mapFetch: () => new Response('', { status: 429 }) });
+          const failText = await errOf(g.call('gallery:search-place', secret));
+          const errLog = logsOf(g.P, 'gallery-error_');
+          out.push(sub('34j 검색 실패는 정해진 문장으로 거절, 오류 로그에 상태만 있고 검색어는 없음',
+            failText === SEARCH_FAIL && errLog.includes('HTTP 429') && !errLog.includes('SECRETQUERY') && !errLog.includes(encodeURIComponent(secret)) && !errLog.includes('비밀'),
+            errLog.slice(0, 160)));
+        });
+      } finally {
+        for (const f of fakes) {
+          try {
+            f.close();
+          } catch (e) { /* 이미 닫혔으면 그대로 */ }
+        }
+      }
       return out;
     },
   },

@@ -6,7 +6,7 @@
 //   바로 끝내요. 대화상자는 사용자 화면에서 점검을 멈춰 세워요. 다른 require보다 먼저 있어야 해요
 if (process.env.PVM_USER_DATA) process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
 
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -39,7 +39,8 @@ const settingsPath = () => path.join(userDir(), 'settings.json');
 const logDir = () => path.join(userDir(), 'logs');
 
 // ---------- 설정 저장/불러오기 ----------
-const DEFAULTS = { source: '', backupRoot: '', includeSub: true, batchSize: 2000, exiftool: '', magick: '', ffmpeg: '' };
+// mapTileUrl, placeSearchUrl: 지도 그림과 장소 검색 서버 주소. 비워 두면 기본 주소를 써요 (https 만. 화면에는 설정 칸이 없고 settings.json 에서 바꿔요)
+const DEFAULTS = { source: '', backupRoot: '', includeSub: true, batchSize: 2000, exiftool: '', magick: '', ffmpeg: '', mapTileUrl: '', placeSearchUrl: '' };
 
 function loadSettings() {
   try {
@@ -449,6 +450,10 @@ app.whenReady().then(async () => {
       userDir,
       loadScreen,
       getJobPending: () => !!job,
+      // 지도용 인터넷과 브라우저 열기. 갤러리는 Electron을 직접 부르지 않고 여기서 받아요
+      mapFetch: (...a) => net.fetch(...a),
+      openExternal: (u) => shell.openExternal(u),
+      appVersion: app.getVersion(),
     });
   } catch (e) {
     // 갤러리를 못 켜도 가져오기는 쓸 수 있어야 해요
