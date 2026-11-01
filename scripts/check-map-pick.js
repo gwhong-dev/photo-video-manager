@@ -129,6 +129,25 @@ const items = [
         out.push(sub('33f3 검색 제한시간: 정해진 문장으로 거절 + 한 번만 시도 + 로그에 TimeoutError', message === '장소를 찾지 못했어요. 잠시 뒤 다시 눌러 주세요.' && g.calls.length === 1 && g.errs.length === 1 && g.errs[0].code === 'TimeoutError', JSON.stringify([message, g.calls.length, g.errs])));
       }
 
+      // 33f4 지도 서버가 429나 403을 주면 60초 동안 더 보내지 않아요. 500은 쉬지 않아요
+      for (const status of [429, 403]) {
+        const f = harness(() => new Response('', { status }));
+        const base = f.now;
+        await f.net.tile('pvm://tile/2/1/1');
+        f.now = base + 59999;
+        const during = await f.net.tile('pvm://tile/2/1/2');
+        const callsDuring = f.calls.length;
+        f.now = base + 60000;
+        await f.net.tile('pvm://tile/2/1/3');
+        out.push(sub(`33f4 ${status}이면 60초 쉬기`, during.status === 502 && callsDuring === 1 && f.calls.length === 2, JSON.stringify([during.status, callsDuring, f.calls.length])));
+      }
+      {
+        const f = harness(() => new Response('', { status: 500 }));
+        await f.net.tile('pvm://tile/2/1/1');
+        await f.net.tile('pvm://tile/2/1/2');
+        out.push(sub('33f5 500에는 쉬지 않음', f.calls.length === 2, String(f.calls.length)));
+      }
+
       // 33g 지도 그림 실패 로그는 60초에 한 번
       {
         const f = harness(() => new Response('', { status: 500 }));
@@ -168,7 +187,8 @@ const items = [
           && u.searchParams.get('limit') === '5' && u.searchParams.get('accept-language') === 'ko'
           && names === 'accept-language,format,limit,q'
           && f.calls[0].init.headers['User-Agent'] === 'photo-video-manager/1.0.0 (https://github.com/gwhong-dev/photo-video-manager)'
-          && f.calls[0].init.redirect === 'error' && !!f.calls[0].init.signal,
+          && f.calls[0].init.redirect === 'error' && !!f.calls[0].init.signal
+          && f.calls[0].init.cache === 'no-store',
           f.calls[0].url));
       }
 
