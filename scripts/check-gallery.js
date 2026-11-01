@@ -624,6 +624,29 @@ const items = [
         out.push(sub('연결이 돌아온 뒤 정상으로 읽으면 나머지 전부, 읽기 실패 0개', r2.status === 'done' && r2.read === n - 3 && r2.skipped === 3 && sumTotal(db, root) === n && bad2 === 0, JSON.stringify(r2)));
       });
 
+      // 16b3 영상은 두 번 읽어요(촬영 정보, Keys 날짜). 그 사이에 연결이 끊기면 모든 파일에 값이 있어도 저장하지 않음
+      await withDb(env, 'scan-keys-drop', async (db) => {
+        const root = copyLibrary(env);
+        const n = listMedia(root).length;
+        const gone = `${root}-gone`;
+        const drop = {
+          run: (a) => et.run(a),
+          async read(files, tags) {
+            const list = await et.read(files, tags);
+            if (!tags.includes('Keys:CreationDate')) return list; // 주 읽기는 정상
+            fs.renameSync(root, gone); // Keys 읽기를 하는 순간 연결이 끊기고 빈 결과가 옴
+            return [];
+          },
+        };
+        const r1 = await makeLib(db, drop).scan(root);
+        const bad = [...db.knownFiles(root).values()].length;
+        out.push(sub('Keys 읽기 사이 연결 끊김: disconnected, 그 묶음은 저장 안 함', r1.status === 'disconnected' && r1.read === 0 && bad === 0 && sumTotal(db, root) === 0 && r1.missing === 0, JSON.stringify(r1)));
+        fs.renameSync(gone, root);
+        const r2 = await makeLib(db, et).scan(root);
+        const v = fileNamed(db, root, DAY, VIDEO);
+        out.push(sub('연결이 돌아온 뒤 영상이 Keys 날짜로 읽힘', r2.status === 'done' && r2.read === n && !!v && v.takenAtSource === 'exif' && v.takenAt === '2026-10-28T13:41:13' && v.takenOffset === '+09:00' && v.readError === null, v ? `${v.takenAt} ${v.takenOffset}` : '영상 없음'));
+      });
+
       // 16c 일부 폴더를 못 읽음: 그 폴더 안 파일은 missing으로 만들지 않음 (이름만 비슷한 폴더는 보호하지 않음)
       await withDb(env, 'scan-faileddirs', async (db) => {
         const root = copyLibrary(env);
