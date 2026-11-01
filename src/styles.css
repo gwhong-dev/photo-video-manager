@@ -1,0 +1,44 @@
+/* 파일 위치: src/styles.css / 역할: 갤러리 화면의 색, 글꼴, 기본 모양 (CLAUDE.md "화면 디자인") */
+:root {
+  --bg: #3B3A37;
+  --sidebar: #33322F;
+  --panel: #403F3B;
+  --line: #55534E;
+  --text: #F1EEE6;
+  --sub: #B3AFA5;
+  --faint: #8C887E;
+  --warn: #E3B341; /* "정보 없음"에만 써요 */
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'IBM Plex Sans KR', 'Malgun Gothic', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+button {
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--sub); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.shell { display: flex; height: 100%; }
+.side { width: 220px; flex: none; background: var(--sidebar); border-right: 1px solid var(--line); padding: 20px 16px; }
+.side h1 { font-size: 15px; font-weight: 600; margin: 0 0 16px; }
+.side p { margin: 4px 0; color: var(--sub); }
+.main { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 32px; }
+
+.notice { max-width: 440px; text-align: left; }
+.notice h2 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
+.notice p { margin: 0 0 16px; color: var(--sub); }
+.notice .faint { color: var(--faint); font-size: 13px; }
+.notice .error { color: var(--text); border-left: 3px solid var(--line); padding-left: 10px; }

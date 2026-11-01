@@ -2,7 +2,7 @@
 // 역할: 프로그램의 뇌 🧠 — 창 만들기 + 화면(index.html)의 부탁 처리
 // 실제 작업은 lib 폴더의 파일들이 해요.
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -15,6 +15,7 @@ const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals } = require('./
 const { createDriveKindOf } = require('./lib/platform');
 const { createLogger } = require('./lib/logger');
 const { writePlanLog, nextTodo, checkSpace, runBatch } = require('./lib/runner');
+const { setupGallery, registerScheme } = require('./gallery-main');
 
 // ---------- 상태 ----------
 let win = null;
@@ -26,6 +27,7 @@ let job = null;        // 지금 작업 (이어하기용)
 let lastPlan = null;   // 미리보기 결과 (아직 실행 전)
 let running = false;   // 실행 중인지
 let pauseAsked = false; // 일시정지 눌렀는지
+let gallery = null;    // 갤러리 연결 (gallery-main.js). 아직 없으면 null
 
 const userDir = () => app.getPath('userData');
 const settingsPath = () => path.join(userDir(), 'settings.json');
@@ -115,7 +117,11 @@ function createWindow() {
     title: '사진/영상 관리 프로그램',
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
   });
-  win.loadFile(path.join(__dirname, 'index.html'));
+  showStartScreen();
+  // 창이 처음 다 열리면 갤러리가 백업 폴더 읽기를 시작해요
+  win.webContents.once('did-finish-load', () => {
+    if (gallery) gallery.onWindowReady();
+  });
 
   // 실행 중에 닫으려고 하면 한 번 물어보기
   win.on('close', (e) => {
@@ -129,6 +135,39 @@ function createWindow() {
     });
     if (r === 0) e.preventDefault();
   });
+}
+
+// ---------- 화면 바꾸기 ----------
+// 시작 화면은 갤러리예요. 갤러리 화면은 Vite로 만든 dist/renderer 에 있어요 (npm start 가 먼저 만들어 줘요)
+//   PVM_START_SCREEN=import 는 점검(npm run check) 전용이에요. 사용자는 쓰지 않아요
+const GALLERY_FILE = path.join(__dirname, 'dist', 'renderer', 'index.html');
+const IMPORT_FILE = path.join(__dirname, 'index.html');
+
+async function loadScreen(name) {
+  if (!win || win.isDestroyed()) return;
+  if (name === 'gallery') {
+    if (!fs.existsSync(GALLERY_FILE)) {
+      throw new Error('갤러리 화면 파일이 아직 없어요. 터미널에서 npm start 로 실행하면 만들어져요');
+    }
+    await win.loadFile(GALLERY_FILE);
+  } else {
+    await win.loadFile(IMPORT_FILE);
+  }
+}
+
+function showStartScreen() {
+  const wantGallery = process.env.PVM_START_SCREEN !== 'import';
+  if (wantGallery && !fs.existsSync(GALLERY_FILE)) {
+    // 빈 창 대신 이유를 알려 주고 가져오기 화면으로 열어요 (가져오기는 만들기 없이 쓸 수 있어요)
+    win.loadFile(IMPORT_FILE);
+    dialog.showMessageBox(win, {
+      type: 'warning',
+      message: '갤러리 화면 파일이 아직 없어요',
+      detail: '터미널에서 npm start 로 실행해 주세요. 화면을 먼저 만든 뒤 프로그램이 켜져요.\n지금은 가져오기 화면으로 열었어요.',
+    });
+    return;
+  }
+  win.loadFile(wantGallery ? GALLERY_FILE : IMPORT_FILE);
 }
 
 const send = (ch, data) => {
@@ -171,8 +210,10 @@ ipcMain.handle('select-folder', async (e, title, defaultPath) => {
 
 // 설정 저장 (폴더 경로, 하위 폴더 포함, 한 번에 개수)
 ipcMain.handle('save-settings', async (e, patch) => {
+  const rootBefore = settings.backupRoot;
   Object.assign(settings, patch);
   saveSettings();
+  if (gallery && settings.backupRoot !== rootBefore) gallery.onRootChanged(); // 백업 폴더가 바뀌면 갤러리가 새 폴더를 읽어요
   return settings;
 });
 
@@ -249,6 +290,7 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
     return { ...r, job: jobInfo() };
   } finally {
     running = false;
+    if (gallery) gallery.onBatchDone(); // 새로 들어온 파일을 갤러리가 다시 읽어요 (오류로 멈춰도 이미 옮긴 파일이 있을 수 있어요)
   }
 });
 
@@ -317,6 +359,10 @@ ipcMain.handle('open-folder', async (e, p) => {
 // ---------- 시작 / 종료 ----------
 // 프로그램은 하나만 켜지게 (두 개가 같은 작업 기록을 동시에 건드리면 안 돼서요)
 //   이미 켜져 있으면 → 새로 켠 쪽은 바로 끄고, 원래 창을 앞으로 보여줘요
+// 점검 전용: PVM_USER_DATA가 있으면 설정·DB·로그를 그 폴더에 써요 (진짜 사용자 설정을 건드리지 않게).
+//   프로그램은 하나만 켜지게 하는 잠금도 이 폴더 기준이라, 잠금보다 먼저 정해야 해요
+if (process.env.PVM_USER_DATA) app.setPath('userData', process.env.PVM_USER_DATA);
+registerScheme(protocol); // pvm:// 이미지 주소 등록 (앱이 준비되기 전에 해야 해요)
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -328,7 +374,7 @@ if (!gotLock) {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!gotLock) return;
   settings = loadSettings();
   logger = createLogger(logDir());
@@ -338,6 +384,31 @@ app.whenReady().then(() => {
   } catch (e) {
     job = null;
   }
+  // 갤러리가 폴더를 읽으려면 exiftool이 필요해서 창을 열기 전에 도구부터 찾아요
+  try {
+    await refreshTools();
+  } catch (e) {
+    logger.newLog('startup', `도구 찾기 실패 ${e.message}`);
+  }
+  try {
+    gallery = setupGallery({
+      ipcMain,
+      protocol,
+      getWin: () => win,
+      getSettings: () => settings,
+      getTools: () => tools,
+      getEt: () => et,
+      isRunning: () => running,
+      logger,
+      userDir,
+      loadScreen,
+      getJobPending: () => !!job,
+    });
+  } catch (e) {
+    // 갤러리를 못 켜도 가져오기는 쓸 수 있어야 해요
+    gallery = null;
+    console.error('갤러리 연결 실패:', e);
+  }
   createWindow();
 });
 
@@ -345,7 +416,8 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
-// 종료할 때 exiftool도 같이 끄기
+// 종료할 때 갤러리 DB와 exiftool도 같이 끄기
 app.on('will-quit', () => {
+  if (gallery) gallery.close(); // 썸네일 만들던 프로그램을 기다리지 않고 DB를 닫아요
   if (et) et.close();
 });

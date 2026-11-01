@@ -96,7 +96,10 @@
   </style>
 </head>
 <body>
-  <h1>📸 사진/영상 관리 프로그램</h1>
+  <div class="row" style="justify-content:space-between;margin:0 0 14px">
+    <h1 style="margin:0">📸 사진/영상 관리 프로그램</h1>
+    <button id="galleryBtn">갤러리 화면 열기</button>
+  </div>
 
   <!-- 1. 도구 상태 -->
   <div class="card">
@@ -569,6 +572,14 @@
     };
 
     // ---------- 기타 버튼 ----------
+    // 갤러리 화면으로 (작업 중이면 main이 거절하고 이유를 알려 줘요)
+    $('galleryBtn').onclick = async () => {
+      try {
+        await api.gallery.openScreen('gallery');
+      } catch (e) {
+        setStatus('⚠ ' + cleanErr(e));
+      }
+    };
     $('logBtn').onclick = () => api.openLogs();
     $('openBtn').onclick = async () => {
       if (!(await api.openFolder(state.backupRoot))) alert('백업 폴더를 먼저 골라 주세요');

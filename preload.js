@@ -3,6 +3,13 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+// 알림을 받기 시작하고, 그만 받을 때 부르는 함수를 돌려줘요
+function subscribe(channel, cb) {
+  const handler = (e, data) => cb(data);
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+}
+
 contextBridge.exposeInMainWorld('api', {
   // 상태 / 설정 / 도구
   getState: () => ipcRenderer.invoke('get-state'),
@@ -34,4 +41,17 @@ contextBridge.exposeInMainWorld('api', {
   onProgress: (cb) => ipcRenderer.on('progress', (e, data) => cb(data)),
   onTrashProgress: (cb) => ipcRenderer.on('trash-progress', (e, data) => cb(data)),
   onCleanCheckProgress: (cb) => ipcRenderer.on('clean-check-progress', (e, data) => cb(data)),
+
+  // 갤러리 (gallery-main.js). 화면은 파일 경로를 모르고, 이미지는 pvm://thumb/<id> 로만 받아요
+  gallery: {
+    getState: () => ipcRenderer.invoke('gallery:get-state'),
+    listDays: (filter) => ipcRenderer.invoke('gallery:list-days', filter),
+    listFiles: (day, filter) => ipcRenderer.invoke('gallery:list-files', day, filter),
+    getFile: (id) => ipcRenderer.invoke('gallery:get-file', id),
+    rescan: () => ipcRenderer.invoke('gallery:rescan'),
+    openScreen: (name) => ipcRenderer.invoke('gallery:open-screen', name), // 'import' | 'gallery'
+    // 구독을 끊는 함수를 돌려줘요
+    onScanProgress: (cb) => subscribe('gallery:scan-progress', cb),
+    onLibraryChanged: (cb) => subscribe('gallery:library-changed', cb),
+  },
 });

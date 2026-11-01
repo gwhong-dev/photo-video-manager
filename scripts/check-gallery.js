@@ -1347,6 +1347,23 @@ const items = [
       return out;
     },
   },
+  {
+    no: 18,
+    name: '갤러리 화면',
+    async run(env) {
+      // 백업 폴더를 정하지 않은 임시 userData로 띄워요 (진짜 설정과 DB는 읽지 않음). 버튼은 누르지 않아요
+      const { launchCheck } = require('./launch-check');
+      const userData = path.join(env.tmp, 'launch-gallery');
+      fs.mkdirSync(userData, { recursive: true });
+      const r = await launchCheck(path.join(__dirname, '..'), { env: { PVM_USER_DATA: userData } });
+      return [
+        sub('창이 뜨고 정상 종료', r.exitCode === 0 && r.title === '사진/영상 관리 프로그램', `제목 "${r.title}", 종료 코드 ${r.exitCode}`),
+        sub('가져오기 화면 열기 버튼 글자', r.text.includes('가져오기 화면 열기'), `화면 글자: ${String(r.text).slice(0, 120).replace(/\s+/g, ' ')}`),
+        sub('화면 오류 없음', r.errors.length === 0, r.errors.join(' / ')),
+        sub('임시 userData에 library.db가 만들어짐', fs.existsSync(path.join(userData, 'library.db'))),
+      ];
+    },
+  },
 ];
 
 module.exports = { items, fillFakeLibrary };

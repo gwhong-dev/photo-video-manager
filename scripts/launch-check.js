@@ -3,14 +3,32 @@
 //   버튼은 하나도 누르지 않아요.
 //   remote debugging = 프로그램 밖에서 화면 내용을 읽는 통로 (이 PC 안에서만 열림)
 
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
+
+// 앱을 띄우기 전에 main 쪽 파일 문법부터 확인해요.
+//   문법 오류가 있는 채로 Electron을 켜면 "main process 오류" 대화상자가 사용자 화면에 떠서 점검이 멈춰 버려요
+const MAIN_FILES = ['main.js', 'gallery-main.js', 'preload.js'];
+function syntaxErrors(appDir) {
+  const errors = [];
+  for (const f of MAIN_FILES) {
+    const full = path.join(appDir, f);
+    if (!fs.existsSync(full)) continue;
+    const r = spawnSync(process.execPath, ['--check', full], { encoding: 'utf8' });
+    if (r.status !== 0) errors.push(`${f} 문법 오류: ${String(r.stderr || r.error || '').trim().split(/\r?\n/).slice(0, 6).join(' ')}`);
+  }
+  return errors;
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function launchCheck(appDir, { port = 9333, waitMs = 4000 } = {}) {
+// env: 앱에 더 넘길 환경변수 (점검 전용 PVM_USER_DATA, PVM_START_SCREEN). 진짜 사용자 설정을 읽지 않도록 항상 임시 폴더를 넘겨요
+async function launchCheck(appDir, { port = 9333, waitMs = 4000, env = {} } = {}) {
+  const bad = syntaxErrors(appDir);
+  if (bad.length) return { ok: false, title: '', text: '', errors: bad, exitCode: null, mainOut: '' };
   const exe = path.join(appDir, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
-  const child = spawn(exe, ['.', `--remote-debugging-port=${port}`], { cwd: appDir });
+  const child = spawn(exe, ['.', `--remote-debugging-port=${port}`], { cwd: appDir, env: { ...process.env, ...env } });
   let mainOut = '';
   child.stdout.on('data', (d) => (mainOut += d));
   child.stderr.on('data', (d) => (mainOut += d));
