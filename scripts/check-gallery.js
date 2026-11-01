@@ -260,7 +260,7 @@ const items = [
       // 14h 깨진 게 아닌 오류(다른 연결이 쓰는 중 등)는 멀쩡한 DB의 이름을 바꾸지 않고 오류를 던짐
       {
         const { DatabaseSync } = require('node:sqlite');
-        const { openDb, isCorruptionError } = require('../lib/db');
+        const { openDb, isCorruptionError, structureErrorOf } = require('../lib/db');
         const file = newDbPath(env, 'locked');
         fs.mkdirSync(path.dirname(file), { recursive: true });
         const first = openDb(file);
@@ -297,6 +297,15 @@ const items = [
         const cls = (code) => isCorruptionError(Object.assign(new Error('x'), { errcode: code }));
         const truthy = [26, 11, 26 | (1 << 8), 11 | (3 << 8)].every(cls);
         const falsy = [5, 6, 3, 8, 13, 14, 10, 1, 5 | (1 << 8), 13 | (2 << 8)].every((c) => !cls(c));
+        // 칸 확인 단계의 오류: no such column(1)만 구조 오류, 잠김과 입출력 오류는 그대로 돌려줘서 이름을 바꾸지 않음
+        const probe = (code) => {
+          const err = Object.assign(new Error('probe'), { errcode: code });
+          const got = structureErrorOf(err);
+          return { same: got === err, broken: isCorruptionError(got) };
+        };
+        const notBroken = [5, 6, 10, 13, 14, 5 | (1 << 8), 10 | (2 << 8)].every((c) => probe(c).same && !probe(c).broken);
+        const broken = [1, 1 | (2 << 8)].every((c) => !probe(c).same && probe(c).broken);
+        out.push(sub('칸 확인 중 잠김, 입출력 오류는 구조 오류로 바꾸지 않음', notBroken && broken && structureErrorOf(new Error('코드 없음')).message === '코드 없음', JSON.stringify({ notBroken, broken })));
         out.push(sub('오류 분류: 깨짐만 이름 바꾸기 대상', truthy && falsy && !isCorruptionError(new Error('코드 없음')) && !isCorruptionError(null)));
       }
 
