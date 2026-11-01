@@ -9,7 +9,7 @@
 // 모양: registerScheme(protocol)  — app.whenReady 전에 한 번 (pvm:// 를 안전한 주소로 등록)
 //       setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir,
 //                      loadScreen, getJobPending, isPlanning })
-//         → { onWindowReady(), onBatchDone(), onRootChanged(), close() }
+//         → { onWindowReady(), onBatchDone(), onRootChanged(), onToolsChanged(), close() }
 //   loadScreen(name): 'import' | 'gallery' 화면으로 창을 바꿔요 (main.js가 해요)
 //   getJobPending(): 이어할 가져오기 작업이 있는지
 //   isPlanning(): 미리보기를 만드는 중인지 (중이면 화면 전환을 막아요)
@@ -58,7 +58,12 @@ function cleanFilter(f) {
 
 function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning }) {
   const base = typeof userDir === 'function' ? userDir() : userDir;
-  const rootNow = () => String((getSettings() && getSettings().backupRoot) || '').trim();
+  // 백업 폴더 경로. 끝의 \ 나 / 가 달라도 같은 폴더로 보게 path.resolve 로 한 번만 다듬어요 (대소문자는 그대로 둬요).
+  //   DB의 root 열쇠가 되니 모든 곳이 이 함수 하나를 써요
+  const rootNow = () => {
+    const raw = String((getSettings() && getSettings().backupRoot) || '').trim();
+    return raw ? path.resolve(raw) : '';
+  };
   const busy = () => {
     try {
       return !!isRunning();
@@ -272,6 +277,12 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       send('gallery:library-changed');
       const root = rootNow();
       if (root) runScan(root, {}).catch((e) => errorLog('백업 폴더 바뀐 뒤 읽기', e));
+    },
+    // 도구(exiftool)를 새로 찾아 바뀌었으면: 옛 도구로 읽다 오류로 끝났거나 'exiftool 없음'이던 읽기를 한 번 다시 해요
+    //   읽는 중이면 library가 이어서 한 번 더 읽도록 합쳐 줘요
+    onToolsChanged() {
+      const root = rootNow();
+      if (root) runScan(root, { changed: true }).catch((e) => errorLog('도구 다시 찾은 뒤 읽기', e));
     },
     // 프로그램을 끌 때: 진행 중인 FFmpeg를 기다리지 않고 멈추라고만 하고 DB를 닫아요
     close() {

@@ -9,6 +9,9 @@
     "check": "vite build && node scripts/check.js",
     "postinstall": "node node_modules/electron/install.js"
   },
+  "engines": {
+    "node": ">=22.5"
+  },
   "keywords": [
     "electron",
     "photo",

@@ -47,6 +47,8 @@ npm install
 npm start
 ```
 
+- Node.js 22.5 이상이 필요해요 (`package.json`의 `engines`). 갤러리 목록 파일(SQLite)을 Node에 들어 있는 기능으로 쓰기 때문이에요
+
 - `npm start`는 화면(갤러리)을 먼저 만든 뒤(`vite build`) 앱을 켜요. 화면을 고친 뒤에는 `npm start`로 다시 켜면 돼요
 - 더블클릭으로 하려면 `git pull` 한 뒤 `scripts\start.bat` (설치와 `npm start`를 한 번에 해요)
 - 처음 켜면 갤러리가 백업 폴더를 읽고 썸네일을 만들어서 오래 걸려요 (`docs/실사용-테스트.md` 8절)

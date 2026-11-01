@@ -54,10 +54,28 @@ function saveSettings() {
 }
 
 // ---------- 도구 찾기 ----------
+// 가져오기 실행·미리보기 중에는 쓰던 exiftool을 닫으면 남은 파일이 전부 실패로 기록돼서 도구를 새로 찾지 않아요
+const TOOLS_BUSY_MSG = '가져오기 실행이나 미리보기가 끝난 뒤에 도구를 다시 찾을 수 있어요';
+const toolsBusy = () => running || planning;
+
 async function refreshTools() {
-  tools = await detectTools(settings, __dirname);
-  if (et) et.close();
+  const found = await detectTools(settings, __dirname);
+  // 찾는 동안(몇백 ms) 작업이 시작됐을 수 있어서, 바꾸기 직전에 한 번 더 확인해요
+  if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG);
+  tools = found;
+  const old = et;
+  // 같은 exiftool이면 켜 둔 것을 그대로 써요 (읽기 중인 갤러리를 방해하지 않게)
+  if (old && !old.closed && tools.exiftool.ok && old.exePath === tools.exiftool.path) return tools;
+  if (old) old.close();
   et = tools.exiftool.ok ? new ExifTool(tools.exiftool.path) : null;
+  // 갤러리 읽기는 옛 exiftool이 닫히면 오류로 끝나거나(읽는 중), 'exiftool 없음'으로 끝났을 수 있어서 한 번 다시 읽어요
+  if (gallery) {
+    try {
+      gallery.onToolsChanged();
+    } catch (err) {
+      try { logger.newLog('gallery-error', `onToolsChanged 오류: ${err && err.message ? err.message : err}`); } catch (e2) { /* 로그 실패는 무시 */ }
+    }
+  }
   return tools;
 }
 
@@ -192,16 +210,21 @@ ipcMain.handle('get-state', async () => {
 });
 
 // 도구 다시 찾기
-ipcMain.handle('check-tools', async () => refreshTools());
+ipcMain.handle('check-tools', async () => {
+  if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG);
+  return refreshTools();
+});
 
 // 도구 위치 직접 고르기 (exe 파일 선택)
 ipcMain.handle('pick-tool', async (e, name) => {
+  if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG);
   const r = await dialog.showOpenDialog(win, {
     title: `${name} 실행 파일 선택`,
     properties: ['openFile'],
     filters: process.platform === 'win32' ? [{ name: '실행 파일', extensions: ['exe'] }] : [],
   });
   if (r.canceled) return tools;
+  if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG); // 창을 고르는 사이에 작업이 시작됐을 수 있어요
   settings[name] = r.filePaths[0];
   saveSettings();
   return refreshTools();

@@ -1034,12 +1034,12 @@ const items = [
           out.push(sub('손상 영상: failed, 다음 파일은 정상', bp === null && state(db, idOf(broken)) === 'failed' && !!np && state(db, idOf(next)) === 'ready', `손상 ${state(db, idOf(broken))}, 다음 ${state(db, idOf(next))}`));
         }
 
-        // 17d 0바이트, 사진이 아닌 파일, 폴더에서 사라진 파일: failed. request는 거절되지 않고 null
+        // 17d 0바이트, 사진이 아닌 파일: failed / 폴더에서 사라진 파일: 상태 그대로(none). request는 거절되지 않고 null
         let threw = false;
         const results = await Promise.all([empty, fake, gone].map((f) => thumbs.request(idOf(f)).catch(() => { threw = true; return 'error'; })));
         out.push(sub('0바이트 파일: failed', results[0] === null && state(db, idOf(empty)) === 'failed', `${results[0]}`));
         out.push(sub('사진이 아닌 파일: failed', results[1] === null && state(db, idOf(fake)) === 'failed'));
-        out.push(sub('폴더에서 사라진 파일: failed, request는 거절되지 않음', results[2] === null && state(db, idOf(gone)) === 'failed' && !threw));
+        out.push(sub('폴더에서 사라진 파일: null이고 상태는 none 그대로 (failed로 기록하지 않음), request는 거절되지 않음', results[2] === null && state(db, idOf(gone)) === 'none' && !threw, `${results[2]}, ${state(db, idOf(gone))}`));
         out.push(sub('없는 id는 null', (await thumbs.request(999999)) === null));
 
         // 17e 다른 형식(bmp): sharp 또는 ImageMagick으로 만들어짐
@@ -1066,11 +1066,12 @@ const items = [
 
         // 17g 실패 다시 시도
         {
-          const failedIds = [empty, fake, gone].map(idOf);
+          const failedIds = [empty, fake].map(idOf);
+          const failedBefore = failedIds.map((id) => state(db, id));
           thumbs.retryFailed(src);
           const states = failedIds.map((id) => state(db, id));
           const queued = db.nextThumbJobs(src, 100).map((j) => j.id);
-          out.push(sub('실패 다시 시도: failed였던 파일이 none으로', states.every((x) => x === 'none') && failedIds.every((id) => queued.includes(id)), states.join(',')));
+          out.push(sub('실패 다시 시도: failed였던 파일이 none으로', failedBefore.every((x) => x === 'failed') && states.every((x) => x === 'none') && failedIds.every((id) => queued.includes(id)), states.join(',')));
         }
 
         // 17h 패널 미리보기: 사진은 긴 변 1200px, 저장하지 않음. 영상은 썸네일 파일 내용
@@ -1357,6 +1358,90 @@ const items = [
         out.push(sub('상대 경로 파일의 미리보기는 null', reachable && pv === null, `읽을 수 있는 상태 ${reachable}, 결과 ${pv === null ? 'null' : '있음'}`));
       });
 
+      // 17r 원본을 읽을 수 없으면(연결 끊김, 파일 없음) failed로 기록하지 않고 none으로 둠. 깨진 파일은 그대로 failed
+      //     (a) 만드는 도중 원본이 사라짐 (b) 백업 폴더 이름이 바뀜 → 백그라운드가 멈추고 나머지는 none, 되돌린 뒤 새 회차가 끝까지 만듦
+      //     (c) 없는 파일이 앞쪽에 많아도 뒤의 파일까지 만들고 끝남 (끝없이 돌지 않음)
+      await withDb(env, 'thumbs-disconnect', async (db) => {
+        // (a)
+        const dirA = path.join(base, 'disc-a');
+        fs.mkdirSync(dirA, { recursive: true });
+        const fa = path.join(dirA, 'a.jpg');
+        const fb = path.join(dirA, 'b.jpg');
+        fs.writeFileSync(fa, 'x');
+        fs.writeFileSync(fb, 'x');
+        db.upsertFiles([rowOf(fa, dirA), rowOf(fb, dirA)]);
+        const ida = fileNamed(db, dirA, DAY, 'a.jpg').id;
+        const idb = fileNamed(db, dirA, DAY, 'b.jpg').id;
+        const makerA = async ({ file, tmpPath }) => {
+          if (file.name === 'a.jpg') {
+            fs.rmSync(file.path); // 만드는 사이에 USB를 뺀 것처럼
+            throw new Error('읽는 도중 연결이 끊김');
+          }
+          throw new Error('이 파일은 깨져 있음'); // 읽을 수 있는데 만들지 못함
+        };
+        const tA = createThumbs({ db, thumbDir: path.join(base, 'thumbs-disc-a'), getTools: () => tools, isBusy: () => false, logger: null, maker: makerA });
+        const ra = await tA.request(ida);
+        const rb = await tA.request(idb);
+        await tA.stop();
+        out.push(sub('만들다가 원본이 사라지면 null이고 none 그대로, 읽을 수 있는 깨진 파일은 failed', ra === null && state(db, ida) === 'none' && rb === null && state(db, idb) === 'failed', `사라짐 ${state(db, ida)}, 깨짐 ${state(db, idb)}`));
+
+        // (b)
+        const dirB = path.join(base, 'disc-b');
+        const awayB = path.join(base, 'disc-b-away');
+        fs.mkdirSync(dirB, { recursive: true });
+        const filesB = [];
+        for (let i = 1; i <= 50; i++) {
+          const f = path.join(dirB, 'd' + String(i).padStart(2, '0') + '.jpg');
+          fs.writeFileSync(f, 'x');
+          filesB.push(f);
+        }
+        db.upsertFiles(filesB.map((f) => rowOf(f, dirB)));
+        let madeB = 0;
+        const makerB = async ({ tmpPath }) => {
+          const mine = ++madeB; // 동시에 2개가 돌아서, 내 번호를 따로 기억해요
+          await sleep(10);
+          fs.writeFileSync(tmpPath, 'x');
+          if (mine === 5) fs.renameSync(dirB, awayB); // 폴더 이름이 바뀜 = 연결이 끊긴 것과 같아요
+        };
+        const logDirB = path.join(base, 'logs-disc-b');
+        const tB = createThumbs({ db, thumbDir: path.join(base, 'thumbs-disc-b'), getTools: () => tools, isBusy: () => false, logger: createLogger(logDirB), maker: makerB });
+        const endedB = await Promise.race([tB.startBackground(dirB).then(() => true), sleep(15000).then(() => false)]);
+        const statesB = db.listFiles(dirB, DAY, ALL).map((f) => f.thumbState);
+        const readyB = statesB.filter((s) => s === 'ready').length;
+        const noneB = statesB.filter((s) => s === 'none').length;
+        out.push(sub('폴더가 사라지면 백그라운드가 멈추고, 남은 파일은 모두 none (failed 없음)', endedB && fs.existsSync(awayB) && readyB >= 5 && readyB < 50 && noneB === 50 - readyB && !statesB.includes('failed'), `끝남 ${endedB}, ready ${readyB}, none ${noneB}`));
+        const bgLogs = fs.existsSync(logDirB) ? fs.readdirSync(logDirB).filter((n) => n.startsWith('gallery-thumbs_')) : [];
+        const bgLogText = bgLogs.map((n) => fs.readFileSync(path.join(logDirB, n), 'utf8')).join('\n');
+        out.push(sub('멈춘 까닭이 로그에 남음 (백업 폴더를 열 수 없음), 건너뜀 개수도 기록', bgLogText.includes('백업 폴더를 열 수 없어') && bgLogText.includes('백그라운드 끝'), bgLogText.split('\n').slice(-2).join(' / ')));
+        const callsAfterStop = madeB;
+        await sleep(200);
+        out.push(sub('멈춘 뒤에는 더 만들지 않음', madeB === callsAfterStop));
+        fs.renameSync(awayB, dirB); // 다시 연결
+        const endedB2 = await Promise.race([tB.startBackground(dirB).then(() => true), sleep(15000).then(() => false)]);
+        const statesB2 = db.listFiles(dirB, DAY, ALL).map((f) => f.thumbState);
+        out.push(sub('되돌린 뒤 새 회차가 나머지를 끝까지 만듦', endedB2 && statesB2.every((s) => s === 'ready'), `끝남 ${endedB2}, ready ${statesB2.filter((s) => s === 'ready').length}/50`));
+        await tB.stop();
+
+        // (c) 앞쪽 25개는 DB에는 있는데 폴더에서 사라진 파일 (배치 20개보다 많음), 뒤쪽 5개는 정상
+        const dirC = path.join(base, 'disc-c');
+        fs.mkdirSync(dirC, { recursive: true });
+        const filesC = [];
+        for (let i = 1; i <= 30; i++) {
+          const f = path.join(dirC, 'c' + String(i).padStart(2, '0') + '.jpg');
+          fs.writeFileSync(f, 'x');
+          filesC.push(f);
+        }
+        db.upsertFiles(filesC.map((f) => rowOf(f, dirC)));
+        const idsC = db.nextThumbJobs(dirC, 100).map((j) => j.id); // 대기열 순서 그대로
+        for (const j of db.nextThumbJobs(dirC, 25)) fs.rmSync(j.path);
+        const makerC = async ({ tmpPath }) => { fs.writeFileSync(tmpPath, 'x'); };
+        const tC = createThumbs({ db, thumbDir: path.join(base, 'thumbs-disc-c'), getTools: () => tools, isBusy: () => false, logger: null, maker: makerC });
+        const endedC = await Promise.race([tC.startBackground(dirC).then(() => true), sleep(15000).then(() => false)]);
+        await tC.stop();
+        const statesC = idsC.map((id) => state(db, id));
+        out.push(sub('없는 파일이 20개보다 많이 앞에 있어도 뒤의 파일까지 만들고 끝남, 없는 파일은 none', endedC && statesC.filter((s) => s === 'ready').length === 5 && statesC.filter((s) => s === 'none').length === 25, `끝남 ${endedC}, ${statesC.join(',').slice(0, 80)}`));
+      });
+
       // 17o 사진 폴더에는 아무것도 생기지 않음 (썸네일은 thumbs 폴더에만)
       const afterList = listAll(src);
       out.push(sub('사진 폴더에 파일 안 생김 (전후 파일 목록 같음)', JSON.stringify(before) === JSON.stringify(afterList) && !path.resolve(thumbDir).startsWith(path.resolve(src) + path.sep), `${before.length}개, ${afterList.length}개`));
@@ -1506,7 +1591,22 @@ const items = [
         out.push(sub('DB를 못 열어도 시작: dbError 알림, 목록은 비어 있고 화면 전환은 됨', typeof s4.dbError === 'string' && s4.dbError !== '' && Array.isArray(days4) && days4.length === 0 && re4.status === 'no-db' && nav4 === true, JSON.stringify({ dbError: s4.dbError, re4 })));
         out.push(sub('열 수 없는 DB 폴더를 이름 바꿔 치우지 않음', fs.statSync(path.join(base, 'ud4', 'library.db')).isDirectory()));
 
-        for (const x of [f, f2, f3, f4]) x.g.close();
+        // 백업 폴더 경로는 끝의 구분자가 달라도 같은 폴더 (대소문자는 그대로 둠)
+        const f5 = makeFake(path.join(base, 'ud5'), { backupRoot: root + path.sep });
+        const f6 = makeFake(path.join(base, 'ud6'), { backupRoot: '  ' + root.split(path.sep).join('/') + '/ ' });
+        const s5 = await f5.call('gallery:get-state');
+        const s6 = await f6.call('gallery:get-state');
+        const f7 = makeFake(path.join(base, 'ud7'), { backupRoot: '' });
+        const s7 = await f7.call('gallery:get-state');
+        out.push(sub('백업 폴더 경로 다듬기: 끝의 역슬래시나 / 가 있어도 같은 값, 비어 있으면 빈 값', s5.root === path.resolve(root) && s6.root === path.resolve(root) && s5.root === st.root && s7.root === '', `${s5.root} | ${s6.root} | "${s7.root}"`));
+
+        // 도구를 새로 찾아 바뀌면 changed 로 한 번 다시 읽음
+        scanCalls.length = 0;
+        f.g.onToolsChanged();
+        await sleep(150);
+        out.push(sub('도구를 새로 찾으면 scan(root, { changed: true })', scanCalls.some((c) => c.root === root && c.o && c.o.changed === true), JSON.stringify(scanCalls)));
+
+        for (const x of [f, f2, f3, f4, f5, f6, f7]) x.g.close();
       }
 
       // 18e 샘플 결과 복사본을 백업 폴더로 정한 임시 userData로 띄워요 (진짜 설정과 사진은 읽지 않음).
@@ -1526,6 +1626,106 @@ const items = [
         out.push(sub('샘플 복사본을 읽은 갤러리에 날짜 10.28이 보임', r2.text.includes('10.28'), `화면 글자: ${String(r2.text).slice(0, 160).replace(/\s+/g, ' ')}`));
         out.push(sub('검색창 문구 "파일 이름, 태그, 날짜 검색"', r2.probed === '파일 이름, 태그, 날짜 검색', `문구 "${r2.probed}"`));
         out.push(sub('갤러리 화면 오류 없음, 정상 종료', r2.errors.length === 0 && r2.exitCode === 0 && !r2.text.includes('불러오지 못했어요'), `${r2.errors.join(' / ')} 종료 코드 ${r2.exitCode}`));
+      }
+
+      // 18f main.js의 도구 다시 찾기 막기: 가짜 electron으로 진짜 main.js를 불러와요 (창과 대화상자는 가짜, 파일은 임시 폴더만).
+      //     미리보기 중(planning), 실행·정리 중(running)에는 check-tools, pick-tool이 한국어 오류로 거절되고 대화상자도 안 열려야 해요
+      {
+        const Module = require('module');
+        const mainPath = path.join(APP, 'main.js');
+        const ud = path.join(env.tmp, 'main-fake-ud');
+        const srcDir = path.join(env.tmp, 'main-fake-src');
+        const destDir = path.join(env.tmp, 'main-fake-dest');
+        for (const d of [ud, srcDir, destDir]) fs.mkdirSync(d, { recursive: true });
+        fs.copyFileSync(path.join(APP, 'test', 'samples', 'auto', 'IMG_0101.jpg'), path.join(srcDir, 'IMG_0101.jpg'));
+        fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: destDir }), 'utf8');
+
+        const handlers = new Map();
+        const appEvents = new Map();
+        let dialogCalls = 0;
+        let readyRun = null;
+        const win = {
+          webContents: { once() {}, send() {} },
+          on() {},
+          loadFile: async () => {},
+          isDestroyed: () => false,
+        };
+        const fakeElectron = {
+          app: {
+            setPath() {},
+            getPath: () => ud,
+            requestSingleInstanceLock: () => true,
+            on: (ev, fn) => appEvents.set(ev, fn),
+            quit() {},
+            whenReady: () => ({ then: (cb) => { readyRun = Promise.resolve().then(cb); return readyRun; } }),
+          },
+          BrowserWindow: function FakeWindow() { return win; },
+          ipcMain: { handle: (ch, fn) => handlers.set(ch, fn) },
+          dialog: { showOpenDialog: async () => { dialogCalls++; return { canceled: true, filePaths: [] }; }, showMessageBoxSync: () => 1, showMessageBox: async () => ({}) },
+          shell: { trashItem: async () => {}, openPath: async () => '' },
+          protocol: { registerSchemesAsPrivileged() {}, handle() {} },
+        };
+        const origLoad = Module._load;
+        const listenersBefore = process.listeners('uncaughtException');
+        const envBefore = process.env.PVM_USER_DATA;
+        Module._load = function (request, ...rest) {
+          return request === 'electron' ? fakeElectron : origLoad.call(this, request, ...rest);
+        };
+        process.env.PVM_USER_DATA = ud;
+        let loadError = '';
+        try {
+          delete require.cache[mainPath];
+          require(mainPath);
+          await readyRun; // 도구 찾기, 갤러리 연결까지
+        } catch (e) {
+          loadError = e && e.message ? e.message : String(e);
+        } finally {
+          Module._load = origLoad;
+          if (envBefore === undefined) delete process.env.PVM_USER_DATA;
+          else process.env.PVM_USER_DATA = envBefore;
+          for (const l of process.listeners('uncaughtException')) if (!listenersBefore.includes(l)) process.removeListener('uncaughtException', l); // main.js가 점검용으로 붙인 종료 처리는 이 점검에 필요 없어요
+        }
+        out.push(sub('가짜 electron으로 main.js를 불러와 핸들러가 등록됨', loadError === '' && handlers.has('check-tools') && handlers.has('pick-tool') && handlers.has('make-plan') && handlers.has('trash-info'), loadError || [...handlers.keys()].join(',').slice(0, 80)));
+
+        if (loadError === '') {
+          const call = (ch, ...args) => handlers.get(ch)({}, ...args);
+          const errOf = (pr) => pr.then(() => null, (e) => (e && e.message ? e.message : String(e)));
+          const korean = (m) => typeof m === 'string' && /[가-힣]/.test(m) && m.includes('끝난 뒤');
+
+          // 아무 일도 안 할 때는 다시 찾기가 됨
+          const t0 = await call('check-tools');
+          out.push(sub('쉬는 중에는 check-tools가 도구 정보를 돌려줌', !!t0 && !!t0.exiftool && t0.exiftool.ok === true));
+
+          // 미리보기 중 (make-plan은 planning = true 를 먼저 켜고 기다려요)
+          const planning = call('make-plan', { source: srcDir, backupRoot: destDir, includeSub: true });
+          const dialogBefore = dialogCalls;
+          const [mPlan1, mPlan2] = await Promise.all([errOf(call('check-tools')), errOf(call('pick-tool', 'exiftool'))]); // 미리보기가 끝나기 전에 둘 다 보내요
+          const planResult = await errOf(planning);
+          out.push(sub('미리보기 중 check-tools는 한국어 오류로 거절', korean(mPlan1), `메시지 ${mPlan1}`));
+          out.push(sub('미리보기 중 pick-tool은 거절되고 파일 선택창도 안 열림', korean(mPlan2) && dialogCalls === dialogBefore, `메시지 ${mPlan2}, 선택창 ${dialogCalls - dialogBefore}번`));
+          out.push(sub('미리보기는 막힘 없이 끝남', planResult === null, `${planResult}`));
+
+          // 실행·정리 중 (trash-info 는 running = true 를 먼저 켜요. 작업이 없어도 켜졌다 꺼져요)
+          //   trash-info 가 끝나기 전에 두 부탁을 모두 보내야 해서, 기다리지 않고 한꺼번에 보내요
+          const dialogBefore2 = dialogCalls;
+          const cleaning = call('trash-info');
+          const pending = [errOf(call('check-tools')), errOf(call('pick-tool', 'ffmpeg'))];
+          const [mRun1, mRun2] = await Promise.all(pending);
+          await errOf(cleaning);
+          out.push(sub('실행 중 check-tools는 한국어 오류로 거절', korean(mRun1), `메시지 ${mRun1}`));
+          out.push(sub('실행 중 pick-tool은 거절되고 파일 선택창도 안 열림', korean(mRun2) && dialogCalls === dialogBefore2, `메시지 ${mRun2}`));
+
+          // 끝난 뒤에는 다시 됨
+          const t1 = await errOf(call('check-tools'));
+          out.push(sub('작업이 끝나면 다시 찾기가 다시 됨', t1 === null, `${t1}`));
+          const t2 = await errOf(call('pick-tool', 'exiftool'));
+          out.push(sub('작업이 끝나면 pick-tool도 다시 됨 (선택창을 취소하면 그대로)', t2 === null && dialogCalls === dialogBefore2 + 1, `${t2}`));
+        }
+        // 종료 처리 (갤러리 DB, exiftool 끄기)
+        try {
+          if (appEvents.has('will-quit')) appEvents.get('will-quit')();
+        } catch (e) { /* 끄는 중 오류는 무시 */ }
+        delete require.cache[mainPath];
       }
 
       return out;

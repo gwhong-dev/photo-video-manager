@@ -87,7 +87,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .menu-count.warn { color: var(--warn); }
 .menu-note { margin-left: auto; font-size: 11px; color: var(--sub); white-space: nowrap; }
 .side-heading { margin: 22px 10px 6px; font-size: 12px; font-weight: 400; color: var(--faint); }
-.tag-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.tag-list { --scroll-bg: var(--sidebar); flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
 .tag-row { padding: 6px 10px; font-size: 13px; }
 .side-foot { flex: none; border-top: 1px solid var(--line); margin-top: auto; padding-top: 8px; }
 .tag-list + .side-foot { margin-top: 8px; }
@@ -165,9 +165,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ---------- 날짜별 격자 ---------- */
 .grid-scroll { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; }
-.grid-scroll::-webkit-scrollbar { width: 12px; }
-.grid-scroll::-webkit-scrollbar-thumb { background: var(--line); border: 3px solid var(--bg); border-radius: 6px; }
-.grid-scroll::-webkit-scrollbar-track { background: transparent; }
+/* 스크롤바는 모든 스크롤 영역에 같은 어두운 모양 (바탕색은 영역마다 --scroll-bg 로 맞춰요) */
+::-webkit-scrollbar { width: 12px; }
+::-webkit-scrollbar-thumb { background: var(--line); border: 3px solid var(--scroll-bg, var(--bg)); border-radius: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
 .grid-inner { position: relative; width: 100%; }
 .day-row { position: absolute; top: 0; left: 0; width: 100%; padding: 0 24px; display: flex; gap: 16px; }
 .date-col { width: var(--date-col); flex: none; }
@@ -216,7 +217,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 
 /* ---------- 오른쪽 패널 ---------- */
-.panel { width: var(--panel-w); flex: none; background: var(--panel); padding: 20px; overflow-y: auto; }
+.panel { --scroll-bg: var(--panel); width: var(--panel-w); flex: none; background: var(--panel); padding: 20px; overflow-y: auto; }
 .panel-hint { margin: 0; color: var(--faint); }
 .preview {
   position: relative;
