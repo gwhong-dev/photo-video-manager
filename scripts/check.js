@@ -605,6 +605,69 @@ const ITEMS = [
         out.push(sub('12o 원본 확인 진행 표시 (파일마다 n/전체)', calls.length === total && last.done === total && last.total === total, `알림 ${calls.length}번, 마지막 ${last.done}/${last.total} (후보 ${total})`));
       }
 
+      // 12p 배너 개수 = 확인 창 개수: 크기가 달라서 정리되지 않을 중복은 빠른 확인에서도 빠짐 (실사용 재테스트 발견)
+      if (!cleaner || !cleaner.cleanCandidates) {
+        out.push(missing('12p 배너 개수와 확인 창 개수가 같음'));
+      } else {
+        const c = makeCase('12p');
+        const quick = cleaner.cleanCandidates(c.job).map((it) => it.i).sort().join(',');
+        const strict = (await cleaner.cleanTargets(c.job)).map((it) => it.i).sort().join(',');
+        out.push(sub('12p 배너 개수와 확인 창 개수가 같음', quick === strict, `배너 ${quick} / 확인 창 ${strict}`));
+      }
+
+      // 12q 휴지통 경고는 실제 설정으로 계산, 설정을 모를 때만 드라이브의 5% (실사용 재테스트 발견)
+      if (!cleaner || !cleaner.cleanInfo) {
+        out.push(missing('12q 휴지통 경고를 실제 설정으로 계산'));
+      } else {
+        const c = makeCase('12q');
+        const targets = [{ ...c.job.items[0], size: 100 }];
+        const big = () => ({ blocks: 1e6, bsize: 1 }); // 5% = 50,000
+        const small = () => ({ blocks: 1000, bsize: 1 }); // 5% = 50
+        const warn = async (recycleOf, statfs) => (await cleaner.cleanInfo(c.job, targets, { driveKindOf: async () => 'fixed', recycleOf, statfs })).warnings;
+        const bigger = await warn(async () => ({ maxBytes: 300, nuke: false }), small);
+        out.push(sub('12q 설정이 5%보다 크면 설정 안에 들 때 경고 없음', bigger.length === 0, bigger.join(' / ')));
+        const smaller = await warn(async () => ({ maxBytes: 50, nuke: false }), big);
+        out.push(sub('12q 설정이 5%보다 작으면 설정을 넘을 때 경고', smaller.length === 1 && smaller[0].includes('설정'), smaller.join(' / ') || '경고 없음'));
+        const unknown = await warn(async () => null, small);
+        out.push(sub('12q 설정을 모르면 5%로 계산', unknown.length === 1 && unknown[0].includes('약 5%'), unknown.join(' / ') || '경고 없음'));
+      }
+
+      // 12r 휴지통이 "바로 제거"로 설정된 드라이브 → 휴지통에 보내지 않고 이동 (영구 삭제 방지)
+      if (!cleaner || !cleaner.cleanOriginals) {
+        out.push(missing('12r 바로 제거 설정 → 이동'));
+      } else {
+        const c = makeCase('12r');
+        const trashed = [];
+        const nukeOf = async () => ({ maxBytes: 300, nuke: true });
+        const targets = [c.job.items[0], c.job.items[1]];
+        const info = await cleaner.cleanInfo(c.job, targets, { driveKindOf: async () => 'fixed', recycleOf: nukeOf, statfs: () => ({ blocks: 1e6, bsize: 1 }) });
+        out.push(sub('12r 바로 제거 설정 → 확인 창에 이동으로 표시', info.drives[0].method === 'move' && info.warnings.some((w) => w.includes('바로 제거')), `${info.drives[0].method} / ${info.warnings.join(' / ')}`));
+        const r = await cleaner.cleanOriginals({ job: c.job, store: c.store, targets, logger: c.logger, trash: async (p) => trashed.push(p), driveKindOf: async () => 'fixed', recycleOf: nukeOf });
+        const movedOk = targets.every((it) => !fs.existsSync(it.src) && it.movedTo && fs.existsSync(it.movedTo));
+        out.push(sub('12r 바로 제거 설정 → 휴지통 안 쓰고 이동', trashed.length === 0 && r.moved === 2 && movedOk, `휴지통 ${trashed.length}번, 이동 ${r.moved}개`));
+      }
+
+      // 12s 드라이브별 휴지통 설정 찾기 (볼륨 번호로 레지스트리 값과 연결)
+      if (!platform.resolveRecycle) {
+        out.push(missing('12s 드라이브별 휴지통 설정 찾기'));
+      } else {
+        const tables = {
+          volumes: [{ Name: 'C:\\', DriveType: 3, DeviceID: '\\\\?\\Volume{AAAA-1}\\' }, { Name: 'E:\\', DriveType: 3, DeviceID: '\\\\?\\Volume{bbbb-2}\\' }, { Name: 'F:\\', DriveType: 3, DeviceID: '\\\\?\\Volume{cccc-3}\\' }],
+          recycle: [{ id: '{aaaa-1}', max: 30000, nuke: 0 }, { id: '{BBBB-2}', max: 100, nuke: 1 }],
+        };
+        const c = platform.resolveRecycle('C:\\photos\\a.jpg', tables);
+        const e = platform.resolveRecycle('E:\\a.jpg', tables);
+        const f = platform.resolveRecycle('F:\\a.jpg', tables);
+        const ok = c && c.maxBytes === 30000 * 1024 * 1024 && c.nuke === false && e && e.nuke === true && f === null && platform.resolveRecycle('C:\\a.jpg', null) === null;
+        out.push(sub('12s 드라이브별 휴지통 설정 찾기', !!ok, JSON.stringify({ c, e, f })));
+        if (process.platform !== 'win32') {
+          out.push(skip('12s 진짜 휴지통 설정 읽기', 'Windows 아님'));
+        } else {
+          const real = await platform.createDriveKindOf().recycleOf(os.tmpdir());
+          out.push(sub('12s 진짜 휴지통 설정 읽기 (임시 폴더)', real === null || typeof real.maxBytes === 'number' || real.maxBytes === null, JSON.stringify(real)));
+        }
+      }
+
       // 12f 드라이브 종류를 모름 → 이동 (휴지통 안 씀)
       if (!cleaner || !cleaner.cleanOriginals) {
         out.push(missing('12f 드라이브 종류 모름 → 이동'));
