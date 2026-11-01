@@ -75,7 +75,10 @@ export default function App() {
     return () => {
       offScan();
       offChanged();
-      if (t.timer) clearTimeout(t.timer);
+      if (t.timer) {
+        clearTimeout(t.timer);
+        t.timer = null;
+      }
     };
   }, [refresh, notifyChanged]);
 
@@ -89,21 +92,26 @@ export default function App() {
   // ---------- 날짜 목록 ----------
   const hasList = !!(state && state.root && !state.dbError);
   const filterKey = JSON.stringify(filter);
+  // 요청 번호: 더 새 요청의 응답이 이미 화면에 들어갔을 때만 옛 응답을 버려요
+  //   (읽는 동안 0.5초마다 새 요청이 시작돼도, 느린 응답이 계속 버려져 화면이 굶지 않게)
+  const daysSeq = useRef({ started: 0, applied: 0 });
   useEffect(() => {
+    const seq = daysSeq.current;
     if (!hasList) {
+      seq.applied = ++seq.started; // 이미 나간 요청의 응답은 모두 버려요
       setView(null);
-      return undefined;
+      return;
     }
-    let stale = false; // 그 사이 필터가 또 바뀌었으면 이 응답은 버려요
+    const mine = ++seq.started;
     api.listDays(filter).then(
       (days) => {
-        if (stale) return;
+        if (mine < seq.applied) return;
+        seq.applied = mine;
         setView({ key: filterKey, filter, days, gen });
         setDaysError('');
       },
-      (e) => { if (!stale) setDaysError(errorText(e)); },
+      (e) => { if (mine >= seq.applied) setDaysError(errorText(e)); },
     );
-    return () => { stale = true; };
   }, [hasList, filterKey, gen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- 버튼들 ----------

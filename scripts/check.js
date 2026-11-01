@@ -852,7 +852,6 @@ function manualReport(p) {
 }
 
 // ---------- 실행 ----------
-const ONLY = process.env.PVM_CHECK_ONLY ? process.env.PVM_CHECK_ONLY.split(',').map(Number) : null;
 (async () => {
   const ICON = { ok: '✅', fail: '❌', skip: '⏭' };
   const tmp = path.join(os.tmpdir(), `pvm-check-${stamp()}`);
@@ -878,7 +877,6 @@ const ONLY = process.env.PVM_CHECK_ONLY ? process.env.PVM_CHECK_ONLY.split(',').
     failed = 0;
     env.full = await pipeline(path.join(tmp, 'full'), env);
     for (const item of ITEMS) {
-      if (ONLY && !ONLY.includes(item.no)) continue; // 개발 중에 일부 항목만 돌릴 때: PVM_CHECK_ONLY=18,19 (평소 점검은 전부 돌려요)
       let subs;
       try {
         subs = await item.run(env);

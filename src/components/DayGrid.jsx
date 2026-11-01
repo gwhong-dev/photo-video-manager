@@ -14,6 +14,8 @@ import { buildRows, formatDayLabel, rowHeight } from '../grid-layout.mjs';
 const GAP = 4; // 칸 사이 간격
 const DAY_GAP = 28; // 날 사이 여백
 const MIN_CELL = 112; // 칸의 최소 크기. 이보다 좁아지면 칸 수를 줄여요
+const FETCH_DELAY_MS = 100; // 빨리 스크롤하는 동안은 가져오지 않고, 멈춘 뒤 보이는 날만 가져와요
+const MAX_CACHED_DAYS = 300; // 기억해 두는 날 수 (넘으면 오래된 것부터, 지금 안 보이는 날만 지워요)
 const PAD_X = 24; // 좌우 여백
 const PAD_TOP = 8;
 const DATE_GUTTER = 16; // 날짜 칸과 사진 사이
@@ -128,25 +130,45 @@ export default function DayGrid({ view, selectedId, onSelect }) {
   }
   const visibleKey = visibleDays.map((d) => (d === null ? 'none' : d)).join(',');
 
+  const visibleRef = useRef(visibleDays);
+  visibleRef.current = visibleDays; // 비동기 응답이 "지금 보이는 날"을 알 수 있게
+
+  // 보이는 날이 0.1초 동안 그대로일 때만 가져와요 (이 effect는 보이는 날이 바뀔 때마다 다시 돌고, 이전 예약은 취소돼요)
   useEffect(() => {
-    const c = cacheRef.current;
-    if (!c || c.key !== view.key) return;
-    for (const day of visibleDays) {
-      const have = c.map.get(day);
-      if (have && have.gen >= view.gen) continue; // 이미 최신
-      if (c.inflight.has(day) && c.inflight.get(day) >= view.gen) continue; // 이미 받는 중 (실패해도 다음 갱신까지 다시 안 해요)
-      const gen = view.gen;
-      c.inflight.set(day, gen);
-      api.listFiles(day, view.filter).then(
-        (files) => {
-          if (cacheRef.current !== c) return; // 그 사이 필터가 바뀌었으면 응답을 버려요
-          const prev = c.map.get(day);
-          if (!prev || prev.gen <= gen) c.map.set(day, { gen, files: Array.isArray(files) ? files : [] });
-          bump();
-        },
-        () => { /* 실패하면 빈 칸으로 두고 다시 시도하지 않아요 (다음 목록 갱신 때 한 번 더) */ },
-      );
-    }
+    const timer = setTimeout(() => {
+      const c = cacheRef.current;
+      if (!c || c.key !== view.key) return;
+      for (const day of visibleRef.current) {
+        const have = c.map.get(day);
+        if (have && have.gen >= view.gen) continue; // 이미 최신
+        if (c.inflight.has(day) && c.inflight.get(day) >= view.gen) continue; // 이미 받는 중
+        const gen = view.gen;
+        c.inflight.set(day, gen);
+        const done = () => { if (c.inflight.get(day) === gen) c.inflight.delete(day); };
+        api.listFiles(day, view.filter).then(
+          (files) => {
+            done();
+            if (cacheRef.current !== c || !Array.isArray(files)) return; // 필터가 바뀌었거나 이상한 응답이면 버려요
+            const prev = c.map.get(day);
+            if (prev && prev.gen > gen) return; // 더 새 응답이 이미 들어와 있어요
+            c.map.delete(day); // 다시 넣어서 "가장 최근"으로
+            c.map.set(day, { gen, files });
+            // 너무 많이 쌓이면 오래된 것부터 지워요 (지금 보이는 날은 남겨요)
+            if (c.map.size > MAX_CACHED_DAYS) {
+              const keep = new Set(visibleRef.current);
+              for (const k of c.map.keys()) {
+                if (c.map.size <= MAX_CACHED_DAYS) break;
+                if (!keep.has(k)) c.map.delete(k);
+              }
+            }
+            bump();
+          },
+          // 실패하면 요청 표시를 지워요. 스스로 다시 시도하지는 않고, 보이는 날이 바뀌거나 목록이 갱신될 때 다시 시도해요
+          done,
+        );
+      }
+    }, FETCH_DELAY_MS);
+    return () => clearTimeout(timer);
   }, [visibleKey, view.key, view.gen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- 스크롤 위치 지키기 ----------
