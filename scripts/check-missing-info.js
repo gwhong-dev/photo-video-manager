@@ -330,6 +330,171 @@ const items = [
       return out;
     },
   },
+  {
+    no: 21,
+    name: '정보 없음 목록',
+    async run(env) {
+      const out = [];
+      const { fillFakeLibrary } = require('./check-gallery');
+      const F = (info, extra = {}) => ({ tab: 'all', sort: 'newest', query: '', tag: null, info, ...extra });
+      const SHOT = [{ name: '스크린샷', source: 'mediaType' }];
+      const NODATE = { takenAt: null, takenOffset: null, takenDay: null, takenAtSource: null };
+      const P = (n) => `R1/${n}.jpg`;
+      const base = (n, over = {}) => row({ path: P(n), name: `${n}.jpg`, ...over });
+
+      // 목록에 나온 파일 이름 (날짜 순서 그대로) 과 id
+      const listed = (db, filter) => {
+        const names = [];
+        const ids = [];
+        let sum = 0;
+        for (const d of db.listDays('R1', filter)) {
+          sum += d.count;
+          for (const f of db.listFiles('R1', d.day, filter)) {
+            names.push(f.name);
+            ids.push(f.id);
+          }
+        }
+        return { names: names.sort(), ids, sum };
+      };
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+      // 샘플: 위치 있음(a), 위치 없음(b), 스크린샷 위치 없음(c), 날짜 없음+위치 있음(d), 사라진 파일(e),
+      //       직접 위치를 넣은 파일(f), 날짜도 위치도 없음(h), 스크린샷이면서 날짜 없음(i)
+      const fill = (db) => {
+        db.upsertFiles([
+          base('a', { lat: 37.5, lng: 127, locationSource: 'gps' }),
+          base('b', { tags: [{ name: '여행', source: 'album' }] }),
+          base('c', { tags: SHOT }),
+          base('d', { ...NODATE, lat: 10, lng: 20, locationSource: 'gps' }),
+          base('e'),
+          base('f'),
+          base('h', { ...NODATE, tags: [{ name: '가족', source: 'album' }] }),
+          base('i', { ...NODATE, tags: SHOT }),
+        ]);
+        db.setMissing([P('e')], 1);
+        db.applyManualBatch({
+          id: 'x1', root: 'R1', kind: 'location', createdAt: '2026-11-01T10:00:00',
+          items: [{ path: P('f'), before: null, after: val({ lat: 1, lng: 2 }) }],
+        });
+      };
+
+      await withDb(env, 'info-list', (db) => {
+        fill(db);
+
+        // 21a 위치 없음: 스크린샷, 사라진 파일, 위치가 있는 파일(직접 넣은 것 포함)을 뺌
+        const loc = listed(db, F('noLocation'));
+        out.push(sub('21a noLocation은 스크린샷과 사라진 파일을 빼고 b, h만', same(loc.names, ['b.jpg', 'h.jpg']), JSON.stringify(loc.names)));
+
+        // 21b 날짜 없음: 날짜 없는 파일만 (스크린샷 포함)
+        const dt = listed(db, F('noDate'));
+        out.push(sub('21b noDate는 날짜 없는 파일만 (스크린샷 포함)', same(dt.names, ['d.jpg', 'h.jpg', 'i.jpg']), JSON.stringify(dt.names)));
+
+        // 21c 직접 넣은 것: 날짜나 위치의 출처가 manual
+        const mn = listed(db, F('manual'));
+        out.push(sub('21c manual은 직접 넣은 파일만', same(mn.names, ['f.jpg']), JSON.stringify(mn.names)));
+
+        // 21d 합계: 날짜 없음 또는 위치 없음(스크린샷 제외). 둘 다 없는 h는 한 번만
+        const s = db.summary('R1');
+        out.push(sub(
+          '21d summary: noLocation 2, noInfo 4 (h는 한 번만), manualCount 1, noDate 3',
+          s.noLocation === 2 && s.noInfo === 4 && s.manualCount === 1 && s.noDate === 3,
+          JSON.stringify([s.noLocation, s.noInfo, s.manualCount, s.noDate]),
+        ));
+        out.push(sub(
+          '21d summary 개수가 같은 이름의 목록 길이와 같음',
+          s.noLocation === loc.sum && s.noDate === dt.sum && s.manualCount === mn.sum,
+          JSON.stringify([loc.sum, dt.sum, mn.sum]),
+        ));
+
+        // 21e 위치를 넣으면 빠지고, 되돌리면 돌아옴
+        db.applyManualBatch({
+          id: 'x2', root: 'R1', kind: 'location', createdAt: '2026-11-01T10:01:00',
+          items: [{ path: P('b'), before: null, after: val({ lat: 5, lng: 6 }) }],
+        });
+        const after = listed(db, F('noLocation')).names;
+        const sAfter = db.summary('R1');
+        const manualAfter = listed(db, F('manual')).names;
+        db.undoBatch('x2', '2026-11-01T10:02:00');
+        const back = listed(db, F('noLocation')).names;
+        const sBack = db.summary('R1');
+        out.push(sub(
+          '21e 위치를 넣으면 noLocation에서 빠지고 manual에 들어가며, 되돌리면 돌아옴',
+          same(after, ['h.jpg']) && sAfter.noLocation === 1 && sAfter.manualCount === 2 && same(manualAfter, ['b.jpg', 'f.jpg'])
+            && same(back, ['b.jpg', 'h.jpg']) && sBack.noLocation === 2 && sBack.manualCount === 1,
+          JSON.stringify([after, manualAfter, back]),
+        ));
+
+        // 21f info와 검색어, 태그를 함께 쓸 수 있음
+        const withTag = listed(db, F('noLocation', { tag: '여행' })).names;
+        const withQuery = listed(db, F('noLocation', { query: 'h.jpg' })).names;
+        const none = listed(db, F('noLocation', { query: 'b.jpg', tag: '가족' })).names;
+        const dateQuery = listed(db, F('noDate', { query: 'i.jpg' })).names;
+        const shotTab = listed(db, F('noLocation', { tab: 'screenshot' })).names;
+        out.push(sub(
+          '21f info와 태그, 검색어, 탭을 함께 씀 (스크린샷 탭에서 noLocation은 비어 있음)',
+          same(withTag, ['b.jpg']) && same(withQuery, ['h.jpg']) && same(none, []) && same(dateQuery, ['i.jpg']) && same(shotTab, []),
+          JSON.stringify([withTag, withQuery, none, dateQuery, shotTab]),
+        ));
+
+        // 21g listIds 개수 = listDays 합계, 순서는 listDays와 listFiles를 이은 순서와 같음 (정렬 두 방향)
+        let okG = true;
+        const detailG = [];
+        for (const info of [undefined, 'noLocation', 'noDate', 'manual']) {
+          for (const sort of ['newest', 'oldest']) {
+            const filter = F(info, { sort });
+            const ids = db.listIds('R1', filter);
+            const walked = [];
+            let sum = 0;
+            for (const d of db.listDays('R1', filter)) {
+              sum += d.count;
+              for (const f of db.listFiles('R1', d.day, filter)) walked.push(f.id);
+            }
+            const ok = ids.length === sum && same(ids, walked);
+            okG = okG && ok;
+            detailG.push(`${info}/${sort}:${ids.length}/${sum}${ok ? '' : ' 다름'}`);
+          }
+        }
+        out.push(sub('21g listIds 개수는 listDays 합계와 같고 순서도 같음', okG, detailG.join(' ')));
+        out.push(sub('21g info 값이 이상하면 조건을 더하지 않음', db.listIds('R1', F('엉뚱한값; DROP TABLE files')).length === db.listIds('R1', F(undefined)).length));
+      });
+
+      // 21h 가짜 6만 건에서 새 필터의 목록 시간 (목표 0.2초, 1초를 넘으면 실패)
+      await withDb(env, 'info-fast', (db) => {
+        fillFakeLibrary(db, 'FAKE', 60000);
+        const ms = (fn) => {
+          const t0 = process.hrtime.bigint();
+          const r = fn();
+          return { ms: Number(process.hrtime.bigint() - t0) / 1e6, r };
+        };
+        const times = {};
+        let slow = [];
+        for (const info of ['noLocation', 'noDate', 'manual']) {
+          const filter = F(info);
+          const days = ms(() => db.listDays('FAKE', filter));
+          const firstDay = days.r.length ? days.r[0].day : null;
+          const files = ms(() => db.listFiles('FAKE', firstDay, filter));
+          const ids = ms(() => db.listIds('FAKE', filter));
+          times[info] = { days: days.ms, files: files.ms, ids: ids.ms, n: days.r.reduce((a, d) => a + d.count, 0) };
+          for (const [k, v] of [['listDays', days.ms], ['listFiles', files.ms], ['listIds', ids.ms]]) {
+            if (v > 1000) slow.push(`${info} ${k} ${v.toFixed(0)}ms`);
+          }
+        }
+        const sm = ms(() => db.summary('FAKE'));
+        if (sm.ms > 1000) slow.push(`summary ${sm.ms.toFixed(0)}ms`);
+        const t = times.noLocation;
+        const fmt = (x) => x.toFixed(0);
+        out.push(sub(
+          '21h 가짜 6만 건: 정보 없음 목록이 1초 안에 나옴 (목표 0.2초)',
+          slow.length === 0 && t.n > 0,
+          `noLocation ${t.n}장 listDays ${fmt(t.days)}ms listFiles ${fmt(t.files)}ms listIds ${fmt(t.ids)}ms / `
+            + `noDate listDays ${fmt(times.noDate.days)}ms / manual listDays ${fmt(times.manual.days)}ms / summary ${fmt(sm.ms)}ms`
+            + (slow.length ? ` / 느림: ${slow.join(', ')}` : ''),
+        ));
+      });
+
+      return out;
+    },
+  },
 ];
 
 module.exports = { items };
