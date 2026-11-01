@@ -1509,6 +1509,94 @@ const items = [
         for (const x of [f, f2, f3, f4]) x.g.close();
       }
 
+      // 18e 샘플 결과 복사본을 백업 폴더로 정한 임시 userData로 띄워요 (진짜 설정과 사진은 읽지 않음).
+      //     사진을 읽어 오는 동안 기다렸다가 날짜(10.28)와 검색창 문구가 보이는지, 화면 오류가 없는지 봐요. 버튼은 누르지 않아요
+      {
+        const copyRoot = path.join(env.tmp, 'launch-gallery-root');
+        fs.cpSync(env.full.backupRoot, copyRoot, { recursive: true });
+        const ud = path.join(env.tmp, 'launch-gallery-full');
+        fs.mkdirSync(ud, { recursive: true });
+        fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: copyRoot }), 'utf8');
+        const r2 = await launchCheck(APP, {
+          port: 9335,
+          env: { PVM_USER_DATA: ud },
+          until: '10.28',
+          probe: "(document.querySelector('input[type=search]') || {}).placeholder || ''",
+        });
+        out.push(sub('샘플 복사본을 읽은 갤러리에 날짜 10.28이 보임', r2.text.includes('10.28'), `화면 글자: ${String(r2.text).slice(0, 160).replace(/\s+/g, ' ')}`));
+        out.push(sub('검색창 문구 "파일 이름, 태그, 날짜 검색"', r2.probed === '파일 이름, 태그, 날짜 검색', `문구 "${r2.probed}"`));
+        out.push(sub('갤러리 화면 오류 없음, 정상 종료', r2.errors.length === 0 && r2.exitCode === 0 && !r2.text.includes('불러오지 못했어요'), `${r2.errors.join(' / ')} 종료 코드 ${r2.exitCode}`));
+      }
+
+      return out;
+    },
+  },
+  {
+    no: 19,
+    name: '갤러리 격자 계산',
+    async run() {
+      const out = [];
+      // src/grid-layout.mjs 는 React가 없는 순수 계산이에요. 한글 경로에서도 불러지게 file:// 주소로 불러와요
+      const { pathToFileURL } = require('url');
+      let g;
+      try {
+        g = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'grid-layout.mjs')).href);
+      } catch (e) {
+        return [sub('src/grid-layout.mjs 불러오기', false, e.message)];
+      }
+      const { buildRows, formatDayLabel } = g;
+
+      // 14장, 5칸 → 3줄. 첫 줄만 isFirstOfDay
+      const a = buildRows([{ day: '2026-10-28', count: 14 }], 5);
+      out.push(sub('14장 5칸은 3줄 (5, 5, 4장)', a.length === 3 && a.map((r) => r.count).join() === '5,5,4' && a.map((r) => r.startIndex).join() === '0,5,10', JSON.stringify(a.map((r) => [r.dayRowIndex, r.startIndex, r.count]))));
+      out.push(sub('첫 줄만 isFirstOfDay', a.map((r) => r.isFirstOfDay).join() === 'true,false,false' && a.map((r) => r.dayRowIndex).join() === '0,1,2'));
+      out.push(sub('줄마다 그 날 전체 장수(dayCount)가 있음', a.every((r) => r.dayCount === 14 && r.day === '2026-10-28')));
+
+      // 정확히 나누어질 때
+      out.push(sub('10장 5칸은 정확히 2줄', buildRows([{ day: '2026-10-28', count: 10 }], 5).length === 2));
+      out.push(sub('1장은 1줄, 0장은 줄 없음', buildRows([{ day: '2026-10-28', count: 1 }], 5).length === 1 && buildRows([{ day: '2026-10-28', count: 0 }], 5).length === 0));
+
+      // 연도 표시: 목록 첫 묶음과 해가 바뀌는 첫 묶음만
+      const b = buildRows([{ day: '2026-01-02', count: 2 }, { day: '2025-12-31', count: 2 }, { day: '2025-12-30', count: 2 }], 5);
+      out.push(sub('목록 첫 묶음과 해가 바뀌는 묶음에 showYear, 같은 해 다음 날은 아님', b.map((r) => r.showYear).join() === 'true,true,false', b.map((r) => r.showYear).join()));
+      // 연도는 묶음의 첫 줄에서만 참이에요 (둘째 줄부터는 거짓)
+      const b2 = buildRows([{ day: '2026-01-02', count: 12 }], 5);
+      out.push(sub('showYear는 묶음 첫 줄에서만 참', b2.map((r) => r.showYear).join() === 'true,false,false'));
+
+      // 날짜 없는 묶음은 끝에 그대로
+      const c = buildRows([{ day: '2026-10-28', count: 3 }, { day: null, count: 7 }], 5);
+      out.push(sub('null 묶음이 끝에 그대로 있음', c.length === 3 && c[c.length - 1].day === null && c[c.length - 1].count === 2 && c[c.length - 2].day === null && c[c.length - 2].isFirstOfDay === true, JSON.stringify(c.map((r) => [r.day, r.count]))));
+
+      // 이름표
+      out.push(sub('formatDayLabel: 10.28, 수요일, 2026 (시간대 없이 계산)', JSON.stringify(formatDayLabel('2026-10-28')) === JSON.stringify({ date: '10.28', weekday: '수요일', year: '2026' }), JSON.stringify(formatDayLabel('2026-10-28'))));
+      out.push(sub('formatDayLabel: 요일이 맞음 (2026-11-01은 일요일, 2026-11-07은 토요일)', formatDayLabel('2026-11-01').weekday === '일요일' && formatDayLabel('2026-11-07').weekday === '토요일'));
+      out.push(sub('formatDayLabel(null)은 날짜 없음', formatDayLabel(null).date === '날짜 없음' && formatDayLabel(null).weekday === undefined));
+      out.push(sub('formatDayLabel: 한 자리 월·일은 0을 붙임', formatDayLabel('2026-01-02').date === '01.02'));
+
+      // 이상한 입력도 오류 없이 빈 배열
+      let threw = '';
+      let empties = [];
+      try {
+        empties = [buildRows([], 5), buildRows([{ day: '2026-10-28', count: 3 }], 0), buildRows([{ day: '2026-10-28', count: 3 }], -2), buildRows(null, 5), buildRows([{ day: '2026-10-28', count: 3 }], NaN)];
+      } catch (e) {
+        threw = e.message;
+      }
+      out.push(sub('칸 수 0 이하, 빈 목록, null은 오류 없이 빈 배열', threw === '' && empties.length === 5 && empties.every((x) => Array.isArray(x) && x.length === 0), threw));
+
+      // 줄 높이: 그 날의 마지막 줄에만 날 사이 여백이 더해져요
+      out.push(sub('rowHeight: 마지막 줄에만 날 사이 여백', g.rowHeight(a[0], 100, 4, 28) === 104 && g.rowHeight(a[2], 100, 4, 28) === 132, `${g.rowHeight(a[0], 100, 4, 28)}, ${g.rowHeight(a[2], 100, 4, 28)}`));
+
+      // 화면에 쓰는 글자 만들기 (src/format.mjs)
+      let f;
+      try {
+        f = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'format.mjs')).href);
+      } catch (e) {
+        return out.concat(sub('src/format.mjs 불러오기', false, e.message));
+      }
+      out.push(sub('영상 길이: 12.3초 0:12, 3725초 1:02:05, 모르면 빈 글자', f.formatDuration(12.3) === '0:12' && f.formatDuration(3725) === '1:02:05' && f.formatDuration(null) === '' && f.formatDuration(-1) === ''));
+      out.push(sub('용량: 512 B, 3 KB, 16.3 MB, 1.5 GB', f.formatBytes(512) === '512 B' && f.formatBytes(3072) === '3 KB' && f.formatBytes(16.3 * 1024 * 1024) === '16.3 MB' && f.formatBytes(1.5 * 1024 ** 3) === '1.5 GB'));
+      out.push(sub('찍은 시각: 오후 1:41:13, 오전 12시 0분, 오후 12시, 날짜만', f.formatTakenAt('2026-10-28T13:41:13') === '2026년 10월 28일 오후 1:41:13' && f.formatTakenAt('2026-10-28T00:05:00') === '2026년 10월 28일 오전 12:05:00' && f.formatTakenAt('2026-10-28T12:00:00') === '2026년 10월 28일 오후 12:00:00' && f.formatTakenAt('2026-10-28') === '2026년 10월 28일' && f.formatTakenAt(null) === ''));
+      out.push(sub('좌표: 소수점 다섯 자리, 하나라도 없으면 빈 글자', f.formatCoords(37.2636, 127.0286) === '37.26360, 127.02860' && f.formatCoords(null, 127) === ''));
       return out;
     },
   },

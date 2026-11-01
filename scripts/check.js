@@ -1,5 +1,5 @@
 // 파일 위치: scripts/check.js
-// 역할: 자동 점검 (npm run check) — docs/점검-푸시-절차.md 의 18개 항목
+// 역할: 자동 점검 (npm run check) — docs/점검-푸시-절차.md 의 19개 항목
 //
 // ⚠️ 샘플(test/samples)은 절대 직접 쓰지 않아요.
 //    임시 폴더(%TEMP%\pvm-check-시각)에 복사한 뒤 그 복사본으로만 실행해요.
@@ -852,6 +852,7 @@ function manualReport(p) {
 }
 
 // ---------- 실행 ----------
+const ONLY = process.env.PVM_CHECK_ONLY ? process.env.PVM_CHECK_ONLY.split(',').map(Number) : null;
 (async () => {
   const ICON = { ok: '✅', fail: '❌', skip: '⏭' };
   const tmp = path.join(os.tmpdir(), `pvm-check-${stamp()}`);
@@ -877,6 +878,7 @@ function manualReport(p) {
     failed = 0;
     env.full = await pipeline(path.join(tmp, 'full'), env);
     for (const item of ITEMS) {
+      if (ONLY && !ONLY.includes(item.no)) continue; // 개발 중에 일부 항목만 돌릴 때: PVM_CHECK_ONLY=18,19 (평소 점검은 전부 돌려요)
       let subs;
       try {
         subs = await item.run(env);

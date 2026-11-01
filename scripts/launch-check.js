@@ -45,7 +45,8 @@ async function launchCheck(appDir, opts = {}) {
   }
 }
 
-async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: exeOverride } = {}) {
+// until: 화면 글자에 이 글이 나올 때까지 더 기다려요 (최대 untilMs). probe: 화면에서 더 읽고 싶은 값(자바스크립트 식)
+async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: exeOverride, until = '', untilMs = 20000, probe = '' } = {}) {
   const bad = syntaxErrors(appDir);
   if (bad.length) return { ok: false, title: '', text: '', errors: bad, exitCode: null, mainOut: '' };
   const exe = exeOverride || path.join(appDir, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
@@ -106,8 +107,13 @@ async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: e
   await send('Log.enable');
 
   await sleep(waitMs); // 도구 찾기가 끝날 시간
+  const readText = async () => (await send('Runtime.evaluate', { expression: 'document.body.innerText', returnByValue: true })).result.result.value;
+  if (until) {
+    for (let waited = 0; waited < untilMs && !String(await readText()).includes(until); waited += 500) await sleep(500);
+  }
   const title = (await send('Runtime.evaluate', { expression: 'document.title', returnByValue: true })).result.result.value;
-  const text = (await send('Runtime.evaluate', { expression: 'document.body.innerText', returnByValue: true })).result.result.value;
+  const text = await readText();
+  const probed = probe ? (await send('Runtime.evaluate', { expression: probe, returnByValue: true })).result.result.value : undefined;
 
   // 창 닫기 → 앱이 스스로 종료 (exiftool 정리 포함)
   send('Runtime.evaluate', { expression: 'window.close()' });
@@ -121,7 +127,7 @@ async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: e
   } catch (e) {
     // 이미 닫힘
   }
-  return { ok: errors.length === 0 && exitCode === 0, title, text, errors, exitCode, mainOut };
+  return { ok: errors.length === 0 && exitCode === 0, title, text, probed, errors, exitCode, mainOut };
 }
 
 module.exports = { launchCheck };
