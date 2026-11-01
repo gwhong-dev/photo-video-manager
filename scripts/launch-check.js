@@ -5,6 +5,7 @@
 
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 // 앱을 띄우기 전에 main 쪽 파일 문법부터 확인해요.
@@ -23,11 +24,31 @@ function syntaxErrors(appDir) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// env: 앱에 더 넘길 환경변수 (점검 전용 PVM_USER_DATA, PVM_START_SCREEN). 진짜 사용자 설정을 읽지 않도록 항상 임시 폴더를 넘겨요
-async function launchCheck(appDir, { port = 9333, waitMs = 4000, env = {} } = {}) {
+// env: 앱에 더 넘길 환경변수 (점검 전용 PVM_USER_DATA, PVM_START_SCREEN)
+//   PVM_USER_DATA를 안 주면 임시 pvm-check- 폴더를 만들어 넘기고 끝나면 지워요 (진짜 사용자 설정을 읽지 않게. 직접 실행도 마찬가지)
+// exe: 점검용으로 다른 Electron 실행 파일을 쓸 때 (기본은 appDir 안의 것)
+async function launchCheck(appDir, opts = {}) {
+  const env = { ...(opts.env || {}) };
+  let made = null;
+  if (!env.PVM_USER_DATA) {
+    made = fs.mkdtempSync(path.join(os.tmpdir(), 'pvm-check-'));
+    env.PVM_USER_DATA = made;
+  }
+  try {
+    return await launchOnce(appDir, { ...opts, env });
+  } finally {
+    if (made) {
+      try {
+        fs.rmSync(made, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch (e) { /* 못 지워도 점검 임시 폴더라 나중에 check.js가 정리해요 */ }
+    }
+  }
+}
+
+async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: exeOverride } = {}) {
   const bad = syntaxErrors(appDir);
   if (bad.length) return { ok: false, title: '', text: '', errors: bad, exitCode: null, mainOut: '' };
-  const exe = path.join(appDir, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
+  const exe = exeOverride || path.join(appDir, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
   const child = spawn(exe, ['.', `--remote-debugging-port=${port}`], { cwd: appDir, env: { ...process.env, ...env } });
   let mainOut = '';
   child.stdout.on('data', (d) => (mainOut += d));
@@ -55,7 +76,9 @@ async function launchCheck(appDir, { port = 9333, waitMs = 4000, env = {} } = {}
   if (!page) {
     child.kill();
     const why = spawnError ? `Electron을 실행하지 못함 (${spawnError.code || spawnError.message}). npm install로 Electron을 다시 받아 주세요` : '창이 뜨지 않음';
-    return { ok: false, title: '', text: '', errors: [why], exitCode, mainOut };
+    // Electron이 일찍 끝났으면 main 쪽 출력(불러오다 난 오류)의 앞부분도 같이 알려요
+    const hint = exitCode !== null && mainOut.trim() ? ` / 출력: ${mainOut.trim().split(/\r?\n/).slice(0, 3).join(' ')}` : '';
+    return { ok: false, title: '', text: '', errors: [why + hint], exitCode, mainOut };
   }
 
   const ws = new WebSocket(page.webSocketDebuggerUrl);

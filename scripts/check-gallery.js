@@ -1366,19 +1366,150 @@ const items = [
   },
   {
     no: 18,
-    name: '갤러리 화면',
+    name: '갤러리 화면과 연결',
     async run(env) {
-      // 백업 폴더를 정하지 않은 임시 userData로 띄워요 (진짜 설정과 DB는 읽지 않음). 버튼은 누르지 않아요
+      const out = [];
+      const APP = path.join(__dirname, '..');
       const { launchCheck } = require('./launch-check');
+
+      // 18a 백업 폴더를 정하지 않은 임시 userData로 띄워요 (진짜 설정과 DB는 읽지 않음). 버튼은 누르지 않아요
       const userData = path.join(env.tmp, 'launch-gallery');
       fs.mkdirSync(userData, { recursive: true });
-      const r = await launchCheck(path.join(__dirname, '..'), { env: { PVM_USER_DATA: userData } });
-      return [
-        sub('창이 뜨고 정상 종료', r.exitCode === 0 && r.title === '사진/영상 관리 프로그램', `제목 "${r.title}", 종료 코드 ${r.exitCode}`),
-        sub('가져오기 화면 열기 버튼 글자', r.text.includes('가져오기 화면 열기'), `화면 글자: ${String(r.text).slice(0, 120).replace(/\s+/g, ' ')}`),
-        sub('화면 오류 없음', r.errors.length === 0, r.errors.join(' / ')),
-        sub('임시 userData에 library.db가 만들어짐', fs.existsSync(path.join(userData, 'library.db'))),
-      ];
+      const r = await launchCheck(APP, { env: { PVM_USER_DATA: userData } });
+      out.push(sub('창이 뜨고 정상 종료', r.exitCode === 0 && r.title === '사진/영상 관리 프로그램', `제목 "${r.title}", 종료 코드 ${r.exitCode}`));
+      out.push(sub('가져오기 화면 열기 버튼 글자', r.text.includes('가져오기 화면 열기'), `화면 글자: ${String(r.text).slice(0, 120).replace(/\s+/g, ' ')}`));
+      out.push(sub('화면 오류 없음', r.errors.length === 0, r.errors.join(' / ')));
+      out.push(sub('임시 userData에 library.db가 만들어짐', fs.existsSync(path.join(userData, 'library.db'))));
+
+      // 18b 불러오다 오류가 나도 대화상자 없이 바로 실패로 끝나요 (점검 때 사용자 화면이 멈추지 않게).
+      //     앱 파일을 임시 폴더에 복사하고 복사본 lib/paths.js 끝에만 throw를 붙여요 (저장소 파일은 그대로)
+      {
+        const copy = path.join(env.tmp, 'app-throw');
+        fs.mkdirSync(copy, { recursive: true });
+        for (const f of ['main.js', 'gallery-main.js', 'preload.js', 'index.html', 'package.json']) fs.copyFileSync(path.join(APP, f), path.join(copy, f));
+        fs.cpSync(path.join(APP, 'lib'), path.join(copy, 'lib'), { recursive: true });
+        fs.appendFileSync(path.join(copy, 'lib', 'paths.js'), "\nthrow new Error('점검용 가짜 오류');\n");
+        const ud = path.join(env.tmp, 'launch-throw');
+        fs.mkdirSync(ud, { recursive: true });
+        const exe = path.join(APP, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
+        const t0 = Date.now();
+        const bad = await launchCheck(copy, { port: 9334, exe, env: { PVM_USER_DATA: ud } });
+        const ms = Date.now() - t0;
+        out.push(sub('불러오다 난 오류는 대화상자 없이 실패로 끝남 (10초 안)', bad.ok === false && bad.exitCode === 1 && ms < 10000 && bad.errors.some((e) => e.includes('점검용 가짜 오류')), `${ms}ms, 종료 코드 ${bad.exitCode}, ${bad.errors.join(' / ').slice(0, 120)}`));
+        out.push(sub('저장소의 lib/paths.js는 그대로', !fs.readFileSync(path.join(APP, 'lib', 'paths.js'), 'utf8').includes('점검용 가짜 오류')));
+      }
+
+      // 18c exiftool을 닫은 뒤 run은 거절하고 다시 켜지 않아요 (도구를 새로 찾을 때 옛 객체가 exiftool.exe를 남기지 않게)
+      {
+        const { ExifTool } = require('../lib/exiftool');
+        const x = new ExifTool(env.tools.exiftool.path);
+        const first = await x.run(['-ver']).then((v) => v.stdout.trim(), () => '');
+        x.close();
+        const msg = await x.run(['-ver']).then(() => null, (e) => e.message);
+        out.push(sub('닫기 전에는 run이 동작', first !== ''));
+        out.push(sub('닫은 뒤 run은 거절되고 프로그램이 다시 켜지지 않음', msg !== null && x.proc === null && x.queue.length === 0, `메시지 ${msg}`));
+      }
+
+      // 18d setupGallery를 가짜 ipcMain, protocol로 확인해요 (Electron 없이). library.scan 호출을 엿보려고
+      //     gallery-main을 불러오는 동안만 createLibrary를 감싸고 바로 되돌려요
+      {
+        const { createLogger } = require('../lib/logger');
+        const libMod = require('../lib/library');
+        const scanCalls = [];
+        const orig = libMod.createLibrary;
+        libMod.createLibrary = (opts) => {
+          const lib = orig(opts);
+          return { ...lib, scan: (root, o) => { scanCalls.push({ root, o }); return lib.scan(root, o); } };
+        };
+        const gmPath = require.resolve('../gallery-main');
+        delete require.cache[gmPath];
+        let gm;
+        try {
+          gm = require('../gallery-main');
+        } finally {
+          libMod.createLibrary = orig;
+          delete require.cache[gmPath];
+        }
+
+        const base = path.join(env.tmp, 'gallery-fake');
+        const logger = createLogger(path.join(base, 'logs'));
+        const makeFake = (userDir, settings) => {
+          const f = { handlers: new Map(), loaded: [], flags: { running: false, planning: false }, pvm: null };
+          f.g = gm.setupGallery({
+            ipcMain: { handle: (ch, fn) => f.handlers.set(ch, fn) },
+            protocol: { handle: (scheme, fn) => { f.pvm = fn; } },
+            getWin: () => null,
+            getSettings: () => settings,
+            getTools: () => ({}),
+            getEt: () => null,
+            isRunning: () => f.flags.running,
+            isPlanning: () => f.flags.planning,
+            logger,
+            userDir,
+            loadScreen: async (name) => { f.loaded.push(name); },
+            getJobPending: () => false,
+          });
+          f.call = (ch, ...args) => f.handlers.get(ch)(null, ...args);
+          return f;
+        };
+        const errOf = (p) => p.then(() => null, (e) => e.message);
+
+        const root = path.join(base, 'root');
+        fs.mkdirSync(root, { recursive: true });
+        const f = makeFake(path.join(base, 'ud1'), { backupRoot: root });
+
+        // 화면 전환: 실행 중, 미리보기 중에는 거절. 아니면 허용
+        f.flags.running = true;
+        const m1 = await errOf(f.call('gallery:open-screen', 'import'));
+        f.flags.running = false;
+        f.flags.planning = true;
+        const m2 = await errOf(f.call('gallery:open-screen', 'import'));
+        out.push(sub('화면 전환: 실행 중에는 거절', m1 === '작업이 끝난 뒤에 화면을 바꿀 수 있어요' && f.loaded.length === 0, `메시지 ${m1}`));
+        out.push(sub('화면 전환: 미리보기 중에는 거절', typeof m2 === 'string' && m2.includes('미리보기') && f.loaded.length === 0, `메시지 ${m2}`));
+        f.flags.planning = false;
+        const ok = await f.call('gallery:open-screen', 'gallery');
+        const m3 = await errOf(f.call('gallery:open-screen', '엉뚱한 화면'));
+        out.push(sub('화면 전환: 아무것도 안 하는 중이면 허용, 모르는 화면 이름은 거절', ok === true && f.loaded.join() === 'gallery' && m3 !== null));
+
+        // 읽기 시작 시점
+        f.g.onBatchDone();
+        await sleep(150);
+        out.push(sub('가져오기 묶음이 끝나면 scan(root, { changed: true })', scanCalls.some((c) => c.root === root && c.o && c.o.changed === true), JSON.stringify(scanCalls)));
+        const root2 = path.join(base, 'root2');
+        fs.mkdirSync(root2, { recursive: true });
+        const settings2 = { backupRoot: root2 };
+        const f2 = makeFake(path.join(base, 'ud2'), settings2);
+        f2.g.onRootChanged();
+        await sleep(150);
+        out.push(sub('백업 폴더가 바뀌면 새 폴더를 scan', scanCalls.some((c) => c.root === root2)));
+
+        // 상태와 pvm://
+        const st = await f.call('gallery:get-state');
+        out.push(sub('getState 모양 (root, connected, total, scan, tools, jobPending)', st.root === root && st.connected === true && st.total === 0 && st.scan && typeof st.scan.scanning === 'boolean' && st.tools && st.tools.exiftool === false && st.jobPending === false && st.dbError === undefined && st.recovered === undefined));
+        const r404 = [];
+        for (const url of ['pvm://thumb/99999', 'pvm://preview/99999', 'pvm://thumb/abc', 'pvm://thumb/..%2F..%2Fx', 'pvm://other/1', 'file:///C:/Windows/win.ini']) r404.push((await f.pvm({ url })).status);
+        out.push(sub('pvm:// 모르는 id, 글자, 경로 모양, 다른 호스트는 404', r404.every((s) => s === 404), r404.join(',')));
+
+        // 깨진 DB는 새로 만들고 한 번만 알림, 열 수 없는 DB(폴더가 가로막음)는 갤러리만 끄고 계속
+        fs.mkdirSync(path.join(base, 'ud3'), { recursive: true });
+        fs.writeFileSync(path.join(base, 'ud3', 'library.db'), '이건 DB가 아니에요'.repeat(500));
+        const f3 = makeFake(path.join(base, 'ud3'), { backupRoot: root });
+        const s3a = await f3.call('gallery:get-state');
+        const s3b = await f3.call('gallery:get-state');
+        out.push(sub('깨진 DB: 새로 만들고 recovered는 첫 getState에서만', s3a.recovered === true && s3b.recovered === undefined && !s3a.dbError));
+        fs.mkdirSync(path.join(base, 'ud4', 'library.db'), { recursive: true }); // 파일 자리에 폴더 → DB를 열 수 없음
+        const f4 = makeFake(path.join(base, 'ud4'), { backupRoot: root });
+        const s4 = await f4.call('gallery:get-state');
+        const days4 = await f4.call('gallery:list-days', {});
+        const re4 = await f4.call('gallery:rescan');
+        const nav4 = await f4.call('gallery:open-screen', 'import');
+        out.push(sub('DB를 못 열어도 시작: dbError 알림, 목록은 비어 있고 화면 전환은 됨', typeof s4.dbError === 'string' && s4.dbError !== '' && Array.isArray(days4) && days4.length === 0 && re4.status === 'no-db' && nav4 === true, JSON.stringify({ dbError: s4.dbError, re4 })));
+        out.push(sub('열 수 없는 DB 폴더를 이름 바꿔 치우지 않음', fs.statSync(path.join(base, 'ud4', 'library.db')).isDirectory()));
+
+        for (const x of [f, f2, f3, f4]) x.g.close();
+      }
+
+      return out;
     },
   },
 ];

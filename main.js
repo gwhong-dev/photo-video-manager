@@ -2,6 +2,10 @@
 // 역할: 프로그램의 뇌 🧠 — 창 만들기 + 화면(index.html)의 부탁 처리
 // 실제 작업은 lib 폴더의 파일들이 해요.
 
+// 점검 전용(PVM_USER_DATA가 있을 때): 불러오는 중 오류가 나면 Electron의 "main process 오류" 대화상자를 띄우지 않고
+//   바로 끝내요. 대화상자는 사용자 화면에서 점검을 멈춰 세워요. 다른 require보다 먼저 있어야 해요
+if (process.env.PVM_USER_DATA) process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
+
 const { app, BrowserWindow, ipcMain, dialog, shell, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -27,6 +31,7 @@ let job = null;        // 지금 작업 (이어하기용)
 let lastPlan = null;   // 미리보기 결과 (아직 실행 전)
 let running = false;   // 실행 중인지
 let pauseAsked = false; // 일시정지 눌렀는지
+let planning = false;  // 미리보기를 만드는 중인지 (화면을 바꾸면 늦게 끝난 미리보기가 다른 화면의 계획을 덮어쓸 수 있어서 막아요)
 let gallery = null;    // 갤러리 연결 (gallery-main.js). 아직 없으면 null
 
 const userDir = () => app.getPath('userData');
@@ -156,15 +161,19 @@ async function loadScreen(name) {
 }
 
 function showStartScreen() {
-  const wantGallery = process.env.PVM_START_SCREEN !== 'import';
+  // 갤러리 연결이 실패했으면(gallery가 null) 갤러리 화면은 아무것도 못 해서 가져오기 화면으로 열어요
+  const wantGallery = process.env.PVM_START_SCREEN !== 'import' && !!gallery;
   if (wantGallery && !fs.existsSync(GALLERY_FILE)) {
     // 빈 창 대신 이유를 알려 주고 가져오기 화면으로 열어요 (가져오기는 만들기 없이 쓸 수 있어요)
     win.loadFile(IMPORT_FILE);
-    dialog.showMessageBox(win, {
-      type: 'warning',
-      message: '갤러리 화면 파일이 아직 없어요',
-      detail: '터미널에서 npm start 로 실행해 주세요. 화면을 먼저 만든 뒤 프로그램이 켜져요.\n지금은 가져오기 화면으로 열었어요.',
-    });
+    // 점검(PVM_USER_DATA)에서는 대화상자를 띄우지 않아요. 사용자 화면에서 점검이 멈춰 서지 않게
+    if (!process.env.PVM_USER_DATA) {
+      dialog.showMessageBox(win, {
+        type: 'warning',
+        message: '갤러리 화면 파일이 아직 없어요',
+        detail: '터미널에서 npm start 로 실행해 주세요. 화면을 먼저 만든 뒤 프로그램이 켜져요.\n지금은 가져오기 화면으로 열었어요.',
+      });
+    }
     return;
   }
   win.loadFile(wantGallery ? GALLERY_FILE : IMPORT_FILE);
@@ -228,7 +237,12 @@ ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
   const v = validateFolders(source, backupRoot);
   if (!v.ok) throw new Error(v.reason);
 
-  lastPlan = await makePlan({ source, backupRoot, includeSub }, et, (msg) => send('plan-status', msg));
+  planning = true;
+  try {
+    lastPlan = await makePlan({ source, backupRoot, includeSub }, et, (msg) => send('plan-status', msg));
+  } finally {
+    planning = false;
+  }
   return { stats: lastPlan.stats, ...rowsOf(lastPlan, 'all') };
 });
 
@@ -290,7 +304,15 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
     return { ...r, job: jobInfo() };
   } finally {
     running = false;
-    if (gallery) gallery.onBatchDone(); // 새로 들어온 파일을 갤러리가 다시 읽어요 (오류로 멈춰도 이미 옮긴 파일이 있을 수 있어요)
+    // 새로 들어온 파일을 갤러리가 다시 읽어요 (오류로 멈춰도 이미 옮긴 파일이 있을 수 있어요).
+    //   갤러리 쪽 오류가 가져오기 결과를 바꾸면 안 돼서 여기서 잡고 로그만 남겨요
+    if (gallery) {
+      try {
+        gallery.onBatchDone();
+      } catch (err) {
+        try { logger.newLog('gallery-error', `onBatchDone 오류: ${err && err.message ? err.message : err}`); } catch (e2) { /* 로그 실패는 무시 */ }
+      }
+    }
   }
 });
 
@@ -399,6 +421,7 @@ app.whenReady().then(async () => {
       getTools: () => tools,
       getEt: () => et,
       isRunning: () => running,
+      isPlanning: () => planning,
       logger,
       userDir,
       loadScreen,

@@ -4,15 +4,15 @@
 //   (docs/superpowers/specs/2026-11-01-gallery-design.md 4, 7, 8절)
 //
 // ⚠️ 사진 파일은 읽기만 해요. 쓰는 곳은 userData 안의 library.db, thumbs 폴더, logs 폴더뿐이에요.
-// ⚠️ 이 파일은 Electron을 쓰지만, 필요한 것은 모두 main.js가 넘겨줘요 (net만 pvm:// 응답할 때 직접 불러와요)
+// ⚠️ Electron이 필요한 것은 모두 main.js에서 받아요 (net만 pvm:// 파일 응답 때 그때그때 불러와서, 일반 Node에서도 이 파일을 불러올 수 있어요)
 //
 // 모양: registerScheme(protocol)  — app.whenReady 전에 한 번 (pvm:// 를 안전한 주소로 등록)
 //       setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir,
-//                      loadScreen, getJobPending, net })
+//                      loadScreen, getJobPending, isPlanning })
 //         → { onWindowReady(), onBatchDone(), onRootChanged(), close() }
 //   loadScreen(name): 'import' | 'gallery' 화면으로 창을 바꿔요 (main.js가 해요)
 //   getJobPending(): 이어할 가져오기 작업이 있는지
-//   net: 점검용으로 바꿔 끼우는 선택 인자 (기본은 electron의 net)
+//   isPlanning(): 미리보기를 만드는 중인지 (중이면 화면 전환을 막아요)
 
 const fs = require('fs');
 const path = require('path');
@@ -56,7 +56,7 @@ function cleanFilter(f) {
   };
 }
 
-function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, net }) {
+function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning }) {
   const base = typeof userDir === 'function' ? userDir() : userDir;
   const rootNow = () => String((getSettings() && getSettings().backupRoot) || '').trim();
   const busy = () => {
@@ -90,6 +90,13 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   } catch (e) {
     dbError = `목록 파일(library.db)을 열지 못했어요: ${e && e.message ? e.message : e}`;
     startupLog([dbError]);
+  }
+
+  // 기다리지 않는 일(runScan 등)이 실패해도 프로그램이 멈추지 않게 로그만 남겨요
+  function errorLog(where, e) {
+    try {
+      logger.newLog('gallery-error', `갤러리 오류 ${now()}\n${where}: ${e && e.message ? e.message : e}`);
+    } catch (err) { /* 로그를 못 써도 프로그램은 계속 */ }
   }
 
   // ---------- 화면에 알리기 ----------
@@ -214,6 +221,12 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   ipcMain.handle('gallery:open-screen', async (e, name) => {
     if (name !== 'import' && name !== 'gallery') throw new Error('알 수 없는 화면이에요');
     if (busy()) throw new Error('작업이 끝난 뒤에 화면을 바꿀 수 있어요');
+    // 미리보기가 늦게 끝나 다른 화면에서 만든 계획을 덮어쓰지 않게, 미리보기 중에도 막아요
+    let planningNow = false;
+    try {
+      planningNow = !!(isPlanning && isPlanning());
+    } catch (err) { /* 모르면 막지 않아요 */ }
+    if (planningNow) throw new Error('미리보기가 끝난 뒤에 화면을 바꿀 수 있어요');
     await loadScreen(name);
     return true;
   });
@@ -230,7 +243,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       const headers = { 'Content-Type': r.type, 'Cache-Control': 'no-cache' };
       if (r.buffer) return new Response(r.buffer, { status: 200, headers });
       // 한글, #, % 가 든 경로도 안전하게 file:// 주소로 바꿔요
-      const netFetch = (net || require('electron').net).fetch;
+      const netFetch = require('electron').net.fetch;
       const res = await netFetch(pathToFileURL(r.path).toString());
       if (!res.ok) return notFound();
       return new Response(res.body, { status: 200, headers });
@@ -247,18 +260,18 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       if (started) return;
       started = true;
       const root = rootNow();
-      if (root) runScan(root, {});
+      if (root) runScan(root, {}).catch((e) => errorLog('시작 읽기', e));
     },
     // 가져오기 묶음이 끝나면: 읽는 중이어도 새 파일을 놓치지 않게 changed 로 다시 읽어요
     onBatchDone() {
       const root = rootNow();
-      if (root) runScan(root, { changed: true });
+      if (root) runScan(root, { changed: true }).catch((e) => errorLog('가져오기 뒤 다시 읽기', e));
     },
     // 설정에서 백업 폴더가 바뀌면: 새 폴더를 읽어요 (읽던 다른 폴더는 library가 멈춰요)
     onRootChanged() {
       send('gallery:library-changed');
       const root = rootNow();
-      if (root) runScan(root, {});
+      if (root) runScan(root, {}).catch((e) => errorLog('백업 폴더 바뀐 뒤 읽기', e));
     },
     // 프로그램을 끌 때: 진행 중인 FFmpeg를 기다리지 않고 멈추라고만 하고 DB를 닫아요
     close() {
