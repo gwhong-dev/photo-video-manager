@@ -3,12 +3,12 @@
 //   이 화면 자체가 미리보기예요. 사용자가 버튼을 눌렀을 때만 값이 들어가요
 //   사진을 누르면 오른쪽 패널에 크게 보이고, 모서리 체크 칸을 끄면 넣기에서 빠져요 (뺀 사진은 건너뛴 사진으로 기억해요)
 //   목록은 gen이 바뀔 때마다 다시 받고, 늦게 온 옛 응답은 버려요 (요청 번호)
-//   넣기와 건너뛰기는 하는 동안 다시 눌러도 한 번만 실행돼요
+//   넣기와 건너뛰기는 하는 동안 다시 눌러도 한 번만 실행돼요. 빠른 두 번 누름의 뒤쪽은 다음 묶음에 닿지 않게 받지 않아요
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { formatCount, formatTakenAt, gapText, suggestApplyLabel } from '../format.mjs';
-import { groupKey, settleView } from '../suggest-view.mjs';
+import { groupKey, isRepeatClick, settleView } from '../suggest-view.mjs';
 import EmptyState from './EmptyState.jsx';
 
 const SKIP_NOT_SAVED = '건너뛴 사진을 파일에 저장하지 못했어요. 이번 실행 동안만 기억해요.';
@@ -156,8 +156,8 @@ export default function SuggestPanel({ gen, focusId, onFocus, onApplied, onNotic
         </div>
       </div>
       <div className="suggest-actions">
-        <button type="button" className="primary" disabled={busy || checkedCount === 0} onClick={apply}>{suggestApplyLabel(checkedCount) || '넣을 사진을 골라 주세요'}</button>
-        <button type="button" disabled={busy} onClick={skipGroup}>이 묶음 건너뛰기</button>
+        <button type="button" className="primary" disabled={busy || checkedCount === 0} onClick={(e) => { if (!isRepeatClick(e)) apply(); }}>{suggestApplyLabel(checkedCount) || '넣을 사진을 골라 주세요'}</button>
+        <button type="button" disabled={busy} onClick={(e) => { if (!isRepeatClick(e)) skipGroup(); }}>이 묶음 건너뛰기</button>
       </div>
     </section>
   );

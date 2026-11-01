@@ -178,6 +178,27 @@ const items = [
         ));
       });
 
+      // 28m 시각을 모르는 사진은 쓰지 않아요: 파일 이름에 날짜만 있어 00:00:00이 된 사진, 직접 넣은 시각
+      {
+        const fakeMidnight = { takenAt: '2026-10-25T00:00:00', takenAtSource: 'filename' };
+        const r1 = buildSuggestions([located({ takenAt: '2026-10-25T00:10:00' }), file(fakeMidnight)], NONE);
+        const r2 = buildSuggestions([located(fakeMidnight), file({ takenAt: '2026-10-25T00:10:00' })], NONE);
+        const r3 = buildSuggestions([located({ takenAt: '2026-10-25T12:10:00' }), file({ takenAt: '2026-10-25T12:00:00', takenAtSource: 'manual' })], NONE);
+        const r4 = buildSuggestions([located({ takenAt: '2026-10-25T12:00:00', takenAtSource: 'manual' }), file({ takenAt: '2026-10-25T12:10:00' })], NONE);
+        const realName = buildSuggestions([located({ takenAt: '2026-10-25T21:00:00' }), file({ takenAt: '2026-10-25T21:09:41', takenAtSource: 'filename' })], NONE);
+        const realMidnight = buildSuggestions([located({ takenAt: '2026-10-25T00:10:00' }), file({ takenAt: '2026-10-25T00:00:00', takenAtSource: 'exif' })], NONE);
+        out.push(sub(
+          '28m 이름의 날짜뿐인 00:00:00과 직접 넣은 시각은 빠지고, 이름의 실제 시각과 파일의 00:00:00은 쓰임',
+          r1.groups.length === 0 && r2.groups.length === 0 && r3.groups.length === 0 && r4.groups.length === 0 && realName.groups.length === 1 && realMidnight.groups.length === 1,
+          JSON.stringify([r1, r2, r3, r4, realName, realMidnight].map((r) => r.groups.length)),
+        ));
+      }
+      await withDb(env, 'suggest-source', (db) => {
+        db.upsertFiles([row({ path: 'R1/s.jpg', name: 's.jpg', takenAtSource: 'filename' })]);
+        const k = db.listSuggestionRows('R1')[0] || {};
+        out.push(sub('28n 조회에 시각 출처가 있음', k.takenAtSource === 'filename', String(k.takenAtSource)));
+      });
+
       // 28l 가짜 6만 건에서 계산 시간 (목표 0.5초, 2초를 넘으면 실패)
       await withDb(env, 'suggest-speed', (db) => {
         fillFakeLibrary(db, 'R1', 60000);
@@ -547,7 +568,7 @@ const items = [
       // src의 .mjs 파일도 React가 없는 순수 계산이에요 (file:// 주소로 불러와요)
       const { pathToFileURL } = require('url');
       const load = (name) => import(pathToFileURL(path.join(__dirname, '..', 'src', name)).href);
-      const { groupKey, settleView } = await load('suggest-view.mjs');
+      const { groupKey, isRepeatClick, settleView } = await load('suggest-view.mjs');
       const { gapText, suggestApplyLabel } = await load('format.mjs');
 
       const group = (day, sourceId, ids) => ({ day, source: { id: sourceId }, targets: ids.map((id) => ({ id })) });
@@ -565,6 +586,11 @@ const items = [
       out.push(sub('31b 보던 묶음이 사라지면 첫 묶음, 체크는 새로', moved.key === groupKey(g2) && moved.unchecked.size === 0));
       out.push(sub('31c 처음 열 때는 첫 묶음', settleView([g1, g2], null).key === key1));
       out.push(sub('31d 묶음이 없으면 null', settleView([], { key: key1, unchecked: new Set() }) === null));
+      // 빠른 두 번 누름의 뒤쪽은 받지 않아요 (보지 않은 다음 묶음에 값이 들어가지 않게). 키보드로 누르면 detail이 0이에요
+      out.push(sub(
+        '31g 두 번째 누름은 무시, 첫 누름과 키보드 누름은 받음',
+        typeof isRepeatClick === 'function' && isRepeatClick({ detail: 2 }) && isRepeatClick({ detail: 3 }) && !isRepeatClick({ detail: 1 }) && !isRepeatClick({ detail: 0 }),
+      ));
 
       out.push(sub(
         '31e 시간 차이 글',
