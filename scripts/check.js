@@ -1,5 +1,5 @@
 // 파일 위치: scripts/check.js
-// 역할: 자동 점검 (npm run check) — docs/점검-푸시-절차.md 의 13개 항목
+// 역할: 자동 점검 (npm run check) — docs/점검-푸시-절차.md 의 14개 항목
 //
 // ⚠️ 샘플(test/samples)은 절대 직접 쓰지 않아요.
 //    임시 폴더(%TEMP%\pvm-check-시각)에 복사한 뒤 그 복사본으로만 실행해요.
@@ -797,6 +797,8 @@ const ITEMS = [
       return out;
     },
   },
+  // 14번부터는 갤러리 점검 (scripts/check-gallery.js)
+  ...require('./check-gallery').items,
 ];
 
 // ---------- 점검 임시 폴더 정리 ----------
