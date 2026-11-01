@@ -802,6 +802,8 @@ const ITEMS = [
   },
   // 14번부터는 갤러리 점검 (scripts/check-gallery.js)
   ...require('./check-gallery').items,
+  // 20번부터는 정보 없는 사진 점검 (scripts/check-missing-info.js)
+  ...require('./check-missing-info').items,
 ];
 
 // ---------- 점검 임시 폴더 정리 ----------

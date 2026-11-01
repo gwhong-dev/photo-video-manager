@@ -1802,4 +1802,5 @@ const items = [
   },
 ];
 
-module.exports = { items, fillFakeLibrary };
+// 다른 점검 파일(check-missing-info.js)도 같은 도우미를 쓸 수 있게 내보내요
+module.exports = { items, fillFakeLibrary, row, sub, withDb, newDbPath, ALL };
