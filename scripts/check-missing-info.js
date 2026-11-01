@@ -725,6 +725,7 @@ const items = [
       let seq = 0;
       const jpath = () => path.join(dir, `manual-edits-${++seq}.jsonl`);
       const errOf = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+      const counts = (r) => ({ applied: r.applied, undone: r.undone, skipped: r.skipped }); // errors 는 23i 에서 따로 확인해요
       const P = (n) => `R1/${n}.jpg`;
       const apply = (batchId, items, over = {}) => ({ type: 'apply', batchId, at: '2026-11-01T10:00:00', root: 'R1', kind: 'location', items, ...over });
       const undo = (batchId, at = '2026-11-01T11:00:00') => ({ type: 'undo', batchId, at });
@@ -763,13 +764,13 @@ const items = [
         const again = recover(db, j);
         out.push(sub(
           '23a apply 두 개와 undo 한 줄: 새 DB에서 b1 적용됨, b2 되돌림, 값은 b2를 되돌린 뒤 상태',
-          same(r, { applied: 2, undone: 1, skipped: 0 }) && first[0] === 'applied' && first[1] === 'undone'
+          same(counts(r), { applied: 2, undone: 1, skipped: 0 }) && first[0] === 'applied' && first[1] === 'undone'
             && same(first[2], val({ lat: 1, lng: 2 })) && same(first[3], val({ lat: 3, lng: 4 })) && first[4].id === 'b1' && first[4].createdAt === '2026-11-01T10:00:00',
           JSON.stringify([r, first]),
         ));
         out.push(sub(
           '23a 다시 recover 해도 아무것도 안 바뀜 (다시 읽은 뒤에도 같음)',
-          same(again, { applied: 0, undone: 0, skipped: 0 }) && same(snap(), first),
+          same(counts(again), { applied: 0, undone: 0, skipped: 0 }) && same(snap(), first),
           JSON.stringify(again),
         ));
       });
@@ -799,7 +800,7 @@ const items = [
         const r3 = recover(db, j);
         out.push(sub(
           '23c recover를 두 번 해도 같음, 이미 DB에 있는 묶음은 건너뜀 (값을 덮어 쓰지 않음)',
-          same(r, { applied: 1, undone: 0, skipped: 0 }) && same(r2, { applied: 0, undone: 0, skipped: 0 }) && same(r3, { applied: 0, undone: 0, skipped: 0 })
+          same(counts(r), { applied: 1, undone: 0, skipped: 0 }) && same(counts(r2), { applied: 0, undone: 0, skipped: 0 }) && same(counts(r3), { applied: 0, undone: 0, skipped: 0 })
             && same(db.getManual(P('z')), val({ lat: 9, lng: 9 })),
           JSON.stringify([r, r2, r3]),
         ));
@@ -821,14 +822,14 @@ const items = [
       await run([A1, undo('b1'), voidOf('undo', 'b1')], (db, r) => {
         out.push(sub(
           '23e void of undo: 묶음은 적용하고 되돌림은 취소 (값이 남음)',
-          same(r, { applied: 1, undone: 0, skipped: 0 }) && db.batchStatus('b1') === 'applied' && same(db.getManual(P('a')), val({ lat: 1, lng: 2 })),
+          same(counts(r), { applied: 1, undone: 0, skipped: 0 }) && db.batchStatus('b1') === 'applied' && same(db.getManual(P('a')), val({ lat: 1, lng: 2 })),
           JSON.stringify(r),
         ));
       });
       await run([voidOf('apply', 'nope'), A1, undo('b1'), A2, voidOf('apply', 'b2')], (db, r) => {
         out.push(sub(
           '23e 앞 줄이 없는 void는 무시하고, 나머지는 순서대로 (b1 적용 후 되돌림, b2는 적용 안 함)',
-          same(r, { applied: 1, undone: 1, skipped: 0 }) && db.batchStatus('b1') === 'undone' && db.batchStatus('b2') === 'none' && db.getManual(P('a')) === null,
+          same(counts(r), { applied: 1, undone: 1, skipped: 0 }) && db.batchStatus('b1') === 'undone' && db.batchStatus('b2') === 'none' && db.getManual(P('a')) === null,
           JSON.stringify(r),
         ));
       });
@@ -841,12 +842,12 @@ const items = [
         await runRaw(`${l1}\n{깨진 줄\n\n${JSON.stringify({ type: 'apply', batchId: 'x' })}\n${cut}`, (db, r) => {
           out.push(sub(
             '23f 깨진 가운데 줄, 모양이 틀린 줄, 끝이 잘린 줄은 건너뛰고 skipped 3 (빈 줄은 안 셈), 나머지는 복구',
-            same(r, { applied: 1, undone: 0, skipped: 3 }) && db.batchStatus('b1') === 'applied' && db.batchStatus('b2') === 'none',
+            same(counts(r), { applied: 1, undone: 0, skipped: 3 }) && db.batchStatus('b1') === 'applied' && db.batchStatus('b2') === 'none',
             JSON.stringify(r),
           ));
         });
         await runRaw(`${l1}\r\n${JSON.stringify(undo('b1'))}\r\n`, (db, r) => {
-          out.push(sub('23f \\r\\n 줄바꿈도 읽음', same(r, { applied: 1, undone: 1, skipped: 0 }), JSON.stringify(r)));
+          out.push(sub('23f \\r\\n 줄바꿈도 읽음', same(counts(r), { applied: 1, undone: 1, skipped: 0 }), JSON.stringify(r)));
         });
         // 끝 줄이 잘린 파일에 append 하면 새 줄이 깨진 줄에 붙지 않음
         const file = jpath();
@@ -867,7 +868,7 @@ const items = [
         const empty = nofile.read();
         await withDb(env, 'recover', (db) => {
           const r = recover(db, nofile);
-          out.push(sub('23g 파일이 없으면 read는 빈 결과, recover는 0, 0, 0', same(empty, { lines: [], skipped: 0 }) && same(r, { applied: 0, undone: 0, skipped: 0 }), JSON.stringify([empty, r])));
+          out.push(sub('23g 파일이 없으면 read는 빈 결과, recover는 0, 0, 0', same(empty, { lines: [], skipped: 0 }) && same(counts(r), { applied: 0, undone: 0, skipped: 0 }), JSON.stringify([empty, r])));
         });
         // 부모가 폴더가 아니라 보통 파일인 경로: 어느 PC에서나 쓸 수 없음
         const blocker = path.join(dir, 'blocker');
@@ -894,7 +895,7 @@ const items = [
           const e = errOf(() => { r = recover(failing(db), j); });
           out.push(sub(
             '23h 적용 중 오류가 난 묶음은 skipped 1, 앞뒤 묶음은 적용, 오류는 밖으로 안 나옴',
-            e === null && same(r, { applied: 2, undone: 0, skipped: 1 }) && db.batchStatus('bad') === 'none' && db.batchStatus('b2') === 'applied',
+            e === null && same(counts(r), { applied: 2, undone: 0, skipped: 1 }) && db.batchStatus('bad') === 'none' && db.batchStatus('b2') === 'applied',
             JSON.stringify([e, r]),
           ));
         });
@@ -902,14 +903,55 @@ const items = [
         await run([A1, A2, undo('b1')], (db, r) => {
           out.push(sub(
             '23h 마지막 묶음이 아닌 것의 undo는 DB가 거절해 skipped 1, 나머지는 그대로',
-            same(r, { applied: 2, undone: 0, skipped: 1 }) && db.batchStatus('b1') === 'applied' && db.batchStatus('b2') === 'applied',
+            same(counts(r), { applied: 2, undone: 0, skipped: 1 }) && db.batchStatus('b1') === 'applied' && db.batchStatus('b2') === 'applied',
             JSON.stringify(r),
           ));
         });
         // 기록 파일을 읽다 오류가 나도 시작은 계속
         await withDb(env, 'recover', (db) => {
           const r = recover(db, { read() { throw new Error('읽기 실패'); } });
-          out.push(sub('23h 기록 파일을 읽다 오류가 나도 recover는 던지지 않고 skipped 1', same(r, { applied: 0, undone: 0, skipped: 1 }), JSON.stringify(r)));
+          out.push(sub('23h 기록 파일을 읽다 오류가 나도 recover는 던지지 않고 skipped 1', same(counts(r), { applied: 0, undone: 0, skipped: 1 }), JSON.stringify(r)));
+        });
+      }
+
+      // 23i 실패한 이유를 errors 로 돌려줘요: [{ batchId, type, message }], 읽을 수 없는 줄과 파일 열기 실패도 포함, 개수 제한
+      {
+        const j = createJournal(jpath());
+        j.append(A1);
+        j.append(apply('bad', [item('c', null, val({ lat: 8, lng: 8 }))]));
+        j.append(A2);
+        j.append(undo('b1')); // 마지막 묶음이 아니라 DB가 거절
+        await withDb(env, 'recover', (db) => {
+          const r = recover(failing(db), j);
+          const bad = r.errors.find((x) => x.batchId === 'bad');
+          const b1 = r.errors.find((x) => x.batchId === 'b1');
+          out.push(sub(
+            '23i 적용 실패와 되돌리기 거절의 이유가 errors에 묶음 번호, 종류, 글자로 담김',
+            Array.isArray(r.errors) && r.errors.length === 2 && !!bad && bad.type === 'apply' && bad.message === '일부러 낸 오류'
+              && !!b1 && b1.type === 'undo' && typeof b1.message === 'string' && b1.message.length > 0 && r.skipped === 2,
+            JSON.stringify(r.errors),
+          ));
+        });
+        await runRaw(`${JSON.stringify(A1)}\n{깨진 줄\n`, (db, r) => {
+          out.push(sub(
+            '23i 읽을 수 없는 줄도 errors에 한 항목으로 담기고 나머지는 복구',
+            r.applied === 1 && r.skipped === 1 && r.errors.length === 1 && r.errors[0].type === 'line' && r.errors[0].message.includes('1'),
+            JSON.stringify(r),
+          ));
+        });
+        await withDb(env, 'recover', (db) => {
+          const r = recover(db, { read() { throw new Error('읽기 실패'); } });
+          out.push(sub('23i 기록 파일을 열 수 없을 때도 errors에 이유가 담김', r.errors.length === 1 && r.errors[0].type === 'file' && r.errors[0].message === '읽기 실패', JSON.stringify(r)));
+        });
+        await run([A1, A2, undo('b2')], (db, r) => {
+          out.push(sub('23i 문제가 없으면 errors는 빈 배열', Array.isArray(r.errors) && r.errors.length === 0, JSON.stringify(r.errors)));
+        });
+        // 실패가 아주 많아도 errors는 20개까지 (skipped는 전부 셈)
+        const many = createJournal(jpath());
+        for (let i = 0; i < 30; i++) many.append(apply('bad', [item('c', null, val({ lat: 8, lng: 8 }))], { at: `2026-11-01T10:00:${String(i).padStart(2, '0')}` }));
+        await withDb(env, 'recover', (db) => {
+          const r = recover(failing(db), many);
+          out.push(sub('23i errors는 20개까지만 담고 skipped는 전부 셈', r.errors.length === 20 && r.skipped === 30, JSON.stringify([r.errors.length, r.skipped])));
         });
       }
 
@@ -1241,6 +1283,15 @@ const items = [
           const st = await f.call('gallery:get-state');
           out.push(sub('24e 이상한 edit(없음, 글자, 빈 객체, 모르는 방법, 기준 없음, 없는 날짜, 25시 등)는 거절하고 값이 안 바뀜', missedEdits.length === 0 && st.manualCount === 0 && !fs.existsSync(jfile(P)), missedEdits.join(', ')));
 
+          // 20,000개를 넘으면 이유를 쉬운 말로 알려 줌 ("목록이 올바르지 않아요"가 아님)
+          const over = Array.from({ length: MAX_TARGETS + 1 }, (_, i) => i + 1);
+          const overMsgs = [await errOf(f.call('gallery:preview-edit', over, edit)), await errOf(f.call('gallery:apply-edit', over, edit))];
+          out.push(sub(
+            '24e 20,000장을 넘게 고르면 "한 번에 20,000장까지" 라고 알려 주고 "올바르지 않아요"라고 하지 않음',
+            overMsgs.every((m) => typeof m === 'string' && m.includes('20,000장') && m.includes('한 번에') && !m.includes('올바르지')),
+            JSON.stringify(overMsgs),
+          ));
+
           // 경계 20,000개는 받음 (없는 id라 0장)
           const edge = await f.call('gallery:preview-edit', Array.from({ length: MAX_TARGETS }, (_, i) => 100000 + i), edit);
           out.push(sub('24e id 20,000개는 받음 (없는 id는 빠져서 0장)', edge.counts.changed === 0 && edge.items.length === 0));
@@ -1413,6 +1464,28 @@ const items = [
             JSON.stringify([st.manualCount, f.db.getManual(aPath), a.lat, a.locationSource]),
           ));
           out.push(sub('24i 복구한 묶음 수를 시작 로그에 남김', startLog.includes('넣기 2개') && startLog.includes('되돌리기 1개'), startLog.slice(0, 200)));
+
+          // 묶음 하나를 DB에 적용하다 실패하면 그 묶음 번호와 이유가 시작 로그에 남음 (갤러리는 켜짐)
+          {
+            const P3 = prep('recover-reason', NAMES);
+            let g = makeFake(P3);
+            await g.call('gallery:apply-edit', [idOf(g, 'a.jpg')], COPY_LOC(idOf(g, 'src.jpg')));
+            const failedId = await lastBatchId(g);
+            g.g.close();
+            for (const ext of ['', '-wal', '-shm']) fs.rmSync(path.join(P3.ud, `library.db${ext}`), { force: true });
+            hooks.failApply = true;
+            hooks.leak = '';
+            g = makeFake(P3);
+            hooks.failApply = false;
+            const stG = await g.call('gallery:get-state');
+            const text = logText(P3, 'gallery-start');
+            out.push(sub(
+              '24i 복구에 실패한 묶음의 번호, 종류, 이유가 시작 로그에 남고 갤러리는 켜짐',
+              !!stG && stG.manualCount === 0 && text.includes(failedId) && text.includes('apply') && text.includes('일부러 낸 저장 오류') && text.includes('건너뜀 1개'),
+              text.replace(/s+/g, " ").slice(0, 300),
+            ));
+            g.g.close();
+          }
 
           // 복구가 오류를 내도 갤러리는 켜지고 오류 로그만 남김
           const P2 = prep('recover-fail', NAMES);
@@ -1650,12 +1723,46 @@ const items = [
       } catch (e) {
         return [sub('src/format.mjs 불러오기', false, e.message)];
       }
-      const { applyLabel, undoLabel, appliedText } = m;
+      const { applyLabel, undoLabel, appliedText, undoneText } = m;
       out.push(sub('26a applyLabel(1234, location) === "1,234장에 위치 넣기" (천 단위 쉼표)', typeof applyLabel === 'function' && applyLabel(1234, 'location') === '1,234장에 위치 넣기', typeof applyLabel === 'function' ? applyLabel(1234, 'location') : '함수 없음'));
       out.push(sub('26b applyLabel(3, both) === "3장에 날짜와 위치 넣기", date는 날짜', typeof applyLabel === 'function' && applyLabel(3, 'both') === '3장에 날짜와 위치 넣기' && applyLabel(1, 'date') === '1장에 날짜 넣기'));
       out.push(sub('26c 0장이거나 모르는 종류면 빈 글자 (화면은 버튼을 끄고 "바꿀 사진이 없어요"를 보임)', typeof applyLabel === 'function' && applyLabel(0, 'date') === '' && applyLabel(0, 'location') === '' && applyLabel(5, 'nope') === '' && applyLabel(undefined, 'date') === ''));
       out.push(sub('26d undoLabel(2, date) === "2장 날짜 되돌리기", 124장 위치, 0장은 빈 글자', typeof undoLabel === 'function' && undoLabel(2, 'date') === '2장 날짜 되돌리기' && undoLabel(124, 'location') === '124장 위치 되돌리기' && undoLabel(7, 'both') === '7장 날짜와 위치 되돌리기' && undoLabel(0, 'date') === ''));
       out.push(sub('26e appliedText: 넣은 직후 알림 줄 글 ("124장에 위치를 넣었어요")', typeof appliedText === 'function' && appliedText(124, 'location') === '124장에 위치를 넣었어요' && appliedText(3, 'date') === '3장에 날짜를 넣었어요' && appliedText(3, 'both') === '3장에 날짜와 위치를 넣었어요' && appliedText(0, 'date') === ''));
+      out.push(sub(
+        '26f undoneText: 되돌린 직후 알림 줄 글 ("4장 위치를 되돌렸어요"), 0장이나 모르는 종류는 빈 글자',
+        typeof undoneText === 'function' && undoneText(4, 'location') === '4장 위치를 되돌렸어요' && undoneText(1234, 'date') === '1,234장 날짜를 되돌렸어요' && undoneText(2, 'both') === '2장 날짜와 위치를 되돌렸어요' && undoneText(0, 'date') === '' && undoneText(3, 'nope') === '',
+        typeof undoneText === 'function' ? undoneText(4, 'location') : '함수 없음',
+      ));
+      return out;
+    },
+  },
+  {
+    no: 27,
+    name: '정보 없는 사진 화면 열기',
+    async run(env) {
+      // 샘플 복사본을 백업 폴더로 정한 임시 userData로 앱을 띄우고, 왼쪽 메뉴 "정보 없는 사진"을 눌러 탭 글자와 화면 오류를 봐요
+      //   (진짜 설정, 진짜 사진은 읽지 않아요. 눌러 보는 것은 메뉴 하나뿐이고 값은 넣지 않아요)
+      const out = [];
+      const APP = path.join(__dirname, '..');
+      const { launchCheck } = require('./launch-check');
+      const copyRoot = path.join(env.tmp, 'launch-missing-root');
+      fs.cpSync(path.join(APP, 'test', 'samples', 'auto'), copyRoot, { recursive: true });
+      const ud = path.join(env.tmp, 'launch-missing-ud');
+      fs.mkdirSync(ud, { recursive: true });
+      fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: copyRoot }), 'utf8');
+      const r = await launchCheck(APP, {
+        port: 9336,
+        env: { PVM_USER_DATA: ud },
+        until: '10.28', // 사진을 다 읽어 와서 갤러리에 날짜가 보일 때까지
+        clickText: '정보 없는 사진',
+        clickUntil: '내가 넣은 정보', // 눌러서 화면이 바뀌면 탭 글자가 보여요
+        probe: "(document.querySelector('nav [aria-current=page] .menu-label') || {}).textContent || ''",
+      });
+      const tabs = ['위치 없음', '날짜 없음', '내가 넣은 정보'];
+      out.push(sub('27a 메뉴를 눌렀고 눌린 메뉴가 "정보 없는 사진"으로 표시됨', r.clicked === true && r.probed === '정보 없는 사진', `눌림 ${r.clicked}, 표시된 메뉴 "${r.probed}"`));
+      out.push(sub('27b 탭 글자 "위치 없음", "날짜 없음", "내가 넣은 정보"가 보임', tabs.every((t) => String(r.text).includes(t)), `화면 글자: ${String(r.text).slice(0, 200).replace(/s+/g, ' ')}`));
+      out.push(sub('27c 화면 오류 없음, 정상 종료, 불러오지 못했다는 글 없음', r.errors.length === 0 && r.exitCode === 0 && !String(r.text).includes('불러오지 못했어요'), `${r.errors.join(' / ')} 종료 코드 ${r.exitCode}`));
       return out;
     },
   },

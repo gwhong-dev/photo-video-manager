@@ -65,8 +65,12 @@ function cleanFilter(f) {
 
 // 화면에서 온 id 배열 검사: 1 이상의 안전한 정수만, 한 번에 최대 MAX_TARGETS개
 function checkIds(ids) {
-  if (!Array.isArray(ids) || ids.length > MAX_TARGETS || !ids.every((n) => Number.isSafeInteger(n) && n > 0)) {
-    throw new Error(`파일 번호 목록이 올바르지 않아요 (한 번에 ${MAX_TARGETS.toLocaleString('en-US')}장까지)`);
+  // 너무 많이 골랐을 때는 이유를 그대로 알려 줘요
+  if (Array.isArray(ids) && ids.length > MAX_TARGETS) {
+    throw new Error(`한 번에 ${MAX_TARGETS.toLocaleString('en-US')}장까지만 넣을 수 있어요. 선택을 줄여 주세요.`);
+  }
+  if (!Array.isArray(ids) || !ids.every((n) => Number.isSafeInteger(n) && n > 0)) {
+    throw new Error('파일 번호 목록이 올바르지 않아요');
   }
   return ids;
 }
@@ -131,7 +135,9 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     try {
       const r = recover(db, journal);
       if (r.applied || r.undone || r.skipped) {
-        startupLog([`기록 파일에서 직접 넣은 값을 복구했어요: 넣기 ${r.applied}개, 되돌리기 ${r.undone}개, 건너뜀 ${r.skipped}개`]);
+        // 건너뛴 이유도 같이 남겨요 (묶음 번호, 종류, 이유). 사진 파일 경로는 안 들어가는 글만이에요
+        const why = (r.errors || []).map((x) => `  건너뜀: ${x.batchId ? `묶음 ${x.batchId} ` : ''}(${x.type}) ${x.message}`);
+        startupLog([`기록 파일에서 직접 넣은 값을 복구했어요: 넣기 ${r.applied}개, 되돌리기 ${r.undone}개, 건너뜀 ${r.skipped}개`, ...why]);
       }
     } catch (e) {
       errorLog('직접 넣은 값 복구', e);

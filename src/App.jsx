@@ -6,7 +6,8 @@
 //   고른 사진들(selection)은 탭, 필터(검색어와 태그 포함), 화면이 바뀌면 비워요. 정렬이 바뀔 때와 목록 갱신 때는 그대로 둬요
 //   날짜와 위치 넣기: 우클릭 메뉴(ContextMenu)나 오른쪽 패널 버튼 -> 미리보기 창(EditDialog) -> 넣기 -> 되돌리기 줄(UndoBar)
 //   복사한 값(copySource)은 기준 사진의 번호와 요약만 기억해요. 화면을 바꿔도 남고, 프로그램을 끄면 사라져요
-//   값을 넣은 뒤에는 선택을 비워요. 오류는 모두 기존 notice 줄로 보여요
+//   값을 넣은 뒤와 되돌린 뒤에는 선택을 비워요. 오류와 "N장 위치를 되돌렸어요" 알림은 모두 기존 notice 줄로 보여요
+//   화면을 바꿔도 검색어는 그대로예요 (선택은 비워져요)
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from './api.js';
@@ -19,6 +20,7 @@ import ScanBanner from './components/ScanBanner.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Toolbar from './components/Toolbar.jsx';
 import UndoBar from './components/UndoBar.jsx';
+import { undoneText } from './format.mjs';
 import { EMPTY_SELECTION, filterScope, nextSelection, selectionForMenu, selectionOf, viewMatches } from './selection.mjs';
 
 const START_FILTER = { tab: 'all', sort: 'newest', query: '', tag: null };
@@ -183,12 +185,12 @@ export default function App() {
     setSearchText('');
     setFilter({ ...START_FILTER, sort: filter.sort, ...(filter.info ? { info: filter.info } : {}) }); // 정보 없는 사진 화면이면 그 탭은 그대로
   };
-  // 화면 바꾸기: 필터는 처음 모양으로 (정보 없는 사진 화면은 위치 없음 탭부터), 정렬만 그대로
+  // 화면 바꾸기: 필터는 처음 모양으로 (정보 없는 사진 화면은 위치 없음 탭부터), 정렬과 검색어는 그대로
+  //   (갤러리에서 날짜를 찾아 복사한 뒤 정보 없는 사진 화면으로 가도 그 검색이 남아 있게). 고른 사진은 화면이 바뀌어서 비워져요
   const goScreen = (next) => {
     if (next === screen) return;
     setScreen(next);
-    setSearchText('');
-    setFilter({ ...(next === 'missing' ? MISSING_FILTER : START_FILTER), sort: filter.sort });
+    setFilter({ ...(next === 'missing' ? MISSING_FILTER : START_FILTER), sort: filter.sort, query: filter.query });
   };
 
   // ---------- 고르기 ----------
@@ -280,7 +282,13 @@ export default function App() {
     setNotice('');
     try {
       const result = await api.undoLast(batchId);
-      if (!result) setNotice('되돌릴 작업이 없어요.');
+      if (!result) {
+        setNotice('되돌릴 작업이 없어요.');
+      } else {
+        // 되돌린 사진은 목록에서 빠지거나 바뀌어요. 선택이 남아 있으면 이미 목록에 없는 사진에 다음 작업이 갈 수 있어서 비워요
+        setSelection(EMPTY_SELECTION);
+        setNotice(undoneText(result.count, result.kind));
+      }
       setJustApplied(null);
     } catch (e) {
       setNotice(errorText(e));

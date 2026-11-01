@@ -62,3 +62,8 @@ export function undoLabel(count, kind) {
 export function appliedText(count, kind) {
   return countOk(count) && KIND_OBJECT[kind] ? `${formatCount(count)}장에 ${KIND_OBJECT[kind]} 넣었어요` : '';
 }
+
+// 되돌린 직후 알림 줄의 글: "4장 위치를 되돌렸어요"
+export function undoneText(count, kind) {
+  return countOk(count) && KIND_OBJECT[kind] ? `${formatCount(count)}장 ${KIND_OBJECT[kind]} 되돌렸어요` : '';
+}
