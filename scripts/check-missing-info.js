@@ -495,6 +495,224 @@ const items = [
       return out;
     },
   },
+  {
+    no: 22,
+    name: '미리보기 계산',
+    async run() {
+      const out = [];
+      const { normalizeRequest, planEdit, toPreview, MAX_TARGETS } = require('../lib/manual-edit');
+      const YEAR = 2026;
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      // getFilesByIds 줄 모양의 시험용 줄 (id와 missing을 더함)
+      const R = (id, over = {}) => ({ ...row({ path: `R1/${id}.jpg`, name: `${id}.jpg` }), id, missing: 0, ...over });
+      const noManual = () => null;
+      // 함수가 던진 오류 글자 (안 던지면 null)
+      const errOf = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+      const copy = (S, pick) => normalizeRequest({ source: 'copy', sourceId: S.id, date: false, time: false, location: false, ...pick }, { sourceRow: S, year: YEAR });
+      const takenAts = (plan) => plan.items.map((i) => i.after.takenAt);
+
+      // 22a 날짜+시간: 기준 14:00:30부터 +1초. 순서는 찍은 시각, 이름, id (날짜 없는 파일은 맨 뒤)
+      {
+        const S = R(100, { takenAt: '2026-10-25T14:00:30', takenOffset: '+09:00' });
+        const rows = [
+          R(5, { name: 'z.jpg', takenAt: '2026-03-01T00:00:00' }),
+          R(1, { name: 'a.jpg', takenAt: null, takenOffset: null, takenDay: null, takenAtSource: null }),
+          R(2, { name: 'b.jpg', takenAt: '2026-03-01T00:00:00' }),
+        ];
+        const plan = planEdit(rows, copy(S, { date: true, time: true }), noManual, 'R1');
+        out.push(sub(
+          '22a 날짜+시간: b(2) → z(5) → 날짜 없는 a(1) 순서로 14:00:30, :31, :32',
+          same(plan.items.map((i) => i.id), [2, 5, 1]) && same(takenAts(plan), ['2026-10-25T14:00:30', '2026-10-25T14:00:31', '2026-10-25T14:00:32'])
+            && plan.items.every((i) => i.afterManual.takenOffset === '+09:00' && i.afterManual.lat === null) && plan.kind === 'date',
+          JSON.stringify(plan.items.map((i) => [i.id, i.after.takenAt])),
+        ));
+        // 찍은 시각과 이름이 같으면 id 순서
+        const tie = planEdit([R(9, { name: 'x.jpg' }), R(8, { name: 'x.jpg' })], copy(S, { date: true, time: true }), noManual, 'R1');
+        out.push(sub('22a 찍은 시각과 이름이 같으면 id 순서', same(tie.items.map((i) => i.id), [8, 9]), JSON.stringify(tie.items.map((i) => i.id))));
+      }
+
+      // 22b 23:59:59부터 넘어가면 다음 날 00:00:00 (찍은 날도 바뀜). 해가 넘어가도 맞음
+      {
+        const S = R(100, { takenAt: '2026-10-25T23:59:59', takenOffset: '+09:00' });
+        const plan = planEdit([R(1, { takenAt: null }), R(2, { takenAt: null }), R(3, { takenAt: null })], copy(S, { date: true, time: true }), noManual, 'R1');
+        out.push(sub(
+          '22b 23:59:59 다음은 다음 날 00:00:00, 00:00:01 (찍은 날 앞 10글자도 바뀜)',
+          same(takenAts(plan), ['2026-10-25T23:59:59', '2026-10-26T00:00:00', '2026-10-26T00:00:01']) && plan.items[1].after.takenAt.slice(0, 10) === '2026-10-26',
+          JSON.stringify(takenAts(plan)),
+        ));
+        const S2 = R(100, { takenAt: '2025-12-31T23:59:59', takenOffset: '+09:00' });
+        const plan2 = planEdit([R(1), R(2)], copy(S2, { date: true, time: true }), noManual, 'R1');
+        out.push(sub('22b 12월 31일 밤에서 다음 해 1월 1일로 넘어감', same(takenAts(plan2), ['2025-12-31T23:59:59', '2026-01-01T00:00:00']), JSON.stringify(takenAts(plan2))));
+      }
+
+      // 22c 날짜만: 각 파일의 시각과 시간대를 유지. 시각이 없으면 12:00:00과 기준 시간대
+      {
+        const S = R(100, { takenAt: '2026-10-25T14:00:30', takenOffset: '+09:00' });
+        const rows = [
+          R(1, { takenAt: '2024-03-05T08:15:00', takenOffset: '-05:00' }),
+          R(2, { takenAt: null, takenOffset: null, takenDay: null, takenAtSource: null }),
+        ];
+        const plan = planEdit(rows, copy(S, { date: true }), noManual, 'R1');
+        const [a, b] = plan.items;
+        out.push(sub(
+          '22c 날짜만: 시각과 시간대 유지, 시각이 없으면 12:00:00과 기준 시간대',
+          a.after.takenAt === '2026-10-25T08:15:00' && a.afterManual.takenOffset === '-05:00'
+            && b.after.takenAt === '2026-10-25T12:00:00' && b.afterManual.takenOffset === '+09:00',
+          JSON.stringify([a.after.takenAt, a.afterManual.takenOffset, b.after.takenAt, b.afterManual.takenOffset]),
+        ));
+      }
+
+      // 22d 직접 넣기: 시간대 +09:00, 시간 기본 12:00:00, +1초 규칙 같음
+      {
+        const r1 = normalizeRequest({ source: 'direct', date: '2024-03-05' }, { sourceRow: null, year: YEAR });
+        const p1 = planEdit([R(1), R(2)], r1, noManual, 'R1');
+        out.push(sub(
+          '22d 직접 넣기: 시간을 안 주면 12:00:00부터, 시간대 +09:00',
+          same(takenAts(p1), ['2024-03-05T12:00:00', '2024-03-05T12:00:01']) && p1.items.every((i) => i.afterManual.takenOffset === '+09:00') && r1.sourceId === null && r1.kind === 'date',
+          JSON.stringify(takenAts(p1)),
+        ));
+        const r2 = normalizeRequest({ source: 'direct', date: '2024-03-05', time: '23:59:59' }, { sourceRow: null, year: YEAR });
+        const p2 = planEdit([R(1), R(2)], r2, noManual, 'R1');
+        out.push(sub('22d 직접 넣기 + 시간: 23:59:59 다음은 다음 날', same(takenAts(p2), ['2024-03-05T23:59:59', '2024-03-06T00:00:00']), JSON.stringify(takenAts(p2))));
+      }
+
+      // 22e 위치: 위도 0, 경도 0도 복사. 기준에 위치가 없으면 오류
+      {
+        const S = R(100, { lat: 0, lng: 0, locationSource: 'gps' });
+        const plan = planEdit([R(1)], copy(S, { location: true }), noManual, 'R1');
+        const it = plan.items[0];
+        out.push(sub(
+          '22e 위도 0, 경도 0도 값으로 복사 (없는 값으로 보지 않음)',
+          it.status === 'changed' && it.after.lat === 0 && it.after.lng === 0 && it.afterManual.lat === 0 && it.afterManual.lng === 0 && plan.kind === 'location',
+          JSON.stringify([it.status, it.after, it.afterManual]),
+        ));
+        const e1 = errOf(() => copy(R(101, { lat: null, lng: null }), { location: true }));
+        const e2 = errOf(() => copy(R(102, { lat: 10, lng: null }), { location: true }));
+        out.push(sub('22e 기준에 위치가 없는데 위치를 고르면 오류', !!e1 && !!e2, JSON.stringify([e1, e2])));
+      }
+
+      // 22f 고를 수 없는 조합은 오류
+      {
+        const noDate = R(100, { takenAt: null, takenOffset: null, takenDay: null, takenAtSource: null, lat: 1, lng: 2 });
+        const full = R(101, { lat: 1, lng: 2 });
+        const e1 = errOf(() => copy(noDate, { date: true }));
+        const e2 = errOf(() => copy(full, { time: true }));
+        const e3 = errOf(() => copy(full, {}));
+        const e4 = errOf(() => copy(noDate, { location: true }));
+        out.push(sub(
+          '22f 기준에 날짜가 없는데 날짜를 고르면, 날짜 없이 시간만 고르면, 아무것도 안 고르면 오류. 위치만이면 날짜 없어도 됨',
+          !!e1 && !!e2 && !!e3 && e4 === null,
+          JSON.stringify([e1, e2, e3, e4]),
+        ));
+      }
+
+      // 22g 기준 사진 자신, missing, 다른 root 줄은 빠지고 excluded에 셈
+      {
+        const S = R(100, { lat: 1, lng: 2, locationSource: 'gps' });
+        const rows = [S, R(1), R(2, { missing: 1 }), R(3, { root: 'R2', path: 'R2/3.jpg' }), R(4)];
+        const plan = planEdit(rows, copy(S, { location: true }), noManual, 'R1');
+        out.push(sub(
+          '22g 기준 사진 자신, 사라진 파일, 다른 root 줄은 빠지고 excluded 3',
+          same(plan.items.map((i) => i.id), [1, 4]) && plan.counts.excluded === 3 && plan.counts.changed === 2,
+          JSON.stringify([plan.items.map((i) => i.id), plan.counts]),
+        ));
+      }
+
+      // 22h 값이 같으면 same. 다른 값이 있던 파일은 overwrite와 hadValue. 위치만 넣을 때 날짜값은 비교하지 않음
+      {
+        const S = R(100, { lat: 37.5, lng: 127, locationSource: 'gps' });
+        const prev = val({ lat: 37.5, lng: 127 });
+        const rows = [
+          R(1, { lat: 37.5, lng: 127, locationSource: 'gps', takenAt: '2000-01-01T00:00:00' }),
+          R(2, { lat: 10, lng: 20, locationSource: 'gps' }),
+          R(3),
+        ];
+        const plan = planEdit(rows, copy(S, { location: true }), (p) => (p === 'R1/1.jpg' ? prev : null), 'R1');
+        const [a, b, c] = plan.items;
+        out.push(sub(
+          '22h 같은 위치는 same (날짜가 달라도 비교 안 함), 다른 위치가 있던 파일은 overwrite, 위치 없던 파일은 changed',
+          a.status === 'same' && !a.hadValue && b.status === 'changed' && b.hadValue && c.status === 'changed' && !c.hadValue
+            && same(plan.counts, { changed: 2, same: 1, overwrite: 1, excluded: 0 }),
+          JSON.stringify(plan.counts),
+        ));
+        out.push(sub(
+          '22h same 줄은 afterManual이 beforeManual과 같음, before와 after는 지금 보이는 값',
+          same(a.afterManual, prev) && a.beforeManual === prev && b.beforeManual === null && same(b.before, { takenAt: '2026-10-25T14:00:30', lat: 10, lng: 20 }) && same(b.after, { takenAt: '2026-10-25T14:00:30', lat: 37.5, lng: 127 }),
+          JSON.stringify([a.afterManual, b.before, b.after]),
+        ));
+        // 날짜가 이미 있는 파일에 날짜를 넣으면 overwrite
+        const S2 = R(101, { takenAt: '2026-10-25T14:00:30', takenOffset: '+09:00' });
+        const dplan = planEdit([R(1, { takenAt: '2020-01-01T00:00:00' }), R(2, { takenAt: null, takenOffset: null, takenDay: null, takenAtSource: null })], copy(S2, { date: true, time: true }), noManual, 'R1');
+        out.push(sub('22h 날짜가 있던 파일에 날짜를 넣으면 overwrite, 없던 파일은 아님', same(dplan.counts, { changed: 2, same: 0, overwrite: 1, excluded: 0 }), JSON.stringify(dplan.counts)));
+        // 같은 시각이어도 시간대가 다르면 changed
+        const S3 = R(102, { takenAt: '2026-10-25T14:00:30', takenOffset: '+09:00' });
+        const zplan = planEdit([R(1, { takenAt: '2026-10-25T14:00:30', takenOffset: null })], copy(S3, { date: true, time: true }), noManual, 'R1');
+        out.push(sub('22h 날짜+시간이 모두 같으면 same, 시간대만 달라도 changed', zplan.items[0].status === 'changed'
+          && planEdit([R(1, { takenAt: '2026-10-25T14:00:30', takenOffset: '+09:00' })], copy(S3, { date: true, time: true }), noManual, 'R1').items[0].status === 'same'));
+      }
+
+      // 22i afterManual은 이전 직접 넣은 값과 합침: 날짜를 넣은 파일에 위치를 넣으면 둘 다 있음
+      {
+        const S = R(100, { lat: 37.5, lng: 127, locationSource: 'gps' });
+        const prev = val({ takenAt: '2024-03-05T12:00:00', takenOffset: '+09:00' });
+        const plan = planEdit([R(1, { takenAt: '2024-03-05T12:00:00', takenAtSource: 'manual' })], copy(S, { location: true }), () => prev, 'R1');
+        const it = plan.items[0];
+        out.push(sub(
+          '22i 날짜를 직접 넣은 파일에 위치를 넣으면 afterManual에 날짜와 위치가 둘 다 있음 (beforeManual은 그대로)',
+          same(it.afterManual, { takenAt: '2024-03-05T12:00:00', takenOffset: '+09:00', lat: 37.5, lng: 127 }) && same(it.beforeManual, val({ takenAt: '2024-03-05T12:00:00', takenOffset: '+09:00' })),
+          JSON.stringify([it.beforeManual, it.afterManual]),
+        ));
+      }
+
+      // 22j 전부 same이면 changed 0
+      {
+        const S = R(100, { lat: 37.5, lng: 127, locationSource: 'gps' });
+        const plan = planEdit([R(1, { lat: 37.5, lng: 127 }), R(2, { lat: 37.5, lng: 127 })], copy(S, { location: true }), noManual, 'R1');
+        out.push(sub('22j 전부 같은 값이면 changed 0, same 2', same(plan.counts, { changed: 0, same: 2, overwrite: 0, excluded: 0 }), JSON.stringify(plan.counts)));
+        const big = Array.from({ length: MAX_TARGETS + 1 }, (_, i) => R(i + 1));
+        out.push(sub('22j 한 번에 최대 20,000장 (20,001장이면 오류)', MAX_TARGETS === 20000 && !!errOf(() => planEdit(big, copy(S, { location: true }), noManual, 'R1')) && errOf(() => planEdit(big.slice(0, MAX_TARGETS), copy(S, { location: true }), noManual, 'R1')) === null));
+      }
+
+      // 22k 잘못된 값 거절
+      {
+        const direct = (date, time) => errOf(() => normalizeRequest({ source: 'direct', date, time }, { sourceRow: null, year: YEAR }));
+        const bad = [
+          ['2026-02-30', direct('2026-02-30')], ['2023-02-29', direct('2023-02-29')], ['1899-12-31', direct('1899-12-31')],
+          ['내년 2027-01-01', direct('2027-01-01')], ["'2026-1-1'", direct('2026-1-1')], ['시각 25:00:00', direct('2026-01-01', '25:00:00')],
+          ['시각 12:60:00', direct('2026-01-01', '12:60:00')], ['시각 12:00', direct('2026-01-01', '12:00')], ['날짜 없음', direct(undefined)], ['날짜 숫자', direct(20260101)],
+        ];
+        const badLat = errOf(() => copy(R(100, { lat: 91, lng: 0 }), { location: true }));
+        const badLng = errOf(() => copy(R(100, { lat: 0, lng: 181 }), { location: true }));
+        const notObj = errOf(() => normalizeRequest(null, { sourceRow: null, year: YEAR }));
+        const badSource = errOf(() => normalizeRequest({ source: 'x' }, { sourceRow: null, year: YEAR }));
+        const noSourceRow = errOf(() => normalizeRequest({ source: 'copy', sourceId: 5, date: true }, { sourceRow: null, year: YEAR }));
+        const missed = bad.filter(([, e]) => !e).map(([n]) => n);
+        out.push(sub('22k 날짜와 시각 모양 거절: 없는 날, 1900년 앞, 내년, 한 자리 월, 25시, 60분 등', missed.length === 0, `거절 못한 것: ${missed.join(', ')}`));
+        out.push(sub('22k 위도 91, 경도 181, 이상한 요청, 기준 사진 없음 거절', !!badLat && !!badLng && !!notObj && !!badSource && !!noSourceRow, JSON.stringify([badLat, badLng, notObj, badSource, noSourceRow])));
+        const okEdge = ['1900-01-01', '2026-12-31', '2024-02-29'].map((d) => direct(d));
+        out.push(sub('22k 경계 값(1900-01-01, 올해 12-31, 윤일)은 받음', okEdge.every((e) => e === null), JSON.stringify(okEdge)));
+      }
+
+      // 22l toPreview: 경로와 manual 값이 없고, 101장이면 100줄과 more 1
+      {
+        const S = R(1000, { lat: 37.5, lng: 127, locationSource: 'gps' });
+        const rows = Array.from({ length: 101 }, (_, i) => R(i + 1));
+        const plan = planEdit(rows, copy(S, { location: true }), noManual, 'R1');
+        const pv = toPreview(plan);
+        const json = JSON.stringify(pv);
+        out.push(sub(
+          '22l toPreview: 100줄과 more 1, 경로와 manual 값은 없음, 개수와 종류는 그대로',
+          pv.items.length === 100 && pv.more === 1 && !json.includes('"path"') && !json.includes('Manual') && !json.includes('R1/') && pv.kind === 'location' && pv.counts.changed === 101
+            && pv.items[0].id === 1 && pv.items[0].name === '1.jpg' && pv.items[0].status === 'changed',
+          json.slice(0, 200),
+        ));
+        const small = toPreview(planEdit(rows.slice(0, 3), copy(S, { location: true }), noManual, 'R1'));
+        out.push(sub('22l 100장 이하면 more 0', small.items.length === 3 && small.more === 0));
+      }
+
+      return out;
+    },
+  },
 ];
 
 module.exports = { items };
