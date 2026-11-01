@@ -713,6 +713,209 @@ const items = [
       return out;
     },
   },
+  {
+    no: 23,
+    name: '기록 파일과 복구',
+    async run(env) {
+      const out = [];
+      const { createJournal, recover } = require('../lib/manual-journal');
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const dir = path.join(env.tmp, 'journal');
+      fs.mkdirSync(dir, { recursive: true });
+      let seq = 0;
+      const jpath = () => path.join(dir, `manual-edits-${++seq}.jsonl`);
+      const errOf = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+      const P = (n) => `R1/${n}.jpg`;
+      const apply = (batchId, items, over = {}) => ({ type: 'apply', batchId, at: '2026-11-01T10:00:00', root: 'R1', kind: 'location', items, ...over });
+      const undo = (batchId, at = '2026-11-01T11:00:00') => ({ type: 'undo', batchId, at });
+      const voidOf = (of, batchId) => ({ type: 'void', of, batchId });
+      const item = (n, before, after) => ({ path: P(n), before, after });
+      // 줄들을 새 기록 파일에 쓰고, 새 DB에 recover 한 뒤 fn(db, 결과, 기록 도구)을 실행해요
+      const run = async (lines, fn) => {
+        const j = createJournal(jpath());
+        for (const l of lines) j.append(l);
+        return withDb(env, 'recover', (db) => fn(db, recover(db, j), j));
+      };
+      // 직접 쓴 글자(깨진 줄 등)를 기록 파일로 두고 recover
+      const runRaw = async (text, fn) => {
+        const file = jpath();
+        fs.writeFileSync(file, text, 'utf8');
+        const j = createJournal(file);
+        return withDb(env, 'recover', (db) => fn(db, recover(db, j), j));
+      };
+      // DB 적용만 일부러 실패시키는 껍데기 (id가 'bad'인 묶음)
+      const failing = (db) => ({
+        batchStatus: (id) => db.batchStatus(id),
+        undoBatch: (id, at) => db.undoBatch(id, at),
+        applyManualBatch(b) {
+          if (b.id === 'bad') throw new Error('일부러 낸 오류');
+          return db.applyManualBatch(b);
+        },
+      });
+      const A1 = apply('b1', [item('a', null, val({ lat: 1, lng: 2 })), item('b', null, val({ lat: 3, lng: 4 }))]);
+      const A2 = apply('b2', [item('a', val({ lat: 1, lng: 2 }), val({ takenAt: '2026-03-05T12:00:00', takenOffset: '+09:00', lat: 1, lng: 2 }))], { kind: 'date', at: '2026-11-01T10:30:00' });
+
+      // 23a apply, undo 줄을 쓰고 새 DB에 recover → 값과 되돌림 상태가 같음, 다시 읽은 뒤에도 같음
+      await run([A1, A2, undo('b2')], (db, r, j) => {
+        db.upsertFiles([row({ path: P('a'), name: 'a.jpg' })]);
+        const snap = () => [db.batchStatus('b1'), db.batchStatus('b2'), db.getManual(P('a')), db.getManual(P('b')), db.lastBatch('R1')];
+        const first = snap();
+        const again = recover(db, j);
+        out.push(sub(
+          '23a apply 두 개와 undo 한 줄: 새 DB에서 b1 적용됨, b2 되돌림, 값은 b2를 되돌린 뒤 상태',
+          same(r, { applied: 2, undone: 1, skipped: 0 }) && first[0] === 'applied' && first[1] === 'undone'
+            && same(first[2], val({ lat: 1, lng: 2 })) && same(first[3], val({ lat: 3, lng: 4 })) && first[4].id === 'b1' && first[4].createdAt === '2026-11-01T10:00:00',
+          JSON.stringify([r, first]),
+        ));
+        out.push(sub(
+          '23a 다시 recover 해도 아무것도 안 바뀜 (다시 읽은 뒤에도 같음)',
+          same(again, { applied: 0, undone: 0, skipped: 0 }) && same(snap(), first),
+          JSON.stringify(again),
+        ));
+      });
+
+      // 23a 파일 줄에도 반영: 파일이 이미 DB에 있으면 보이는 값이 직접 넣은 값
+      await run([A1], (db) => {
+        // recover 뒤에 파일이 들어와도(처음 읽기) 직접 넣은 값이 이김
+        db.upsertFiles([row({ path: P('a'), name: 'a.jpg', lat: 50, lng: 60, locationSource: 'gps' })]);
+        const f = fileByPath(db, 'R1', P('a'));
+        out.push(sub('23a 복구한 값은 나중에 파일을 읽어도 이김 (위치 1, 2)', !!f && f.lat === 1 && f.lng === 2, JSON.stringify(f && [f.lat, f.lng])));
+      });
+
+      // 23b 경로 'R1/한글 #1 %20 "따옴표".jpg' 그대로 복구
+      {
+        const weird = 'R1/한글 #1 %20 "따옴표" \\역슬래시.jpg';
+        await run([apply('w1', [{ path: weird, before: null, after: val({ lat: 5, lng: 6 }) }])], (db, r) => {
+          out.push(sub('23b 한글, #, %20, 따옴표, 역슬래시가 든 경로 그대로 복구', r.applied === 1 && same(db.getManual(weird), val({ lat: 5, lng: 6 })), JSON.stringify(r)));
+        });
+      }
+
+      // 23c 이미 DB에 있는 묶음은 건너뜀 (recover를 두 번 해도 같음)
+      await run([A1], (db, r, j) => {
+        const r2 = recover(db, j);
+        // 먼저 DB에 있던 묶음은 건너뜀 (기록의 다른 값으로 덮어 쓰지 않음)
+        db.applyManualBatch({ id: 'pre', root: 'R1', kind: 'location', createdAt: '2026-11-01T09:00:00', items: [item('z', null, val({ lat: 9, lng: 9 }))] });
+        j.append(apply('pre', [item('z', null, val({ lat: 7, lng: 7 }))]));
+        const r3 = recover(db, j);
+        out.push(sub(
+          '23c recover를 두 번 해도 같음, 이미 DB에 있는 묶음은 건너뜀 (값을 덮어 쓰지 않음)',
+          same(r, { applied: 1, undone: 0, skipped: 0 }) && same(r2, { applied: 0, undone: 0, skipped: 0 }) && same(r3, { applied: 0, undone: 0, skipped: 0 })
+            && same(db.getManual(P('z')), val({ lat: 9, lng: 9 })),
+          JSON.stringify([r, r2, r3]),
+        ));
+      });
+
+      // 23d apply 줄만 있고 DB에 없음(저장 전에 꺼짐) → 적용됨
+      await run([A1], (db, r) => {
+        out.push(sub('23d apply 줄만 있고 DB에 없으면 적용됨', r.applied === 1 && db.batchStatus('b1') === 'applied' && same(db.getManual(P('a')), val({ lat: 1, lng: 2 }))));
+      });
+
+      // 23e void of apply: 그 묶음을 적용하지 않음. void of undo: 묶음은 적용하고 되돌림은 취소
+      await run([A1, voidOf('apply', 'b1'), A2], (db, r) => {
+        out.push(sub(
+          '23e void of apply: 그 묶음은 적용하지 않음, 다른 묶음은 적용',
+          r.applied === 1 && db.batchStatus('b1') === 'none' && db.batchStatus('b2') === 'applied' && db.getManual(P('b')) === null,
+          JSON.stringify(r),
+        ));
+      });
+      await run([A1, undo('b1'), voidOf('undo', 'b1')], (db, r) => {
+        out.push(sub(
+          '23e void of undo: 묶음은 적용하고 되돌림은 취소 (값이 남음)',
+          same(r, { applied: 1, undone: 0, skipped: 0 }) && db.batchStatus('b1') === 'applied' && same(db.getManual(P('a')), val({ lat: 1, lng: 2 })),
+          JSON.stringify(r),
+        ));
+      });
+      await run([voidOf('apply', 'nope'), A1, undo('b1'), A2, voidOf('apply', 'b2')], (db, r) => {
+        out.push(sub(
+          '23e 앞 줄이 없는 void는 무시하고, 나머지는 순서대로 (b1 적용 후 되돌림, b2는 적용 안 함)',
+          same(r, { applied: 1, undone: 1, skipped: 0 }) && db.batchStatus('b1') === 'undone' && db.batchStatus('b2') === 'none' && db.getManual(P('a')) === null,
+          JSON.stringify(r),
+        ));
+      });
+
+      // 23f 끝 줄이 잘린 파일과 깨진 가운데 줄: 건너뛰고 skipped에 셈, 나머지는 복구
+      {
+        const l1 = JSON.stringify(A1);
+        const l2 = JSON.stringify(A2);
+        const cut = l2.slice(0, Math.floor(l2.length / 2));
+        await runRaw(`${l1}\n{깨진 줄\n\n${JSON.stringify({ type: 'apply', batchId: 'x' })}\n${cut}`, (db, r) => {
+          out.push(sub(
+            '23f 깨진 가운데 줄, 모양이 틀린 줄, 끝이 잘린 줄은 건너뛰고 skipped 3 (빈 줄은 안 셈), 나머지는 복구',
+            same(r, { applied: 1, undone: 0, skipped: 3 }) && db.batchStatus('b1') === 'applied' && db.batchStatus('b2') === 'none',
+            JSON.stringify(r),
+          ));
+        });
+        await runRaw(`${l1}\r\n${JSON.stringify(undo('b1'))}\r\n`, (db, r) => {
+          out.push(sub('23f \\r\\n 줄바꿈도 읽음', same(r, { applied: 1, undone: 1, skipped: 0 }), JSON.stringify(r)));
+        });
+        // 끝 줄이 잘린 파일에 append 하면 새 줄이 깨진 줄에 붙지 않음
+        const file = jpath();
+        fs.writeFileSync(file, `${l1}\n${cut}`, 'utf8');
+        const j = createJournal(file);
+        j.append(undo('b1'));
+        const rd = j.read();
+        out.push(sub(
+          '23f 잘린 끝 줄 뒤에 append 해도 새 줄은 온전히 읽힘 (깨진 줄 1개만 skipped)',
+          rd.lines.length === 2 && rd.skipped === 1 && rd.lines[1].type === 'undo',
+          JSON.stringify([rd.lines.length, rd.skipped]),
+        ));
+      }
+
+      // 23g 파일이 없으면 빈 결과. 쓸 수 없는 경로에 append하면 오류
+      {
+        const nofile = createJournal(path.join(dir, 'nothing-here.jsonl'));
+        const empty = nofile.read();
+        await withDb(env, 'recover', (db) => {
+          const r = recover(db, nofile);
+          out.push(sub('23g 파일이 없으면 read는 빈 결과, recover는 0, 0, 0', same(empty, { lines: [], skipped: 0 }) && same(r, { applied: 0, undone: 0, skipped: 0 }), JSON.stringify([empty, r])));
+        });
+        // 부모가 폴더가 아니라 보통 파일인 경로: 어느 PC에서나 쓸 수 없음
+        const blocker = path.join(dir, 'blocker');
+        fs.writeFileSync(blocker, 'x');
+        const bad = createJournal(path.join(blocker, 'manual-edits.jsonl'));
+        const e = errOf(() => bad.append(undo('b1')));
+        out.push(sub('23g 쓸 수 없는 경로(부모가 보통 파일)에 append하면 오류', !!e, String(e)));
+        out.push(sub('23g 그런 경로를 read하면 빈 결과', same(bad.read(), { lines: [], skipped: 0 })));
+        // 폴더가 없으면 만들고 한 줄씩 더함
+        const deep = createJournal(path.join(dir, 'sub', 'deeper', 'm.jsonl'));
+        deep.append(undo('b1'));
+        deep.append(undo('b2'));
+        out.push(sub('23g append는 폴더가 없으면 만들고 한 줄씩 더함', deep.read().lines.length === 2));
+      }
+
+      // 23h 어떤 묶음을 DB에 적용하다 오류가 나도 skipped로 세고 계속함. 시작을 막지 않음
+      {
+        const j = createJournal(jpath());
+        j.append(A1);
+        j.append(apply('bad', [item('c', null, val({ lat: 8, lng: 8 }))]));
+        j.append(A2);
+        await withDb(env, 'recover', (db) => {
+          let r;
+          const e = errOf(() => { r = recover(failing(db), j); });
+          out.push(sub(
+            '23h 적용 중 오류가 난 묶음은 skipped 1, 앞뒤 묶음은 적용, 오류는 밖으로 안 나옴',
+            e === null && same(r, { applied: 2, undone: 0, skipped: 1 }) && db.batchStatus('bad') === 'none' && db.batchStatus('b2') === 'applied',
+            JSON.stringify([e, r]),
+          ));
+        });
+        // 마지막 묶음이 아닌 것의 undo는 DB가 거절 → skipped
+        await run([A1, A2, undo('b1')], (db, r) => {
+          out.push(sub(
+            '23h 마지막 묶음이 아닌 것의 undo는 DB가 거절해 skipped 1, 나머지는 그대로',
+            same(r, { applied: 2, undone: 0, skipped: 1 }) && db.batchStatus('b1') === 'applied' && db.batchStatus('b2') === 'applied',
+            JSON.stringify(r),
+          ));
+        });
+        // 기록 파일을 읽다 오류가 나도 시작은 계속
+        await withDb(env, 'recover', (db) => {
+          const r = recover(db, { read() { throw new Error('읽기 실패'); } });
+          out.push(sub('23h 기록 파일을 읽다 오류가 나도 recover는 던지지 않고 skipped 1', same(r, { applied: 0, undone: 0, skipped: 1 }), JSON.stringify(r)));
+        });
+      }
+
+      return out;
+    },
+  },
 ];
 
 module.exports = { items };
