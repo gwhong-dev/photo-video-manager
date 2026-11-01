@@ -29,13 +29,14 @@ function Row({ label, children, sub }) {
 }
 
 // 값 넣기 버튼들: 우클릭 메뉴와 같은 일을 해요. count = 고른 장수
-function Actions({ count, canCopy, hasCopy, onCopy, onPaste, onDirect }) {
+function Actions({ count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap }) {
   const n = formatCount(count);
   return (
     <div className="panel-actions">
       {canCopy && <button type="button" onClick={onCopy}>날짜와 위치 복사</button>}
       {hasCopy && <button type="button" onClick={onPaste}>{n}장에 붙여넣기</button>}
       <button type="button" onClick={onDirect}>{n}장에 날짜 직접 넣기</button>
+      <button type="button" onClick={onMap}>{n}장 위치 지도에서 고르기</button>
     </div>
   );
 }
@@ -92,12 +93,12 @@ function Preview({ file }) {
 }
 
 // selectedId = 자세히 보여 줄 사진, count = 고른 장수, copySource = 복사해 둔 값 (없으면 null)
-// onCopy / onPaste / onDirect = 버튼을 눌렀을 때 (우클릭 메뉴와 같은 일)
+// onCopy / onPaste / onDirect / onMap = 버튼을 눌렀을 때 (우클릭 메뉴와 같은 일)
 // readOnly = 사진 정보만 보여 줘요 (위치 제안 화면). 값 넣기 버튼과 복사한 값 칸을 그리지 않아요
-export default function DetailPanel({ selectedId, gen, count = 0, copySource = null, onCopy, onPaste, onDirect, readOnly = false }) {
+export default function DetailPanel({ selectedId, gen, count = 0, copySource = null, onCopy, onPaste, onDirect, onMap, readOnly = false }) {
   const { file, error } = useFileInfo(selectedId, gen);
   const actions = readOnly ? null : (
-    <Actions count={count} canCopy={count === 1} hasCopy={!!copySource} onCopy={onCopy} onPaste={onPaste} onDirect={onDirect} />
+    <Actions count={count} canCopy={count === 1} hasCopy={!!copySource} onCopy={onCopy} onPaste={onPaste} onDirect={onDirect} onMap={onMap} />
   );
 
   let body;

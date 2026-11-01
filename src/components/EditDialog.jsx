@@ -2,6 +2,7 @@
 // 역할: 날짜와 위치를 넣기 전에 항상 거치는 미리보기 창 (설계서 6, 8절)
 //   mode="copy"   : 복사해 둔 사진의 날짜, 시간, 위치 중 넣을 것을 골라요 (기준 사진에 없는 값은 꺼져 있어요)
 //   mode="direct" : 달력과 시간을 직접 골라요 (시간 기본 12:00:00)
+//   mode="map"    : 지도에서 위치를 골라요 (MapPicker). 핀을 놓을 때마다 미리보기를 다시 만들어요
 //   칸이 바뀔 때마다 main에 미리보기를 다시 부탁하고, 늦게 온 옛 응답은 버려요 (요청 번호)
 //   현재 칸에 맞는 미리보기가 도착하기 전에는 넣기 버튼이 꺼져 있어요. 넣는 중에는 다시 눌러도 한 번만 저장돼요
 //   창에 보이는 대상 장수는 고른 장수가 아니라 main이 계산한 값이에요 (사라진 사진과 기준 사진은 빠져요)
@@ -10,6 +11,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { applyLabel, formatCoords, formatCount, formatTakenAt } from '../format.mjs';
+import { nextPin } from '../map-view.mjs';
+import MapPicker from './MapPicker.jsx';
 
 const DEFAULT_TIME = '12:00:00'; // 직접 넣기의 시간 기본값
 const PICK_NONE = { date: false, time: false, location: false };
@@ -67,12 +70,15 @@ function changeLines(item, kind) {
 
 // mode, ids(고른 사진 번호들. 열 때의 것을 그대로 써요), source(복사해 둔 값), prefer('date'면 날짜부터 켬)
 // onClose(): 그만두기, onApplied(결과): 넣기가 끝났을 때 (창은 App이 닫아요)
-export default function EditDialog({ mode, ids, source, prefer, onClose, onApplied }) {
+// startAt(지도를 처음 보여 줄 곳), onPinChosen(핀): 지도로 넣기가 끝났을 때 고른 곳을 알려요
+export default function EditDialog({ mode, ids, source, prefer, startAt, onPinChosen, onClose, onApplied }) {
   const copy = mode === 'copy';
+  const map = mode === 'map';
   const has = useMemo(() => sourceHas(source), [source]);
   const [pick, setPick] = useState(() => (copy ? firstPick(has, prefer) : PICK_NONE));
   const [day, setDay] = useState('');
   const [time, setTime] = useState(DEFAULT_TIME);
+  const [pin, setPin] = useState(null); // 지도에서 고른 곳 { lat, lng }
   const [pv, setPv] = useState({ key: null, loading: false, preview: null, error: '' });
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState('');
@@ -87,6 +93,9 @@ export default function EditDialog({ mode, ids, source, prefer, onClose, onAppli
   if (copy) {
     if (!pick.date && !pick.location) pending = '넣을 항목을 골라 주세요';
     else edit = { source: 'copy', sourceId: source.id, date: pick.date, time: pick.date && pick.time, location: pick.location };
+  } else if (map) {
+    if (pin) edit = { source: 'pin', lat: pin.lat, lng: pin.lng };
+    else pending = '지도에서 위치를 골라 주세요';
   } else if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
     pending = '날짜를 골라 주세요';
   } else {
@@ -120,7 +129,8 @@ export default function EditDialog({ mode, ids, source, prefer, onClose, onAppli
       return;
     }
     if (e.key !== 'Tab') return;
-    const items = [...dialogRef.current.querySelectorAll('input:not(:disabled), button:not(:disabled)')];
+    // 지도 칸과 핀(tabindex), 확대 버튼(링크)도 Tab으로 갈 수 있어서 같이 세요
+    const items = [...dialogRef.current.querySelectorAll('input:not(:disabled), button:not(:disabled), a[href], [tabindex="0"]')];
     if (!items.length) return;
     const first = items[0];
     const last = items[items.length - 1];
@@ -155,6 +165,7 @@ export default function EditDialog({ mode, ids, source, prefer, onClose, onAppli
     setApplyError('');
     try {
       const result = await api.applyEdit(ids, edit);
+      if (map && onPinChosen) onPinChosen(pin); // 다음에 지도 창을 열 때의 처음 위치
       onApplied(result); // 창은 App이 닫아요. 여기서는 다시 누를 수 없게 그대로 둬요
     } catch (e) {
       setApplyError(errorText(e));
@@ -177,10 +188,15 @@ export default function EditDialog({ mode, ids, source, prefer, onClose, onAppli
 
   return (
     <div className="dialog-backdrop">
-      <div ref={dialogRef} className="dialog" role="dialog" aria-modal="true" aria-labelledby="edit-title" tabIndex={-1} onKeyDown={onKeyDown}>
-        <h2 id="edit-title" className="dialog-title">{copy ? '붙여넣기' : '날짜 직접 넣기'}</h2>
+      <div ref={dialogRef} className={`dialog${map ? ' map-dialog' : ''}`} role="dialog" aria-modal="true" aria-labelledby="edit-title" tabIndex={-1} onKeyDown={onKeyDown}>
+        <h2 id="edit-title" className="dialog-title">{copy ? '붙여넣기' : map ? '지도에서 위치 고르기' : '날짜 직접 넣기'}</h2>
 
-        {copy ? (
+        {map ? (
+          <div className="dialog-pick">
+            <MapPicker value={pin} onChange={(next) => setPin((p) => nextPin(p, next, applying))} startAt={startAt} disabled={applying} />
+            <p className="map-coords">{pin ? `고른 위치 ${formatCoords(pin.lat, pin.lng)}` : '지도를 누르면 핀이 놓여요. 핀은 끌어서 옮길 수 있어요.'}</p>
+          </div>
+        ) : copy ? (
           <fieldset className="dialog-pick">
             <legend className="dialog-sub">기준 사진 {source.name}. 이 사진은 대상에서 빠져요</legend>
             <label className={has.date ? '' : 'off'}>

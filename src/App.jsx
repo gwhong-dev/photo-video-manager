@@ -9,6 +9,7 @@
 //   값을 넣은 뒤와 되돌린 뒤에는 선택을 비워요. 오류와 "N장 위치를 되돌렸어요" 알림은 모두 기존 notice 줄로 보여요
 //   화면을 바꿔도 검색어는 그대로예요 (선택은 비워져요)
 //   위치 제안 탭(suggestOpen)을 열면 격자 대신 SuggestPanel을 보여 주고, 오른쪽 패널은 읽기 전용이 돼요
+//   지도에서 마지막으로 고른 곳(lastPin)은 다음에 지도 창을 열 때의 처음 위치예요. 프로그램을 끄면 사라져요
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from './api.js';
@@ -50,7 +51,8 @@ export default function App() {
   const [selection, setSelection] = useState(EMPTY_SELECTION); // { ids, anchor, focus }
   const [cellMenuAt, setCellMenuAt] = useState(null); // 우클릭한 자리 { x, y }. 있으면 우클릭 메뉴를 그려요
   const [copySource, setCopySource] = useState(null); // 복사해 둔 값 { id, name, takenAt, lat, lng } (파일 경로 없음)
-  const [dialog, setDialog] = useState(null); // 미리보기 창: { mode: 'copy' | 'direct', ids, prefer }. 열 때의 선택을 그대로 담아요
+  const [dialog, setDialog] = useState(null); // 미리보기 창: { mode: 'copy' | 'direct' | 'map', ids, prefer }. 열 때의 선택을 그대로 담아요
+  const [lastPin, setLastPin] = useState(null); // 이번 실행에서 지도로 마지막에 넣은 곳 { lat, lng }
   const [justApplied, setJustApplied] = useState(null); // 방금 넣은 묶음 { batchId }. 넣은 직후 알림 줄을 보여 줘요
   const [undoing, setUndoing] = useState(false);
   const [syncing, setSyncing] = useState(false); // 넣은 직후 새 상태(마지막 묶음)를 받아오는 중. 그동안 되돌리기 버튼을 꺼요
@@ -444,6 +446,7 @@ export default function App() {
           onCopy={copyValue}
           onPaste={() => openDialog('copy')}
           onDirect={() => openDialog('direct')}
+          onMap={() => openDialog('map')}
         />
       )}
       {showTools && cellMenuAt && selection.ids.size > 0 && (
@@ -455,10 +458,11 @@ export default function App() {
           onCopy={copyValue}
           onPaste={() => openDialog('copy')}
           onDirect={() => openDialog('direct')}
+          onMap={() => openDialog('map')}
           onClose={closeMenu}
         />
       )}
-      {dialog && <EditDialog mode={dialog.mode} ids={dialog.ids} source={copySource} prefer={dialog.prefer} onClose={() => setDialog(null)} onApplied={onApplied} />}
+      {dialog && <EditDialog mode={dialog.mode} ids={dialog.ids} source={copySource} prefer={dialog.prefer} startAt={lastPin} onPinChosen={setLastPin} onClose={() => setDialog(null)} onApplied={onApplied} />}
     </div>
   );
 }

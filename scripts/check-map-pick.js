@@ -3,7 +3,7 @@
 //   빠르게 이 파일만 돌려 볼 때: node scripts/check-map-pick.js
 //   (os.tmpdir()의 pvm-check- 임시 폴더에서 돌리고, 모두 통과하면 그 폴더를 지워요)
 //
-// ⚠️ 진짜 인터넷에는 나가지 않아요. 지도 서버 대신 가짜 응답(fetchImpl)을 넘겨서 확인해요.
+// ⚠️ 진짜 인터넷에는 나가지 않아요. 지도 서버 대신 가짜 응답(fetchImpl)을 넘기거나, 닿지 않는 주소(127.0.0.1:1)를 설정해서 확인해요.
 //    실제 사진과 실제 userData도 쓰지 않아요.
 //
 // 항목 모양은 check-gallery.js 와 같아요: { no, name, run(env) } → [{ label, status, detail }]
@@ -591,7 +591,163 @@ const items = [
       return out;
     },
   },
+  {
+    no: 35,
+    name: '지도 창 (진짜 앱, 끊긴 상태) 과 핀 계산',
+    async run(env) {
+      const out = [];
+      const APP = path.join(__dirname, '..');
+
+      // ---------- 순수 계산 (React와 Leaflet 없이) ----------
+      const { pathToFileURL } = require('url');
+      const { pinFrom, nextPin, createLatest, nearLng } = await import(pathToFileURL(path.join(APP, 'src', 'map-view.mjs')).href);
+      out.push(sub('35g 경도 감기', pinFrom(37, 190).lng === -170 && pinFrom(37, -190).lng === 170 && pinFrom(0, 0).lat === 0, JSON.stringify([pinFrom(37, 190), pinFrom(37, -190)])));
+      out.push(sub('35h 반올림', pinFrom(37.12345678, 127).lat === 37.123457));
+      // 35d 늦은 검색 응답: 새 검색이나 창 닫기 뒤의 옛 번호는 버려요
+      const latest = createLatest();
+      const a = latest.next();
+      const b = latest.next();
+      const newest = b.isCurrent();
+      latest.cancel();
+      out.push(sub('35d 늦은 검색 응답은 버림 (새 검색, 창 닫기)', !a.isCurrent() && newest && !b.isCurrent()));
+      // 35e 넣는 중에는 핀이 안 바뀌어요
+      const here = { lat: 1, lng: 2 };
+      const there = { lat: 3, lng: 4 };
+      out.push(sub('35e 넣는 중에는 핀이 안 바뀜', nextPin(here, there, true) === here && nextPin(here, there, false) === there));
+      // 35e2 날짜변경선 근처에서 지도를 눌러도 핀이 보던 화면 안에 있어요 (값은 감긴 그대로)
+      out.push(sub('35e2 핀은 보고 있는 지구 복사본에 그림', nearLng(-170, 170) === 190 && nearLng(170, -170) === -190 && nearLng(127, 127) === 127, String(nearLng(-170, 170))));
+      // 35i 화면이 직접 나가지 않아요
+      const html = fs.readFileSync(path.join(APP, 'src', 'index.html'), 'utf8');
+      const csp = (html.match(/http-equiv="Content-Security-Policy"\s+content="([^"]*)"/) || [])[1];
+      out.push(sub('35i 화면 보안 설정에 인터넷 주소가 없음', !!csp && !/https?:/.test(csp), String(csp)));
+
+      // ---------- 진짜 앱 ----------
+      // 샘플 복사본과 임시 userData로 띄워요. 지도와 검색 주소는 닿지 않는 127.0.0.1:1 이라 진짜 인터넷에 나가지 않아요. 값은 넣지 않아요
+      const { launchCheck } = require('./launch-check');
+      const copyRoot = path.join(env.tmp, 'launch-map-root');
+      fs.cpSync(path.join(APP, 'test', 'samples', 'auto'), copyRoot, { recursive: true });
+      const ud = path.join(env.tmp, 'launch-map-ud');
+      fs.mkdirSync(ud, { recursive: true });
+      fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({
+        backupRoot: copyRoot,
+        mapTileUrl: 'https://127.0.0.1:1/{z}/{x}/{y}.png',
+        placeSearchUrl: 'https://127.0.0.1:1/search',
+      }), 'utf8');
+      const r = await launchCheck(APP, {
+        port: 9338,
+        env: { PVM_USER_DATA: ud },
+        until: '10.28',
+        probe: `(${mapProbe.toString()})()`,
+      });
+      const q = r.probed || {};
+      const seen = JSON.stringify(q);
+      out.push(sub('35a 지도 크기가 있고 지도 칸이 만들어졌고 검색칸에 초점', q.mapHeight > 0 && q.tileCount > 0 && q.focused === 'INPUT', seen));
+      out.push(sub('35a2 메뉴와 오른쪽 패널에 같은 버튼', q.menuText === '1장 위치 지도에서 고르기' && q.panelText === '1장 위치 지도에서 고르기' && q.title === '지도에서 위치 고르기', seen));
+      out.push(sub('35a3 처음에는 핀이 없고 넣기 버튼이 꺼져 있음', q.start && q.start.pin === false && q.start.button === '지도에서 위치를 골라 주세요' && q.start.disabled === true, seen));
+      out.push(sub('35b 출처가 보이고, 앱을 넘기는 링크가 없음', q.creditText === '© OpenStreetMap 기여자' && q.externalLinks === 0 && q.attribution === 0, seen));
+      out.push(sub('35b2 확대 버튼을 눌러도 창 주소가 그대로', q.zoomClicked === true && q.sameUrl === true, seen));
+      out.push(sub('35b3 검색 안내 문장', q.searchHint === '검색어는 OpenStreetMap 서버로 보내요. 이름이나 전화번호 같은 개인정보는 적지 마세요.', seen));
+      out.push(sub('35c 끊긴 상태의 문장', q.mapError === '지도를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.' && q.searchError === '장소를 찾지 못했어요. 잠시 뒤 다시 눌러 주세요.', seen));
+      // 넣지는 않고 그만둬요
+      out.push(sub('35f 지도를 누르면 핀이 놓이고 미리보기가 만들어져 넣기 버튼이 켜짐', !!q.afterClick && q.afterClick.button.endsWith('위치 넣기') && q.afterClick.pending === false && q.afterClick.pin === true && q.afterClick.disabled === false, seen));
+      out.push(sub('35j 창 안의 Tab 순환과 Esc 닫기 (지도에 초점이 있어도)', q.tabWraps === true && q.shiftTabWraps === true && q.closedByEsc === true && q.undoBar === false, seen));
+      // 끊긴 상태라 지도 칸 실패 로그는 당연히 나와요. 그 밖의 화면 오류는 없어야 해요
+      const realErrors = r.errors.filter((e) => !/Failed to load resource/.test(e));
+      out.push(sub('35k 화면 오류 없음, 정상 종료', realErrors.length === 0 && r.exitCode === 0, `${realErrors.join(' / ')} 종료 코드 ${r.exitCode}`));
+      return out;
+    },
+  },
 ];
+
+// 항목 35가 앱 화면 안에서 돌리는 함수예요. 글자로 바뀌어 넘어가니까 바깥 변수를 쓰면 안 돼요
+//   사진을 고르고 메뉴로 지도 창을 연 뒤, 보이는 값을 모아 돌려줘요. 넣기는 누르지 않아요
+async function mapProbe() {
+  const wait = async (fn, ms = 20000) => {
+    const end = Date.now() + ms;
+    for (;;) {
+      const v = fn();
+      if (v) return v;
+      if (Date.now() > end) return null;
+      await new Promise((res) => setTimeout(res, 100));
+    }
+  };
+  const byText = (sel, text) => [...document.querySelectorAll(sel)].find((b) => (b.innerText || '').includes(text));
+  const q = {};
+  const cell = await wait(() => document.querySelector('button.cell'));
+  if (!cell) return { stop: '사진 칸이 없어요' };
+  cell.click();
+  const panelButton = await wait(() => byText('.panel-actions button', '위치 지도에서 고르기'));
+  q.panelText = panelButton ? panelButton.innerText : '';
+  cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 200, clientY: 200 }));
+  const menuItem = await wait(() => byText('.context-menu button', '위치 지도에서 고르기'));
+  if (!menuItem) return { ...q, stop: '메뉴 항목이 없어요' };
+  q.menuText = menuItem.innerText;
+  menuItem.click();
+
+  const canvas = await wait(() => document.querySelector('.map-canvas'));
+  if (!canvas) return { ...q, stop: '지도가 없어요' };
+  const dialog = document.querySelector('.dialog');
+  const foot = () => dialog.querySelector('.dialog-foot button.primary');
+  q.focused = document.activeElement.tagName;
+  q.title = dialog.querySelector('.dialog-title').innerText;
+  q.start = { pin: !!dialog.querySelector('.map-pin'), button: foot().innerText, disabled: foot().disabled };
+  await wait(() => dialog.querySelector('.leaflet-tile'));
+  q.mapHeight = canvas.offsetHeight;
+  q.tileCount = dialog.querySelectorAll('.leaflet-tile').length;
+  q.creditText = (dialog.querySelector('.map-credit') || {}).innerText;
+  q.externalLinks = document.querySelectorAll('a[href^="http"]').length;
+  q.attribution = document.querySelectorAll('.leaflet-control-attribution').length;
+  const hint = dialog.querySelector('.map-hint');
+  q.searchHint = hint ? hint.innerText : '';
+
+  // 지도 그림 실패 문장
+  const mapError = await wait(() => dialog.querySelector('.map-error'));
+  q.mapError = mapError ? mapError.innerText : '';
+
+  // 검색 실패 문장
+  const input = dialog.querySelector('.map-search input');
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '서울');
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  await new Promise((res) => setTimeout(res, 50));
+  dialog.querySelector('.map-search button').click();
+  const searchError = await wait(() => dialog.querySelector('.map-search-error'));
+  q.searchError = searchError ? searchError.innerText : '';
+
+  // 확대 버튼은 링크 모양이지만 창 주소를 바꾸지 않아요
+  const before = location.href;
+  const zoomIn = dialog.querySelector('.leaflet-control-zoom-in');
+  q.zoomClicked = !!zoomIn;
+  if (zoomIn) zoomIn.click();
+  await new Promise((res) => setTimeout(res, 400));
+  q.sameUrl = location.href === before;
+
+  // 지도 가운데를 누르면 핀이 놓이고 미리보기가 만들어져요
+  const box = canvas.getBoundingClientRect();
+  canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 }));
+  await wait(() => foot().innerText.endsWith('위치 넣기') && !foot().disabled);
+  q.afterClick = {
+    button: foot().innerText,
+    disabled: foot().disabled,
+    pending: dialog.innerText.includes('지도에서 위치를 골라 주세요'),
+    pin: !!dialog.querySelector('.map-pin'),
+  };
+
+  // Tab 순환: 마지막 버튼에서 Tab이면 검색칸으로, 검색칸에서 Shift+Tab이면 마지막 버튼으로
+  const key = (el, opts) => el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...opts }));
+  const last = foot();
+  last.focus();
+  key(last, { key: 'Tab' });
+  q.tabWraps = document.activeElement === input;
+  key(input, { key: 'Tab', shiftKey: true });
+  q.shiftTabWraps = document.activeElement === last;
+
+  // 지도에 초점이 있을 때 Esc를 누르면 창이 닫혀요. 넣지 않았으니 되돌리기 줄은 없어요
+  canvas.focus();
+  key(canvas, { key: 'Escape' });
+  q.closedByEsc = !!(await wait(() => !document.querySelector('.dialog'), 3000));
+  q.undoBar = document.body.innerText.includes('되돌리기');
+  return q;
+}
 
 module.exports = { items };
 
