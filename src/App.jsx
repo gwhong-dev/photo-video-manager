@@ -1,7 +1,9 @@
 // 파일 위치: src/App.jsx
 // 역할: 갤러리 화면 전체. 왼쪽 메뉴(Sidebar), 가운데(Toolbar, ScanBanner, DayGrid), 오른쪽 패널(DetailPanel)을 이어 붙이고
-//   필터(탭, 검색, 정렬, 태그), 날짜 목록, 선택한 사진, 폴더 읽기 상태를 들고 있어요
+//   화면(갤러리 / 정보 없는 사진), 필터(탭, 검색, 정렬, 태그), 날짜 목록, 고른 사진들, 폴더 읽기 상태를 들고 있어요
+//   두 화면은 같은 창 안에서 바뀌어요 (정보 없는 사진 화면은 filter.info 가 있는 갤러리와 같은 격자예요)
 //   읽는 도중에도 목록이 제자리에서 갱신돼요: 알림이 와도 0.5초에 한 번만 다시 불러오고, 스크롤과 선택은 그대로 둬요
+//   고른 사진들(selection)은 탭, 필터(검색어와 태그 포함), 화면이 바뀌면 비워요. 정렬이 바뀔 때와 목록 갱신 때는 그대로 둬요
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from './api.js';
@@ -11,10 +13,19 @@ import EmptyState from './components/EmptyState.jsx';
 import ScanBanner from './components/ScanBanner.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Toolbar from './components/Toolbar.jsx';
+import { EMPTY_SELECTION, nextSelection, selectionForMenu, selectionOf } from './selection.mjs';
 
 const START_FILTER = { tab: 'all', sort: 'newest', query: '', tag: null };
 const SEARCH_DELAY_MS = 200; // 입력을 멈추고 이 시간이 지나면 검색
 const REFRESH_GAP_MS = 500; // 목록 갱신 알림은 이 간격에 한 번만 받아들여요
+const MISSING_FILTER = { ...START_FILTER, info: 'noLocation' }; // 정보 없는 사진 화면을 처음 열 때
+
+// 정보 없는 사진 화면의 탭이 비었을 때 보여 줄 문구
+const EMPTY_INFO_TEXT = {
+  noLocation: ['위치 없는 사진이 없어요', '모든 사진에 위치가 있어요. 스크린샷은 위치 없음에 세지 않아요.'],
+  noDate: ['날짜 없는 사진이 없어요', '모든 사진에 찍은 날짜가 있어요.'],
+  manual: ['직접 넣은 정보가 아직 없어요', '날짜나 위치를 직접 넣은 사진이 여기에 모여요.'],
+};
 
 export default function App() {
   const [state, setState] = useState(null);
@@ -25,7 +36,10 @@ export default function App() {
   const [view, setView] = useState(null); // { key, filter, days, gen } 지금 보이는 날짜 목록
   const [daysError, setDaysError] = useState('');
   const [gen, setGen] = useState(0); // 목록이 갱신될 때마다 올라가요
-  const [selectedId, setSelectedId] = useState(null);
+  const [screen, setScreen] = useState('gallery'); // 'gallery' | 'missing' (같은 창 안의 화면 전환)
+  const [selection, setSelection] = useState(EMPTY_SELECTION); // { ids, anchor, focus }
+  const [cellMenuAt, setCellMenuAt] = useState(null); // 작업 7: 우클릭한 자리 { x, y }. 우클릭 메뉴가 이 값을 읽어 그려요
+  const [selectingAll, setSelectingAll] = useState(false); // "목록 전체 선택"으로 번호를 받아오는 중
   const [notice, setNotice] = useState(''); // 화면 전환이 거절된 이유 등
   const [rescanning, setRescanning] = useState(false);
 
@@ -81,6 +95,18 @@ export default function App() {
       }
     };
   }, [refresh, notifyChanged]);
+
+  // ---------- 고른 사진 비우기 ----------
+  // 화면, 탭, 검색어, 태그가 달라지면 비워요 (정렬은 같은 사진들이라 그대로). 그려지기 전에 바로 바꿔서 한 번도 어긋나게 보이지 않아요
+  const scope = `${screen}|${filter.tab}|${filter.info || ''}|${filter.query}|${filter.tag || ''}`;
+  const [scopeSeen, setScopeSeen] = useState(scope);
+  if (scopeSeen !== scope) {
+    setScopeSeen(scope);
+    setSelection(EMPTY_SELECTION);
+    setCellMenuAt(null);
+  }
+  const scopeRef = useRef(scope); // 비동기 응답이 "그 사이 필터가 바뀌었나"를 알 수 있게
+  scopeRef.current = scope;
 
   // ---------- 검색어는 입력을 멈추고 0.2초 뒤에 적용 ----------
   useEffect(() => {
@@ -140,7 +166,44 @@ export default function App() {
   };
   const clearFilters = () => {
     setSearchText('');
-    setFilter({ ...START_FILTER, sort: filter.sort });
+    setFilter({ ...START_FILTER, sort: filter.sort, ...(filter.info ? { info: filter.info } : {}) }); // 정보 없는 사진 화면이면 그 탭은 그대로
+  };
+  // 화면 바꾸기: 필터는 처음 모양으로 (정보 없는 사진 화면은 위치 없음 탭부터), 정렬만 그대로
+  const goScreen = (next) => {
+    if (next === screen) return;
+    setScreen(next);
+    setSearchText('');
+    setFilter({ ...(next === 'missing' ? MISSING_FILTER : START_FILTER), sort: filter.sort });
+  };
+
+  // ---------- 고르기 ----------
+  const onCellClick = useCallback((file, event, dayFiles) => {
+    const ctrl = event.ctrlKey || event.metaKey;
+    setSelection((sel) => nextSelection(sel, { id: file.id, ctrl, shift: event.shiftKey, dayFiles }));
+  }, []);
+  // 우클릭: 선택 밖의 칸이면 그 칸만 골라요. 메뉴 그리기는 작업 7
+  const onCellMenu = useCallback((file, event) => {
+    setSelection((sel) => selectionForMenu(sel, file.id));
+    setCellMenuAt({ x: event.clientX, y: event.clientY });
+  }, []);
+  // 번호를 받아오는 사이 필터가 바뀌었으면 그 결과는 버려요
+  const selectIds = async (load) => {
+    const at = scopeRef.current;
+    try {
+      const ids = await load();
+      if (scopeRef.current === at) setSelection(selectionOf(ids));
+    } catch (e) {
+      if (scopeRef.current === at) setNotice(errorText(e));
+    }
+  };
+  const selectDay = (day) => selectIds(() => api.listFiles(day, view.filter).then((files) => files.map((f) => f.id)));
+  const selectAll = async () => {
+    setSelectingAll(true);
+    try {
+      await selectIds(() => api.listIds(view ? view.filter : filter));
+    } finally {
+      setSelectingAll(false);
+    }
   };
 
   // ---------- 가운데에 보여 줄 것 ----------
@@ -191,6 +254,9 @@ export default function App() {
         {daysError}
       </EmptyState>
     );
+  } else if (view && view.days.length === 0 && view.filter.info && !view.filter.query && !view.filter.tag && EMPTY_INFO_TEXT[view.filter.info]) {
+    const [title, text] = EMPTY_INFO_TEXT[view.filter.info];
+    center = <EmptyState title={title}>{text}</EmptyState>;
   } else if (view && view.days.length === 0) {
     const searching = !!view.filter.query;
     center = (
@@ -204,7 +270,7 @@ export default function App() {
       </EmptyState>
     );
   } else if (view) {
-    center = <DayGrid view={view} selectedId={selectedId} onSelect={setSelectedId} />;
+    center = <DayGrid view={view} selection={selection} onCellClick={onCellClick} onCellMenu={onCellMenu} onSelectDay={selectDay} />;
   } else {
     center = null; // 날짜 목록을 받는 중
   }
@@ -214,8 +280,10 @@ export default function App() {
     <div className="shell">
       <Sidebar
         state={state}
+        screen={screen}
         filter={filter}
         onOpenImport={openImport}
+        onScreen={goScreen}
         onPickTag={(tag) => setField({ tag })}
         onRescan={rescan}
         rescanning={rescanning}
@@ -223,11 +291,16 @@ export default function App() {
       <main className="main">
         {showTools && (
           <Toolbar
+            screen={screen}
+            state={state}
             filter={filter}
             searchText={searchText}
             onSearchText={setSearchText}
             onTab={(tab) => setField({ tab })}
+            onInfo={(info) => setField({ info })}
             onSort={(sort) => setField({ sort })}
+            onSelectAll={selectAll}
+            selectingAll={selectingAll}
           />
         )}
         <ScanBanner
@@ -240,7 +313,7 @@ export default function App() {
         />
         <div className="center">{center}</div>
       </main>
-      {showTools && <DetailPanel selectedId={selectedId} gen={gen} />}
+      {showTools && <DetailPanel selectedId={selection.focus} gen={gen} />}
     </div>
   );
 }

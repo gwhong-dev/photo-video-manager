@@ -102,6 +102,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .tab:hover:not(:disabled) { color: var(--text); }
 .tab.active { color: var(--text); border-bottom: 2px solid var(--text); }
 .tab.active:hover:not(:disabled) { border-bottom-color: var(--text); }
+.tab-count { margin-left: 4px; font-size: 12px; color: var(--faint); }
+.tab.active .tab-count { color: var(--sub); }
 .search {
   margin-left: auto;
   display: flex;
@@ -164,7 +166,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .progress div { height: 100%; background: var(--sub); }
 
 /* ---------- 날짜별 격자 ---------- */
-.grid-scroll { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; }
+.grid-scroll { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; user-select: none; /* Shift+클릭할 때 글자가 같이 파랗게 잡히지 않게 */ }
 /* 스크롤바는 모든 스크롤 영역에 같은 어두운 모양 (바탕색은 영역마다 --scroll-bg 로 맞춰요) */
 ::-webkit-scrollbar { width: 12px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border: 3px solid var(--scroll-bg, var(--bg)); border-radius: 6px; }
@@ -186,6 +188,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .day-date.nodate { font-size: 20px; }
 .day-weekday { margin-top: 4px; font-size: 13px; color: var(--sub); }
 .day-count { font-size: 13px; color: var(--faint); }
+.day-select { display: block; margin-top: 6px; padding: 0; font-size: 12px; color: var(--faint); text-align: left; }
 
 .cell { position: relative; display: block; aspect-ratio: 1; overflow: hidden; background: var(--panel); cursor: pointer; }
 .cell.empty { cursor: default; }

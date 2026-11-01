@@ -1521,6 +1521,71 @@ const items = [
       return out;
     },
   },
+  {
+    no: 25,
+    name: '여러 장 선택 계산',
+    async run() {
+      const out = [];
+      // src/selection.mjs 는 React가 없는 순수 계산이에요 (grid-layout.mjs 점검과 같이 file:// 주소로 불러와요)
+      const { pathToFileURL } = require('url');
+      let m;
+      try {
+        m = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'selection.mjs')).href);
+      } catch (e) {
+        return [sub('src/selection.mjs 불러오기', false, e.message)];
+      }
+      const { nextSelection, EMPTY_SELECTION, selectionOf, selectionForMenu } = m;
+      const sorted = (sel) => [...sel.ids].sort((a, b) => a - b).join();
+      const D = [10, 11, 12, 13, 14].map((id) => ({ id })); // 한 날의 파일 5장
+      const none = EMPTY_SELECTION;
+
+      // 25a 클릭: 한 장만, anchor와 focus는 그 파일. 이미 여러 장이어도 그 한 장만 남아요
+      const a1 = nextSelection(none, { id: 11, dayFiles: D });
+      const a2 = nextSelection(nextSelection(a1, { id: 13, ctrl: true, dayFiles: D }), { id: 12, dayFiles: D });
+      out.push(sub('25a 클릭은 그 한 장만 고르고 anchor, focus도 그 파일', sorted(a1) === '11' && a1.anchor === 11 && a1.focus === 11 && sorted(a2) === '12' && a2.focus === 12, JSON.stringify([[...a1.ids], a1.anchor, a1.focus, [...a2.ids]])));
+
+      // 25b Ctrl+클릭: 더하기, 같은 칸에 다시 하면 빼기. 받은 sel은 바꾸지 않아요
+      const b1 = nextSelection(a1, { id: 13, ctrl: true, dayFiles: D });
+      const b2 = nextSelection(b1, { id: 13, ctrl: true, dayFiles: D });
+      out.push(sub('25b Ctrl+클릭은 더하고 다시 하면 뺌, 받은 선택은 그대로', sorted(b1) === '11,13' && b1.focus === 13 && b1.anchor === 13 && sorted(b2) === '11' && b2.anchor === 13 && sorted(a1) === '11' && sorted(none) === '', JSON.stringify([[...b1.ids], [...b2.ids], [...a1.ids]])));
+      const b3 = nextSelection(a1, { id: 11, ctrl: true, dayFiles: D });
+      out.push(sub('25b 마지막 한 장을 빼면 빈 선택, focus는 null', sorted(b3) === '' && b3.focus === null, JSON.stringify([[...b3.ids], b3.focus])));
+
+      // 25c Shift+클릭: 같은 날 anchor부터 범위. anchor가 그 날에 없으면 그 칸 한 장
+      const c1 = nextSelection(nextSelection(none, { id: 11, dayFiles: D }), { id: 13, shift: true, dayFiles: D });
+      out.push(sub('25c Shift+클릭은 anchor부터 누른 칸까지, anchor는 그대로 focus는 누른 칸', sorted(c1) === '11,12,13' && c1.anchor === 11 && c1.focus === 13, JSON.stringify([[...c1.ids], c1.anchor, c1.focus])));
+      const other = [{ id: 20 }, { id: 21 }, { id: 22 }]; // 다른 날
+      const c2 = nextSelection(c1, { id: 21, shift: true, dayFiles: other });
+      out.push(sub('25c anchor가 그 날 파일에 없으면(다른 날) 누른 칸 한 장으로', sorted(c2) === '21' && c2.anchor === 21 && c2.focus === 21, JSON.stringify([[...c2.ids], c2.anchor, c2.focus])));
+
+      // 25d 앞뒤 어느 방향이든 범위가 같음, 한 칸에 Shift+클릭하면 그 한 장
+      const d1 = nextSelection(nextSelection(none, { id: 13, dayFiles: D }), { id: 11, shift: true, dayFiles: D });
+      const d2 = nextSelection(nextSelection(none, { id: 11, dayFiles: D }), { id: 13, shift: true, dayFiles: D });
+      const d3 = nextSelection(nextSelection(none, { id: 12, dayFiles: D }), { id: 12, shift: true, dayFiles: D });
+      out.push(sub('25d 거꾸로 눌러도 같은 범위, 같은 칸이면 한 장', sorted(d1) === sorted(d2) && sorted(d1) === '11,12,13' && d1.anchor === 13 && sorted(d3) === '12', JSON.stringify([[...d1.ids], [...d2.ids], [...d3.ids]])));
+      // Shift+클릭을 이어서 하면 anchor는 그대로라 범위가 줄었다 늘었다 해요
+      const d4 = nextSelection(c1, { id: 12, shift: true, dayFiles: D });
+      out.push(sub('25d anchor는 그대로라 Shift+클릭을 이어서 하면 범위가 새로 정해짐', sorted(d4) === '11,12' && d4.anchor === 11, JSON.stringify([...d4.ids])));
+
+      // 25e 고른 것이 없을 때 Shift+클릭은 한 장
+      const e1 = nextSelection(none, { id: 12, shift: true, dayFiles: D });
+      out.push(sub('25e 고른 것이 없을 때 Shift+클릭은 한 장', sorted(e1) === '12' && e1.anchor === 12 && e1.focus === 12, JSON.stringify([[...e1.ids], e1.anchor])));
+      const e2 = nextSelection(none, { id: 12, shift: true });
+      out.push(sub('25e dayFiles가 없어도 오류 없이 한 장', sorted(e2) === '12'));
+
+      // 25f Ctrl+Shift+클릭: 범위를 기존 선택에 더함
+      const f1 = nextSelection(nextSelection(nextSelection(none, { id: 10, dayFiles: D }), { id: 14, ctrl: true, dayFiles: D }), { id: 12, ctrl: true, shift: true, dayFiles: D });
+      out.push(sub('25f Ctrl+Shift+클릭은 anchor부터 범위를 기존 선택에 더함', sorted(f1) === '10,12,13,14' && f1.anchor === 14, JSON.stringify([[...f1.ids], f1.anchor])));
+
+      // 25g 통째로 고르기와 우클릭
+      const g1 = selectionOf([3, 1, 2]);
+      out.push(sub('25g 통째로 고르면 anchor, focus 없음, 빈 목록은 빈 선택', sorted(g1) === '1,2,3' && g1.anchor === null && g1.focus === null && sorted(selectionOf([])) === ''));
+      const g2 = selectionForMenu(b1, 11);
+      const g3 = selectionForMenu(b1, 12);
+      out.push(sub('25g 우클릭: 선택 안에 있는 칸이면 그대로, 밖이면 그 칸만', g2 === b1 && sorted(g3) === '12' && g3.focus === 12 && g3.anchor === 12, JSON.stringify([[...g3.ids], g3.focus])));
+      return out;
+    },
+  },
 ];
 
 module.exports = { items };
