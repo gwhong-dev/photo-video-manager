@@ -1,0 +1,19 @@
+# 진행 기록
+
+> 지난 작업 기록. 새 줄은 맨 아래에 추가해요. 평소에는 읽지 않아도 돼요.
+
+| 날짜 | 브랜치 | 커밋 | 점검 | 푸시 | 메모 |
+|---|---|---|---|---|---|
+| 2026-10-29 | feature/import-convert | 3d57230, fb0f58b, 이 커밋 | 문서만 변경, 점검 없음 | origin/feature/import-convert | 바깥 폴더를 git 저장소로 연결. 문서·CLAUDE.md·.gitignore 추가, v1.1 부분 구현 기록, 명세 파일 이름 수정, 이 절차 문서 추가 |
+| 2026-10-29 | feature/import-convert | 02f50b1 | 문서만 변경, 점검 없음 | origin/feature/import-convert | 개발개요: React 시점(갤러리부터), 안전 수정 목록 ①~⑥, 다음 할 일 순서 반영 |
+| 2026-10-29 | feature/safety-fixes | b8f84ff ~ eda588a, 이 커밋 | ✅ 12개 통과 (수동 샘플 HEIC 2, 라이브 포토 1 포함) | origin/feature/safety-fixes | npm run check 추가, 안전 수정 ①~⑥, 로그 덮어쓰기 버그 수정. Task별 로컬 커밋 후 전체 ✅에서 한 번 푸시 |
+| 2026-10-29 | feature/safety-fixes | 0f51ea8 ~ 이 커밋 | ✅ 12개 통과 (12g~12m 추가) | origin/feature/safety-fixes | 코드 검토 반영: H1, H2, M1~M4, L1, L2 수정. L2(앱 하나만)는 수동 확인. L3~L5는 개발개요 할 일 |
+| 2026-10-29 | feature/safety-fixes | 이 커밋 | ✅ 12개 통과 (12n 추가, 12g·12i·12j·12m 보강) | origin/feature/safety-fixes | 재검토 N1~N3 수정 + 점검 빈틈 보강, 실사용 테스트 체크리스트 추가 |
+| 2026-10-29 | feature/safety-fixes | 90e02e1 | 문서만 변경, 점검 없음 | origin/feature/safety-fixes | 실사용 테스트 경로를 바탕 화면 기준으로, 자동 확인 결과(732개) 기록 |
+| 2026-10-29 | feature/safety-fixes | 이 커밋 | ✅ 12개 통과 (8 보강, 12o 추가) + 실제 사진 미리보기·화면 재현 확인 | origin/feature/safety-fixes | 실사용 테스트 문제 2개 수정: 원본 확인 진행 표시, 이름 다른 같은 파일 중복 처리 (명세 v1.2) |
+| 2026-11-01 | feature/safety-fixes | 081c8f6 | 문서만 변경, 점검 없음 | origin/feature/safety-fixes | 작업 환경 옮기기 안내 추가, 다음 할 일 경로 수정 |
+| 2026-11-01 | feature/safety-fixes | 0807ed8 | ✅ 12개 통과 (12p~12s 추가) + 작은 복사본으로 실제 앱 확인 | origin/feature/safety-fixes | 실사용 재테스트 기록(732개, 실패 0, 사라진 파일 0). 휴지통 경고를 실제 설정으로 계산, 배너 개수 맞춤, 바로 제거 설정이면 이동 |
+| 2026-11-01 | feature/safety-fixes → main | 이 커밋 | 문서만 변경, 코드는 0807ed8에서 ✅ 12개 통과 | origin/feature/safety-fixes, origin/main | 사용자 확인 후 main에 합침 (fast-forward, gh가 없어 PR 없이 진행). 실제 사진 복사본 실행은 사용자 요청으로 Claude가 진행 |
+| 2026-11-01 | feature/video-playable-check | 이 커밋 | ✅ 13개 통과 (13 추가) + 손상 영상 복사본으로 실제 앱 확인 | origin/feature/video-playable-check | 재생할 수 없는 영상을 복사하지 않고 `⚠ 재생 불가`로 표시, 원본 정리 대상에서 뺌 (명세 v1.3). main 합치기는 사용자 확인 후 |
+| 2026-11-01 | feature/video-playable-check → main | 이 커밋 | 문서만 변경, 코드는 51c3a5f에서 ✅ 13개 통과 | origin/feature/video-playable-check, origin/main | 사용자 확인 후 main에 합침 (fast-forward, PR 없이 진행). 복사본 실행은 Claude가 진행했고, 사용자가 직접 실행하지 않은 채 사용자 결정으로 합침 |
+| 2026-11-01 | feature/project-guidelines | 이 커밋 | ✅ 13개 통과 (문서와 CI 파일만 변경) | origin/feature/project-guidelines | 프로젝트 지침을 CLAUDE.md에 합침, PROGRESS.md와 이 파일 추가, 기록 표를 점검-푸시-절차.md에서 옮김, CI 추가 |
