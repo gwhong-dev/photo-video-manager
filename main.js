@@ -262,8 +262,9 @@ ipcMain.handle('trash-info', async () => {
   running = true;
   try {
     cleanDriveKindOf = createDriveKindOf();
-    const targets = job ? await cleanTargets(job, { onProgress: (p) => send('clean-check-progress', p) }) : [];
-    return await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf });
+    const targets = job ? await cleanTargets(job, { ffprobe: tools.ffprobe.path, store, logger, onProgress: (p) => send('clean-check-progress', p) }) : [];
+    // 확인하다 재생 불가를 찾으면 개수가 바뀌어요 → 작업 정보도 새로 보내요
+    return { ...(await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf })), job: jobInfo() };
   } finally {
     running = false;
   }
@@ -275,7 +276,7 @@ ipcMain.handle('trash-originals', async () => {
   // 정리하는 동안에는 "실행 중"으로 표시 → 미리보기·새 작업·작업 끝내기를 막아요 (기록이 섞이지 않게)
   running = true;
   try {
-    const targets = job ? await cleanTargets(job) : [];
+    const targets = job ? await cleanTargets(job, { ffprobe: tools.ffprobe.path, store, logger }) : [];
     const r = await cleanOriginals({
       job,
       store,

@@ -85,7 +85,7 @@
     td.nowrap { white-space: nowrap; }
     .s-done { color: var(--green); }
     .s-dup { color: var(--sub); }
-    .s-fail { color: var(--red); font-weight: bold; }
+    .s-fail, .s-broken { color: var(--red); font-weight: bold; }
     .s-skip { color: var(--sub); }
     .tag { display: inline-block; font-size: 11px; border-radius: 8px; padding: 1px 6px; margin-left: 4px; }
     .t-new { background: #e7f0ff; color: var(--blue); }
@@ -257,6 +257,7 @@
       c.appendChild(chip(`✅ 완료 ${num(s.done)}`, 'green'));
       if (s.dup) c.appendChild(chip(`⏭ 중복 ${num(s.dup)}`));
       if (s.fail) c.appendChild(chip(`❌ 실패 ${num(s.fail)}`, 'red'));
+      if (s.broken) c.appendChild(chip(`⚠ 재생 불가 ${num(s.broken)}`, 'red'));
       c.appendChild(chip(`⏳ 남은 작업 ${num(s.todo)}`, s.todo ? 'orange' : ''));
       if (info.deletable) c.appendChild(chip(`🗑 지울 수 있는 원본 ${num(info.deletable)}개 (${fmtBytes(info.deletableBytes)})`, 'purple'));
 
@@ -426,7 +427,7 @@
       $('bar').value = p.done;
       const pct = Math.floor((p.done / p.total) * 100);
       $('progressText').textContent =
-        `${pct}%  |  ${num(p.done)} / ${num(p.total)}  |  완료 ${num(p.done - p.dup - p.fail)} · 중복 ${num(p.dup)} · 실패 ${num(p.fail)}  |  ` +
+        `${pct}%  |  ${num(p.done)} / ${num(p.total)}  |  완료 ${num(p.done - p.dup - p.fail - p.broken)} · 중복 ${num(p.dup)} · 실패 ${num(p.fail)} · 재생 불가 ${num(p.broken)}  |  ` +
         `경과 ${fmtTime(p.elapsedSec)}  |  남은 시간 ${fmtTime(p.remainSec)}  |  ${p.name}`;
     });
 
@@ -453,12 +454,15 @@
         const left = r.job ? r.job.stats.todo : 0;
         setStatus(
           `${r.paused ? '⏸ 일시정지했어요' : '🎉 이번 회차 끝!'}  완료 ${num(r.done)} · 중복 ${num(r.dup)} · 실패 ${num(r.fail)}` +
+          (r.broken ? ` · 재생 불가 ${num(r.broken)}` : '') +
           (left ? `\n⏳ 남은 작업 ${num(left)}개 → 위쪽 "다음 실행" 버튼으로 이어서 할 수 있어요 (프로그램을 꺼도 돼요)` : '') +
           (r.fail ? `\n❌ 실패한 파일은 원본을 남겨 뒀어요. 이유는 로그에서 확인하세요.` : '')
         );
         renderTable(await api.getRows($('filter').value));
         setBusy(false);
         await askTrash();
+        // 원본 정리 안내가 위 글자를 덮어써도, 재생 불가 안내는 끝까지 남겨요
+        if (r.broken) setStatus($('status').textContent + `\n⚠ 재생할 수 없는 영상 ${num(r.broken)}개는 백업하지 않고 원본을 남겨 뒀어요. 표의 "⚠ 재생 불가" 줄과 로그에서 확인하세요.`);
         await maybeFinish();
       } catch (e) {
         setStatus('❌ ' + cleanErr(e));
@@ -500,6 +504,10 @@
       } finally {
         setBusy(false);
       }
+      // 확인하다 재생 불가 영상을 찾았으면 배너와 표에 바로 보여줘요
+      const brokenBefore = job ? job.stats.broken : 0;
+      setJob(info.job);
+      if (info.job && info.job.stats.broken !== brokenBefore) renderTable(await api.getRows($('filter').value));
       if (!info.count) {
         setStatus('정리할 원본이 없어요 (결과 파일이 확인된 원본만 정리해요)');
         return;
@@ -510,7 +518,7 @@
         .join('\n');
       let msg =
         `🧹 원본 정리\n\n변환·저장이 끝난 원본 ${num(info.count)}개 (${fmtBytes(info.bytes)})를 정리할까요?\n\n${where}\n\n` +
-        `· 결과 파일이 백업 폴더에 있는 것만 정리해요\n· 실패한 파일, 확인이 필요한 중복은 남겨 둬요\n· 영구 삭제는 하지 않아요`;
+        `· 결과 파일이 백업 폴더에 있는 것만 정리해요\n· 실패한 파일, 재생할 수 없는 영상, 확인이 필요한 중복은 남겨 둬요\n· 영구 삭제는 하지 않아요`;
       if (info.warnings.length) msg += '\n\n⚠️ ' + info.warnings.join('\n⚠️ ');
       if (!confirm(msg)) return;
 

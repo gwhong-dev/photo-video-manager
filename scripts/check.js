@@ -1,5 +1,5 @@
 // 파일 위치: scripts/check.js
-// 역할: 자동 점검 (npm run check) — docs/점검-푸시-절차.md 의 12개 항목
+// 역할: 자동 점검 (npm run check) — docs/점검-푸시-절차.md 의 13개 항목
 //
 // ⚠️ 샘플(test/samples)은 절대 직접 쓰지 않아요.
 //    임시 폴더(%TEMP%\pvm-check-시각)에 복사한 뒤 그 복사본으로만 실행해요.
@@ -12,10 +12,10 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-const { detectTools, runCmd } = require('../lib/tools');
+const { detectTools, runCmd, probeVideo } = require('../lib/tools');
 const { ExifTool } = require('../lib/exiftool');
-const { makePlan } = require('../lib/planner');
-const { JobStore } = require('../lib/job');
+const { makePlan, statusLabelOf, isIssue } = require('../lib/planner');
+const { JobStore, jobStats } = require('../lib/job');
 const { createLogger, stamp } = require('../lib/logger');
 const runner = require('../lib/runner');
 const { launchCheck } = require('./launch-check');
@@ -79,6 +79,20 @@ async function pipeline(root, env, { batchSize = 100000, manual = true, run = tr
   runner.writePlanLog(job, logger);
   const result = run ? await runner.runBatch({ job, store, batchSize, ctx: env.ctx, logger, statfs }) : null;
   return { root, source, backupRoot, logger, store, job, result };
+}
+
+// 가짜 손상 영상 만들기: 목차(moov)를 지우고 끝을 0으로 채워요 (실제 IMG_2522.mp4와 같은 모양)
+//   MP4·MOV는 [길이 4바이트 + 이름 4바이트 + 내용] 상자가 이어진 모양이에요
+function breakVideo(from, to, zeros) {
+  const buf = fs.readFileSync(from);
+  const keep = [];
+  for (let p = 0; p + 8 <= buf.length; ) {
+    const size = buf.readUInt32BE(p);
+    if (size < 8) break;
+    if (buf.toString('latin1', p + 4, p + 8) !== 'moov') keep.push(buf.subarray(p, p + size));
+    p += size;
+  }
+  fs.writeFileSync(to, Buffer.concat([...keep, Buffer.alloc(zeros)]));
 }
 
 // 원본 상대 경로 → 그 파일의 item
@@ -677,6 +691,109 @@ const ITEMS = [
         const r = await cleaner.cleanOriginals({ job: c.job, store: c.store, targets: [c.job.items[0]], logger: c.logger, trash: async (p) => trashed.push(p), driveKindOf: async () => 'unknown' });
         out.push(sub('12f 드라이브 종류 모름 → 이동', trashed.length === 0 && r.moved === 1, `휴지통 ${trashed.length}번, 이동 ${r.moved}개`));
       }
+      return out;
+    },
+  },
+  {
+    no: 13,
+    name: '재생 불가 영상',
+    async run(env) {
+      if (!env.tools.ffprobe.ok) return [skip('재생 불가 영상', 'ffprobe 없음')];
+      const cleaner = require('../lib/cleaner');
+      const root = path.join(env.tmp, 'broken');
+      const ffprobe = env.tools.ffprobe.path;
+      const out = [];
+
+      // 13a~e 실제 실행: 손상 MP4·MOV는 복사하지 않고, 멀쩡한 영상과 사진은 평소대로
+      const source = path.join(root, 'source');
+      const backupRoot = path.join(root, 'backup');
+      fs.mkdirSync(source, { recursive: true });
+      fs.mkdirSync(backupRoot, { recursive: true });
+      const good = path.join(AUTO, 'IMG_0103.MOV');
+      const mp4 = path.join(source, '손상.mp4');
+      const mov = path.join(source, '손상.MOV');
+      const copy = path.join(source, '손상(1).mp4');
+      breakVideo(good, mp4, 4096);
+      breakVideo(good, mov, 8192); // 크기가 달라야 "같은 파일"로 묶이지 않아요
+      fs.copyFileSync(mp4, copy);
+      fs.copyFileSync(good, path.join(source, '정상.MOV'));
+      fs.copyFileSync(path.join(AUTO, 'IMG_0101.jpg'), path.join(source, '사진.jpg'));
+      const before = hashAll(source);
+
+      const logger = createLogger(path.join(root, 'logs'));
+      const store = new JobStore(path.join(root, 'jobs'));
+      const job = store.create(await makePlan({ source, backupRoot, includeSub: true }, env.et));
+      const r = await runner.runBatch({ job, store, batchSize: 100000, ctx: env.ctx, logger });
+      const item = (name) => job.items.find((it) => path.basename(it.src) === name);
+      const brokenItems = [item('손상.mp4'), item('손상.MOV')];
+
+      const allBroken = brokenItems.every((it) => it.status === 'broken' && !it.finalPath);
+      out.push(sub('13a 손상 MP4·MOV → 재생 불가, 복사 안 함', allBroken, brokenItems.map((it) => `${it.status} ${it.note}`).join(' / ')));
+      const inBackup = listFiles(backupRoot).filter((f) => path.basename(f).includes('손상'));
+      out.push(sub('13a 백업에 손상 파일 없음', inBackup.length === 0, inBackup.join(' / ')));
+      out.push(sub('13a 메모에 이유 적힘', brokenItems.every((it) => /moov|Invalid/.test(it.note)), brokenItems[0].note));
+      out.push(sub('13b 원본 그대로', JSON.stringify(hashAll(source)) === JSON.stringify(before)));
+      out.push(sub('13c 정상 영상과 사진은 완료', item('정상.MOV').status === 'done' && item('사진.jpg').status === 'done', `${item('정상.MOV').status}, ${item('사진.jpg').status}`));
+
+      const st = jobStats(job);
+      out.push(sub('13d 눈에 띄는 표시 (상태 이름, 주의 목록, 개수)', statusLabelOf(brokenItems[0]) === '⚠ 재생 불가' && isIssue(brokenItems[0]) && st.broken === 2 && r.broken === 2, `${statusLabelOf(brokenItems[0])}, 작업 ${st.broken}개, 회차 ${r.broken}개`));
+      const runLog = fs.readFileSync(r.logPath, 'utf8');
+      out.push(sub('13d 로그에 재생불가 기록', runLog.split('\n').filter((l) => l.split('\t')[1] === '재생불가').length === 2 && runLog.includes('재생불가 2'), path.basename(r.logPath)));
+
+      const leftOut = (list) => ['손상.mp4', '손상.MOV', '손상(1).mp4'].every((n) => !list.includes(item(n)));
+      const candidates = cleaner.cleanCandidates(job);
+      const targets = await cleaner.cleanTargets(job, { ffprobe });
+      out.push(sub('13e 원본 정리 대상에서 빠짐 (같은 파일 복사본 포함)', leftOut(candidates) && leftOut(targets), targets.map((it) => path.basename(it.src)).join(', ')));
+      out.push(sub('13e 정상 영상과 사진은 정리 대상', ['정상.MOV', '사진.jpg'].every((n) => targets.includes(item(n))), targets.map((it) => path.basename(it.src)).join(', ')));
+
+      // 13f 이 기능이 생기기 전에 복사된 손상 파일: 백업에 이미 있어도 정리 직전 확인에서 걸러요
+      const old = path.join(root, 'old');
+      fs.mkdirSync(old, { recursive: true });
+      const oldFile = (n) => path.join(old, n);
+      breakVideo(good, oldFile('a-원본.mp4'), 4096);
+      breakVideo(good, oldFile('a-백업.mp4'), 4096);
+      breakVideo(good, oldFile('b-원본.mp4'), 8192);
+      breakVideo(good, oldFile('b-백업.mp4'), 8192);
+      const oldJob = {
+        source: old,
+        backupRoot: old,
+        items: [
+          { i: 0, src: oldFile('a-원본.mp4'), status: 'done', finalPath: oldFile('a-백업.mp4') },
+          { i: 1, src: oldFile('b-원본.mp4'), status: 'dup', dupOf: oldFile('b-백업.mp4') },
+        ],
+      };
+      const fakeStore = { mark: (j, i, patch) => Object.assign(j.items[i], patch) };
+      const oldLogger = createLogger(path.join(old, 'logs'));
+      const oldBefore = cleaner.cleanCandidates(oldJob).length;
+      const oldTargets = await cleaner.cleanTargets(oldJob, { ffprobe, store: fakeStore, logger: oldLogger });
+      const oldLogs = listFiles(path.join(old, 'logs')).map((f) => path.basename(f));
+      out.push(sub('13f 백업에 이미 있는 손상 파일 → 정리 대상에서 빠짐', oldBefore === 2 && oldTargets.length === 0, `후보 ${oldBefore}개, 대상 ${oldTargets.length}개`));
+      out.push(sub('13f 재생 불가로 표시되고 배너 개수도 맞음', oldJob.items.every((it) => it.status === 'broken') && cleaner.cleanCandidates(oldJob).length === 0, oldJob.items.map((it) => it.status).join(',')));
+      out.push(sub('13f 정리 확인 로그', oldLogs.some((n) => /^clean-check_.*\.txt$/.test(n)), oldLogs.join(', ')));
+
+      // 13g ffprobe가 없으면: 가져오기는 계속하되, 확인 못 한 영상의 원본은 정리하지 않아요
+      const noProbe = path.join(root, 'no-probe');
+      const npSource = path.join(noProbe, 'source');
+      const npBackup = path.join(noProbe, 'backup');
+      fs.mkdirSync(npSource, { recursive: true });
+      fs.mkdirSync(npBackup, { recursive: true });
+      breakVideo(good, path.join(npSource, '확인못함.mp4'), 4096);
+      const npStore = new JobStore(path.join(noProbe, 'jobs'));
+      const npJob = npStore.create(await makePlan({ source: npSource, backupRoot: npBackup, includeSub: true }, env.et));
+      await runner.runBatch({ job: npJob, store: npStore, batchSize: 100000, ctx: { ...env.ctx, ffprobe: null }, logger: createLogger(path.join(noProbe, 'logs')) });
+      const np = npJob.items[0];
+      out.push(sub('13g ffprobe 없음 → 복사하고 메모 남김', np.status === 'done' && !!np.finalPath && np.note.includes('확인하지 못'), `${np.status} ${np.note}`));
+      const npTargets = await cleaner.cleanTargets(npJob, { store: npStore });
+      out.push(sub('13g ffprobe 없음 → 원본은 정리 안 함, 손상 표시도 안 함', npTargets.length === 0 && np.status === 'done', `대상 ${npTargets.length}개, ${np.status}`));
+
+      // 13h 검사 함수: 판정 3가지 (true 정상 / false 손상 / null 모름)
+      const v1 = await probeVideo(ffprobe, good);
+      const v2 = await probeVideo(ffprobe, mp4);
+      const v3 = await probeVideo(path.join(root, '없는-프로그램.exe'), good);
+      const audioOnly = path.join(root, '글자.mp4');
+      fs.writeFileSync(audioOnly, 'not a video'.repeat(100));
+      const v4 = await probeVideo(ffprobe, audioOnly);
+      out.push(sub('13h 검사 함수 판정', v1.ok === true && v2.ok === false && v3.ok === null && v4.ok === false, JSON.stringify([v1.ok, v2.ok, v3.ok, v4.ok])));
       return out;
     },
   },
