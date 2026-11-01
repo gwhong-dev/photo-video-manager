@@ -916,6 +916,570 @@ const items = [
       return out;
     },
   },
+  {
+    no: 24,
+    name: '넣기와 되돌리기 연결',
+    async run(env) {
+      const out = [];
+      const crypto = require('crypto');
+      const dbMod = require('../lib/db');
+      const jMod = require('../lib/manual-journal');
+      const { openDb } = dbMod; // 진짜 openDb (아래에서 gallery-main용으로만 잠깐 감싸요)
+      const { createLogger } = require('../lib/logger');
+      const { MAX_TARGETS } = require('../lib/manual-edit');
+      const { fillFakeLibrary } = require('./check-gallery');
+
+      // 일부러 실패시키는 스위치: DB 저장, 되돌리기, void 줄 쓰기, 시작할 때 복구
+      const hooks = { failApply: false, failUndo: false, failVoid: false, failRecover: false, failLog: false, failSend: false };
+      const opened = [];
+      const origOpen = dbMod.openDb;
+      const origCreateJournal = jMod.createJournal;
+      const origRecover = jMod.recover;
+      // gallery-main을 불러오는 동안만 DB 열기, 기록 파일, 복구를 감싸고 바로 되돌려요 (18d와 같은 방식)
+      dbMod.openDb = (file, o) => {
+        const r = origOpen(file, o);
+        const real = r.db;
+        const db = {
+          ...real,
+          applyManualBatch(b) {
+            if (hooks.failApply) throw new Error('일부러 낸 저장 오류');
+            return real.applyManualBatch(b);
+          },
+          undoBatch(id, at) {
+            if (hooks.failUndo) throw new Error('일부러 낸 되돌리기 오류');
+            return real.undoBatch(id, at);
+          },
+        };
+        opened.push(db);
+        return { ...r, db };
+      };
+      jMod.createJournal = (file) => {
+        const j = origCreateJournal(file);
+        return {
+          ...j,
+          append(line) {
+            if (hooks.failVoid && line.type === 'void') throw new Error('일부러 낸 void 쓰기 오류');
+            return j.append(line);
+          },
+        };
+      };
+      jMod.recover = (db, j) => {
+        if (hooks.failRecover) throw new Error('일부러 낸 복구 오류');
+        return origRecover(db, j);
+      };
+      const gmPath = require.resolve('../gallery-main');
+      delete require.cache[gmPath];
+      let gm;
+      try {
+        gm = require('../gallery-main');
+      } finally {
+        dbMod.openDb = origOpen;
+        jMod.createJournal = origCreateJournal;
+        jMod.recover = origRecover;
+        delete require.cache[gmPath];
+      }
+
+      const base = path.join(env.tmp, 'edit-wire');
+      fs.mkdirSync(base, { recursive: true });
+      let seq = 0;
+      const fakes = [];
+      const errOf = (p) => p.then(() => null, (e) => e.message);
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const NOT_READY = '가져오기가 끝난 뒤에 할 수 있어요';
+      const jfile = (P) => path.join(P.ud, 'manual-edits.jsonl');
+      const jlines = (P) => origCreateJournal(jfile(P)).read().lines;
+      const logNames = (P, prefix) => (fs.existsSync(P.logDir) ? fs.readdirSync(P.logDir).filter((n) => n.startsWith(`${prefix}_`)) : []);
+      const logText = (P, prefix) => logNames(P, prefix).map((n) => fs.readFileSync(path.join(P.logDir, n), 'utf8')).join('\n');
+      // 폴더 안 모든 파일의 내용 지문, 크기, 수정 시각 (전후 비교용)
+      const fingerprint = (dir) => {
+        const m = {};
+        for (const e of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+          if (!e.isFile()) continue;
+          const p = path.join(e.parentPath || e.path, e.name);
+          const s = fs.statSync(p);
+          m[path.relative(dir, p)] = `${crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex')}@${s.size}@${s.mtimeMs}`;
+        }
+        return JSON.stringify(m);
+      };
+      const rowOf = (root, name, i) => row({
+        root, path: path.join(root, name), name,
+        takenAt: `2026-10-0${(i % 9) + 1}T10:00:00`, takenDay: `2026-10-0${(i % 9) + 1}`,
+        ...(name === 'src.jpg' ? { lat: 37.5, lng: 127, locationSource: 'gps' } : {}),
+      });
+      // 사진 폴더(작은 파일), userData, 로그 폴더를 만들고 DB에 줄을 넣어 둬요. makeFiles=false면 폴더를 만들지 않아요(연결 끊김)
+      const prep = (label, names, { makeFiles = true } = {}) => {
+        const dir = path.join(base, `${label}-${++seq}`);
+        const P = { dir, root: path.resolve(dir, 'photos-root-xyz'), ud: path.join(dir, 'ud'), logDir: path.join(dir, 'logs') };
+        fs.mkdirSync(P.ud, { recursive: true });
+        if (makeFiles) {
+          fs.mkdirSync(P.root, { recursive: true });
+          for (const n of names) fs.writeFileSync(path.join(P.root, n), `사진 ${n}`);
+        }
+        const o = openDb(path.join(P.ud, 'library.db'));
+        o.db.upsertFiles(names.map((n, i) => rowOf(P.root, n, i)));
+        o.db.close();
+        return P;
+      };
+      // setupGallery를 가짜 ipcMain으로 띄워요. 호출은 모두 비동기로 (동기 오류도 거절로)
+      const makeFake = (P) => {
+        const f = { handlers: new Map(), sent: [], flags: { running: false } };
+        const win = {
+          isDestroyed: () => false,
+          webContents: {
+            send: (ch) => {
+              if (hooks.failSend) throw new Error('일부러 낸 알림 오류');
+              f.sent.push(ch);
+            },
+          },
+        };
+        const realLogger = createLogger(P.logDir);
+        const logger = {
+          dir: realLogger.dir,
+          newLog: (...a) => {
+            if (hooks.failLog) throw new Error('일부러 낸 로그 오류');
+            return realLogger.newLog(...a);
+          },
+        };
+        f.g = gm.setupGallery({
+          ipcMain: { handle: (ch, fn) => f.handlers.set(ch, fn) },
+          protocol: { handle() {} },
+          getWin: () => win,
+          getSettings: () => ({ backupRoot: P.root }),
+          getTools: () => ({}),
+          getEt: () => null,
+          isRunning: () => f.flags.running,
+          isPlanning: () => false,
+          logger,
+          userDir: P.ud,
+          loadScreen: async () => {},
+          getJobPending: () => false,
+        });
+        f.db = opened[opened.length - 1];
+        f.call = async (ch, ...a) => f.handlers.get(ch)(null, ...a);
+        f.P = P;
+        fakes.push(f);
+        return f;
+      };
+      const idOf = (f, name) => fileByPath(f.db, f.P.root, path.join(f.P.root, name)).id;
+      const fileOf = (f, name) => f.call('gallery:get-file', idOf(f, name));
+      const scene = async (label, fn) => {
+        try {
+          await fn();
+        } catch (e) {
+          out.push(sub(`${label} 실행 중 오류`, false, String(e.stack).split('\n').slice(0, 3).join(' | ')));
+        }
+      };
+      const NAMES = ['src.jpg', 'a.jpg', 'b.jpg', 'c.jpg'];
+      const TARGETS = ['a.jpg', 'b.jpg', 'c.jpg'];
+      const COPY_LOC = (sourceId) => ({ source: 'copy', sourceId, date: false, time: false, location: true });
+
+      try {
+        // 24a, 24b, 24c, 24f, 24j 미리보기, 넣기, 되돌리기 한 바퀴
+        await scene('24a', async () => {
+          const P = prep('flow', NAMES);
+          const f = makeFake(P);
+          const fp0 = fingerprint(P.root);
+          const ids = TARGETS.map((n) => idOf(f, n));
+          const src = idOf(f, 'src.jpg');
+          const edit = COPY_LOC(src);
+          const st0 = await f.call('gallery:get-state');
+          const copy = await f.call('gallery:get-copy-source', src);
+          const listed = await f.call('gallery:list-ids', { info: 'noLocation' });
+
+          const pv = await f.call('gallery:preview-edit', ids, edit);
+          out.push(sub(
+            '24a 미리보기만으로는 DB, 기록 파일, 알림, 로그가 그대로',
+            pv.kind === 'location' && pv.counts.changed === 3 && pv.items.length === 3
+              && !fs.existsSync(jfile(P)) && f.sent.length === 0 && logNames(P, 'manual-edit').length === 0 && (await f.call('gallery:get-state')).manualCount === 0,
+            JSON.stringify(pv.counts),
+          ));
+
+          // 24c 미리보기를 본 뒤 기준 사진 값이 바뀌었다: 저장은 새 값
+          f.db.upsertFiles([{ ...rowOf(P.root, 'src.jpg', 0), lat: 11, lng: 21 }]);
+          const ap = await f.call('gallery:apply-edit', ids, edit);
+          const after = [];
+          for (const n of TARGETS) after.push(await fileOf(f, n));
+          out.push(sub(
+            '24c 미리보기 뒤 기준 사진 값이 바뀌면 넣을 때 새 값(11, 21)으로 저장',
+            ap.count === 3 && ap.kind === 'location' && typeof ap.batchId === 'string' && after.every((x) => x.lat === 11 && x.lng === 21 && x.locationSource === 'manual'),
+            JSON.stringify([ap, after.map((x) => [x.lat, x.lng])]),
+          ));
+
+          const lines = jlines(P);
+          const st1 = await f.call('gallery:get-state');
+          const log = logText(P, 'manual-edit');
+          out.push(sub(
+            '24a 넣기 뒤: 기록 파일 한 줄(apply, 3장), 값 저장, library-changed 알림 1번, 로그에 묶음 번호와 전후 값',
+            lines.length === 1 && lines[0].type === 'apply' && lines[0].batchId === ap.batchId && lines[0].items.length === 3 && lines[0].items[0].before === null && lines[0].items[0].after.lat === 11
+              && f.sent.filter((c) => c === 'gallery:library-changed').length === 1
+              && log.includes(ap.batchId) && log.includes('→') && log.includes(P.root),
+            JSON.stringify([lines.length, f.sent, log.slice(0, 120)]),
+          ));
+          out.push(sub(
+            '24a getState에 noLocation, noInfo, manualCount, lastBatch가 더해짐',
+            st0.noLocation === 3 && st0.noInfo === 3 && st0.manualCount === 0 && st0.lastBatch === null
+              && st1.noLocation === 0 && st1.noInfo === 0 && st1.manualCount === 3 && st1.lastBatch && st1.lastBatch.kind === 'location' && st1.lastBatch.count === 3,
+            JSON.stringify([st0, st1].map((s) => [s.noLocation, s.noInfo, s.manualCount, s.lastBatch])),
+          ));
+          out.push(sub(
+            '24a getCopySource는 id, name, takenAt, lat, lng만, listIds는 filter.info를 따름',
+            same(Object.keys(copy).sort(), ['id', 'lat', 'lng', 'name', 'takenAt']) && copy.name === 'src.jpg' && copy.lat === 37.5
+              && listed.length === 3 && ids.every((i) => listed.includes(i)),
+            JSON.stringify([copy, listed]),
+          ));
+
+          // 되돌리기
+          const un = await f.call('gallery:undo-last');
+          const reverted = [];
+          for (const n of TARGETS) reverted.push(await fileOf(f, n));
+          const lines2 = jlines(P);
+          const st2 = await f.call('gallery:get-state');
+          const un2 = await f.call('gallery:undo-last');
+          out.push(sub(
+            '24a 되돌리기: 파일에서 읽은 값으로 돌아가고 기록 파일에 undo 줄, 알림 한 번 더, 묶음이 없으면 null',
+            same(un, { kind: 'location', count: 3 }) && reverted.every((x) => x.lat === null && x.locationSource === null)
+              && lines2.length === 2 && lines2[1].type === 'undo' && lines2[1].batchId === ap.batchId
+              && f.sent.filter((c) => c === 'gallery:library-changed').length === 2 && st2.manualCount === 0 && st2.lastBatch === null && un2 === null,
+            JSON.stringify([un, un2, lines2.length, f.sent]),
+          ));
+
+          // 24f 바꿀 것이 0장이면 count 0, 기록 파일, 묶음, 알림 그대로
+          const ap2 = await f.call('gallery:apply-edit', ids, edit);
+          const lastId = (await f.call('gallery:get-state')).lastBatch.id;
+          const sentBefore = f.sent.length;
+          const nBefore = jlines(P).length;
+          const zero = await f.call('gallery:apply-edit', ids, edit);
+          const zeroPv = await f.call('gallery:preview-edit', ids, edit);
+          out.push(sub(
+            '24f 이미 같은 값이면 { batchId: null, count: 0 }. 기록 파일 줄, 마지막 묶음, 알림이 그대로',
+            ap2.count === 3 && zero.batchId === null && zero.count === 0 && zero.kind === 'location' && zeroPv.counts.changed === 0 && zeroPv.counts.same === 3
+              && jlines(P).length === nBefore && (await f.call('gallery:get-state')).lastBatch.id === lastId && f.sent.length === sentBefore,
+            JSON.stringify([zero, zeroPv.counts, jlines(P).length, nBefore]),
+          ));
+
+          // 24j 응답 어디에도 파일 경로(root)가 없음
+          const lb = (await f.call('gallery:get-state')).lastBatch;
+          const responses = { pv, ap, un, zero, copy, listed, lb };
+          const json = JSON.stringify(responses);
+          out.push(sub(
+            '24j 미리보기, 넣기, 되돌리기, 복사 값, 목록 응답에 파일 경로(root 글자)와 "path"가 없음',
+            !json.includes('photos-root-xyz') && !json.includes('"path"') && !json.includes(P.root),
+            json.slice(0, 160),
+          ));
+
+          // 24b 넣기와 되돌리기 전후로 사진 폴더 파일이 같음
+          out.push(sub('24b 넣기와 되돌리기를 거친 뒤 사진 폴더 파일의 지문, 크기, 수정 시각이 같음', fingerprint(P.root) === fp0));
+        });
+
+        // 24d 가져오기 중에는 모두 거절
+        await scene('24d', async () => {
+          const P = prep('busy', NAMES);
+          const f = makeFake(P);
+          const ids = TARGETS.map((n) => idOf(f, n));
+          const edit = COPY_LOC(idOf(f, 'src.jpg'));
+          await f.call('gallery:apply-edit', ids, edit); // 되돌릴 묶음 하나 만들어 둠
+          const nBefore = jlines(P).length;
+          f.flags.running = true;
+          const m = [
+            await errOf(f.call('gallery:preview-edit', ids, edit)),
+            await errOf(f.call('gallery:apply-edit', ids, edit)),
+            await errOf(f.call('gallery:undo-last')),
+          ];
+          f.flags.running = false;
+          const st = await f.call('gallery:get-state');
+          out.push(sub(
+            '24d 가져오기 중에는 미리보기, 넣기, 되돌리기 모두 거절 (값, 기록 파일 그대로)',
+            m.every((x) => x === NOT_READY) && st.manualCount === 3 && st.lastBatch.count === 3 && jlines(P).length === nBefore,
+            JSON.stringify(m),
+          ));
+        });
+
+        // 24e 이상한 id와 edit 거절, 없는 id와 다른 root의 id는 빠짐
+        await scene('24e', async () => {
+          const P = prep('weird', NAMES);
+          const f = makeFake(P);
+          f.db.upsertFiles([row({ root: 'R-other', path: 'R-other/o.jpg', name: 'o.jpg' })]);
+          const o = fileByPath(f.db, 'R-other', 'R-other/o.jpg').id;
+          const src = idOf(f, 'src.jpg');
+          const t1 = idOf(f, 'a.jpg');
+          const edit = COPY_LOC(src);
+
+          const badIds = [['a'], [0], [1.5], [-1], [null], [NaN], [2 ** 53], 'notarray', null, undefined, 5, { length: 1, 0: 1 },
+            Array.from({ length: MAX_TARGETS + 1 }, (_, i) => i + 1)];
+          const missedIds = [];
+          for (const ids of badIds) {
+            for (const ch of ['gallery:preview-edit', 'gallery:apply-edit']) {
+              if (await errOf(f.call(ch, ids, edit)) === null) missedIds.push(`${ch}:${JSON.stringify(ids).slice(0, 30)}`);
+            }
+          }
+          out.push(sub('24e 이상한 id(글자, 0, 소수, 음수, null, 너무 큼, 배열 아님, 20,001개)는 미리보기, 넣기 모두 거절', missedIds.length === 0, missedIds.join(', ')));
+
+          const badEdits = [null, undefined, 'x', 5, [], {}, { source: 'zzz' }, { source: 'copy' }, { source: 'copy', sourceId: 'a', location: true },
+            { source: 'copy', sourceId: 999999, location: true }, { source: 'copy', sourceId: src }, { source: 'copy', sourceId: src, time: true, location: true },
+            { source: 'direct', date: '2026-02-30' }, { source: 'direct', date: '2026-03-05', time: '25:00:00' }, { source: 'direct' }];
+          const missedEdits = [];
+          for (const e of badEdits) {
+            for (const ch of ['gallery:preview-edit', 'gallery:apply-edit']) {
+              if (await errOf(f.call(ch, [t1], e)) === null) missedEdits.push(`${ch}:${JSON.stringify(e)}`);
+            }
+          }
+          const st = await f.call('gallery:get-state');
+          out.push(sub('24e 이상한 edit(없음, 글자, 빈 객체, 모르는 방법, 기준 없음, 없는 날짜, 25시 등)는 거절하고 값이 안 바뀜', missedEdits.length === 0 && st.manualCount === 0 && !fs.existsSync(jfile(P)), missedEdits.join(', ')));
+
+          // 경계 20,000개는 받음 (없는 id라 0장)
+          const edge = await f.call('gallery:preview-edit', Array.from({ length: MAX_TARGETS }, (_, i) => 100000 + i), edit);
+          out.push(sub('24e id 20,000개는 받음 (없는 id는 빠져서 0장)', edge.counts.changed === 0 && edge.items.length === 0));
+
+          // 없는 id, 다른 root의 id, 기준 사진 자신은 빠짐
+          const pv = await f.call('gallery:preview-edit', [t1, 999999, o, src], edit);
+          const ap = await f.call('gallery:apply-edit', [t1, 999999, o, src], edit);
+          const oAfter = await f.call('gallery:get-file', o);
+          out.push(sub(
+            '24e 없는 id는 빠지고, 다른 root의 id와 기준 사진 자신은 제외로 세고 저장하지 않음',
+            pv.counts.changed === 1 && pv.counts.excluded === 2 && pv.items.length === 1 && ap.count === 1 && oAfter.lat === null && (await f.call('gallery:get-state')).manualCount === 1,
+            JSON.stringify([pv.counts, ap]),
+          ));
+          // 복사 값 조회는 다른 root, 없는 파일에 null, 이상한 id는 거절
+          const cs = [await f.call('gallery:get-copy-source', o), await f.call('gallery:get-copy-source', 999999)];
+          const csBad = [await errOf(f.call('gallery:get-copy-source', 'a')), await errOf(f.call('gallery:get-copy-source', 0)), await errOf(f.call('gallery:get-copy-source', 1.5))];
+          out.push(sub('24e getCopySource: 다른 root, 없는 id는 null, 이상한 id는 거절', cs.every((x) => x === null) && csBad.every((x) => x !== null), JSON.stringify([cs, csBad])));
+        });
+
+        // 24g 기록 파일에 못 쓰면 거절, DB 그대로
+        await scene('24g', async () => {
+          const P = prep('nojournal', NAMES);
+          fs.mkdirSync(jfile(P), { recursive: true }); // 기록 파일 자리에 폴더 → 쓸 수 없음
+          const f = makeFake(P);
+          const ids = TARGETS.map((n) => idOf(f, n));
+          const edit = COPY_LOC(idOf(f, 'src.jpg'));
+          const msg = await errOf(f.call('gallery:apply-edit', ids, edit));
+          const st = await f.call('gallery:get-state');
+          const a = await fileOf(f, 'a.jpg');
+          out.push(sub(
+            '24g 기록 파일에 못 쓰면 넣기를 거절하고(이유를 알림) DB, 알림, 로그가 그대로',
+            typeof msg === 'string' && msg.includes('기록') && st.manualCount === 0 && st.lastBatch === null && a.lat === null && f.sent.length === 0 && logNames(P, 'manual-edit').length === 0,
+            msg,
+          ));
+          // 되돌리기도 마찬가지: 기록 파일에 못 쓰면 되돌리지 않음
+          f.db.applyManualBatch({ id: 'pre', root: P.root, kind: 'location', createdAt: '2026-11-01T10:00:00', items: [{ path: path.join(P.root, 'a.jpg'), before: null, after: val({ lat: 1, lng: 2 }) }] });
+          const msg2 = await errOf(f.call('gallery:undo-last'));
+          const st2 = await f.call('gallery:get-state');
+          out.push(sub('24g 되돌리기도 기록 파일에 못 쓰면 거절하고 DB 그대로', typeof msg2 === 'string' && msg2.includes('기록') && st2.lastBatch && st2.lastBatch.count === 1 && (await fileOf(f, 'a.jpg')).lat === 1, msg2));
+        });
+
+        // 24h DB 저장이 실패하면 void 줄이 생기고, 다시 켜도 값이 들어가지 않음
+        await scene('24h', async () => {
+          const P = prep('dbfail', NAMES);
+          let f = makeFake(P);
+          const ids = TARGETS.map((n) => idOf(f, n));
+          const edit = COPY_LOC(idOf(f, 'src.jpg'));
+          hooks.failApply = true;
+          const msg = await errOf(f.call('gallery:apply-edit', ids, edit));
+          hooks.failApply = false;
+          const lines = jlines(P);
+          const st = await f.call('gallery:get-state');
+          out.push(sub(
+            '24h DB 저장이 실패하면 거절(이유를 알림), 기록 파일에 apply 뒤 void, DB, 알림, 로그가 그대로',
+            typeof msg === 'string' && msg.includes('일부러 낸 저장 오류') && lines.length === 2 && lines[0].type === 'apply' && lines[1].type === 'void' && lines[1].of === 'apply' && lines[1].batchId === lines[0].batchId
+              && st.manualCount === 0 && f.sent.length === 0 && logNames(P, 'manual-edit').length === 0,
+            JSON.stringify([msg, lines.map((l) => l.type)]),
+          ));
+          f.g.close();
+          f = makeFake(P); // 다시 켜서 복구
+          const st2 = await f.call('gallery:get-state');
+          out.push(sub('24h 다시 켜서 복구해도 void 붙은 묶음은 값이 들어가지 않음', st2.manualCount === 0 && f.db.getManual(path.join(P.root, 'a.jpg')) === null && jlines(P).length === 2, JSON.stringify([st2.manualCount, jlines(P).length])));
+
+          // void 줄도 못 쓰면: 오류 글에 "다시 적용될 수 있음"을 알리고 로그에 남김
+          const P2 = prep('dbfail2', NAMES);
+          const f2 = makeFake(P2);
+          hooks.failApply = true;
+          hooks.failVoid = true;
+          const msg2 = await errOf(f2.call('gallery:apply-edit', TARGETS.map((n) => idOf(f2, n)), COPY_LOC(idOf(f2, 'src.jpg'))));
+          hooks.failApply = false;
+          hooks.failVoid = false;
+          out.push(sub(
+            '24h void 줄도 못 쓰면 오류 글에 "다시 적용될 수 있어요"를 알리고 오류 로그에 남김',
+            typeof msg2 === 'string' && msg2.includes('다시 적용될 수 있어요') && logText(P2, 'gallery-error').includes('void'),
+            msg2,
+          ));
+
+          // 되돌리기 저장이 실패하면 undo 뒤 void(of undo), 값은 남고 다시 켜도 남음
+          const P3 = prep('undofail', NAMES);
+          let f3 = makeFake(P3);
+          await f3.call('gallery:apply-edit', TARGETS.map((n) => idOf(f3, n)), COPY_LOC(idOf(f3, 'src.jpg')));
+          hooks.failUndo = true;
+          const msg3 = await errOf(f3.call('gallery:undo-last'));
+          hooks.failUndo = false;
+          const l3 = jlines(P3);
+          const sentAfterFail = f3.sent.length;
+          f3.g.close();
+          f3 = makeFake(P3);
+          const st3 = await f3.call('gallery:get-state');
+          out.push(sub(
+            '24h 되돌리기 저장이 실패하면 거절, 기록 파일에 undo 뒤 void(of undo), 값이 남고 다시 켜도 남음',
+            typeof msg3 === 'string' && l3.map((l) => l.type).join() === 'apply,undo,void' && l3[2].of === 'undo' && sentAfterFail === 1
+              && st3.manualCount === 3 && st3.lastBatch && st3.lastBatch.count === 3,
+            JSON.stringify([msg3, l3.map((l) => l.type), st3.manualCount]),
+          ));
+        });
+
+        // 24h 저장이 끝난 뒤 로그나 알림이 실패해도 작업은 성공 (void 를 적지 않음)
+        await scene('24h2', async () => {
+          const P = prep('afterfail', NAMES);
+          let f = makeFake(P);
+          const ids = TARGETS.map((n) => idOf(f, n));
+          hooks.failLog = true;
+          hooks.failSend = true;
+          const ap = await f.call('gallery:apply-edit', ids, COPY_LOC(idOf(f, 'src.jpg'))).then((v) => v, (e) => ({ error: e.message }));
+          const un = await f.call('gallery:undo-last').then((v) => v, (e) => ({ error: e.message }));
+          hooks.failLog = false;
+          hooks.failSend = false;
+          const types = jlines(P).map((l) => l.type).join();
+          const ap2 = await f.call('gallery:apply-edit', ids, COPY_LOC(idOf(f, 'src.jpg')));
+          f.g.close();
+          f = makeFake(P);
+          const st = await f.call('gallery:get-state');
+          out.push(sub(
+            '24h 저장이 끝난 뒤 로그나 알림이 실패해도 넣기, 되돌리기는 성공하고 void 줄이 생기지 않음 (다시 켜도 값이 그대로)',
+            ap.count === 3 && un && un.count === 3 && types === 'apply,undo' && ap2.count === 3 && st.manualCount === 3 && jlines(P).map((l) => l.type).join() === 'apply,undo,apply',
+            JSON.stringify([ap, un, types]),
+          ));
+        });
+
+        // 24i 켤 때 복구: library.db를 지우고 다시 켜면 값이 돌아옴. 복구가 실패해도 갤러리는 켜짐
+        await scene('24i', async () => {
+          const P = prep('recover', NAMES);
+          let f = makeFake(P);
+          const ids = TARGETS.map((n) => idOf(f, n));
+          const edit = COPY_LOC(idOf(f, 'src.jpg'));
+          await f.call('gallery:apply-edit', ids, edit);
+          await f.call('gallery:apply-edit', [idOf(f, 'a.jpg')], { source: 'direct', date: '2024-03-05', time: '12:00:00' });
+          await f.call('gallery:undo-last'); // 두 번째 묶음은 되돌림
+          f.g.close();
+          for (const ext of ['', '-wal', '-shm']) fs.rmSync(path.join(P.ud, `library.db${ext}`), { force: true });
+          f = makeFake(P);
+          const aPath = path.join(P.root, 'a.jpg');
+          const st = await f.call('gallery:get-state');
+          // 사진을 다시 읽는 것처럼 파일 줄을 넣으면 직접 넣은 값이 이김
+          f.db.upsertFiles(NAMES.map((n, i) => rowOf(P.root, n, i)));
+          const a = await fileOf(f, 'a.jpg');
+          const startLog = fs.existsSync(P.logDir) ? fs.readdirSync(P.logDir).filter((n) => n.startsWith('gallery-start_')).map((n) => fs.readFileSync(path.join(P.logDir, n), 'utf8')).join('\n') : '';
+          out.push(sub(
+            '24i library.db를 지우고 다시 켜면 기록 파일에서 값이 돌아옴 (되돌린 묶음은 되돌린 대로)',
+            st.manualCount === 0 /* 파일 줄이 아직 없음 */ && same(f.db.getManual(aPath), val({ lat: 37.5, lng: 127 })) && a.lat === 37.5 && a.locationSource === 'manual' && a.takenAtSource === 'exif',
+            JSON.stringify([st.manualCount, f.db.getManual(aPath), a.lat, a.locationSource]),
+          ));
+          out.push(sub('24i 복구한 묶음 수를 시작 로그에 남김', startLog.includes('넣기 2개') && startLog.includes('되돌리기 1개'), startLog.slice(0, 200)));
+
+          // 복구가 오류를 내도 갤러리는 켜지고 오류 로그만 남김
+          const P2 = prep('recover-fail', NAMES);
+          hooks.failRecover = true;
+          let f2;
+          let thrown = null;
+          try {
+            f2 = makeFake(P2);
+          } catch (e) {
+            thrown = e.message;
+          }
+          hooks.failRecover = false;
+          const st2 = f2 ? await f2.call('gallery:get-state') : null;
+          out.push(sub('24i 복구가 오류를 내도 갤러리는 켜지고(getState 동작) 오류 로그만 남음', thrown === null && !!st2 && st2.total === 4 && logText(P2, 'gallery-error').includes('일부러 낸 복구 오류'), thrown || JSON.stringify(st2 && st2.total)));
+        });
+
+        // 24l 기준 사진이 사라졌으면 미리보기, 넣기 거절
+        await scene('24l', async () => {
+          const P = prep('nosource', NAMES);
+          const f = makeFake(P);
+          f.db.upsertFiles([row({ root: 'R-other', path: 'R-other/o.jpg', name: 'o.jpg', lat: 1, lng: 2, locationSource: 'gps' })]);
+          const ids = TARGETS.map((n) => idOf(f, n));
+          const src = idOf(f, 'src.jpg');
+          f.db.setMissing([path.join(P.root, 'src.jpg')], true);
+          const msgs = [
+            await errOf(f.call('gallery:preview-edit', ids, COPY_LOC(src))),
+            await errOf(f.call('gallery:apply-edit', ids, COPY_LOC(src))),
+            await errOf(f.call('gallery:preview-edit', ids, COPY_LOC(999999))), // 아예 없는 기준
+            await errOf(f.call('gallery:preview-edit', ids, COPY_LOC(fileByPath(f.db, 'R-other', 'R-other/o.jpg').id))), // 다른 root의 기준
+          ];
+          const cs = await f.call('gallery:get-copy-source', src);
+          out.push(sub(
+            '24l 기준 사진이 사라졌거나 없거나 다른 root면 미리보기, 넣기를 거절 ("다시 복사해 주세요" 포함), 복사 값 조회는 null',
+            msgs.every((m) => typeof m === 'string' && m.includes('다시 복사해 주세요')) && cs === null && (await f.call('gallery:get-state')).manualCount === 0,
+            JSON.stringify(msgs),
+          ));
+        });
+
+        // 24m 백업 폴더가 연결되지 않아도 넣기와 되돌리기가 동작함
+        await scene('24m', async () => {
+          const P = prep('offline', NAMES, { makeFiles: false });
+          const f = makeFake(P);
+          const st0 = await f.call('gallery:get-state');
+          const ids = TARGETS.map((n) => idOf(f, n));
+          const ap = await f.call('gallery:apply-edit', ids, COPY_LOC(idOf(f, 'src.jpg')));
+          const a = await fileOf(f, 'a.jpg');
+          const un = await f.call('gallery:undo-last');
+          out.push(sub(
+            '24m 백업 폴더가 연결되지 않아도(connected false) 넣기와 되돌리기가 동작함',
+            st0.connected === false && ap.count === 3 && a.lat === 37.5 && same(un, { kind: 'location', count: 3 }) && (await fileOf(f, 'a.jpg')).lat === null,
+            JSON.stringify([st0.connected, ap, un]),
+          ));
+        });
+
+        // 준비 안 됨: 백업 폴더가 없거나 DB를 열 수 없으면 목록은 비어 있고 넣기는 읽을 수 있는 오류
+        await scene('24n', async () => {
+          const P = prep('noroot', NAMES);
+          const f = makeFake({ ...P, root: '' });
+          const m1 = [await errOf(f.call('gallery:preview-edit', [1], { source: 'direct', date: '2024-03-05' })), await errOf(f.call('gallery:apply-edit', [1], { source: 'direct', date: '2024-03-05' })), await errOf(f.call('gallery:undo-last'))];
+          const ids = await f.call('gallery:list-ids', {});
+          const cs = await f.call('gallery:get-copy-source', 1);
+          const st = await f.call('gallery:get-state');
+          // DB 자리에 폴더가 있어 열 수 없는 경우
+          const dir = path.join(base, `nodb-${++seq}`);
+          fs.mkdirSync(path.join(dir, 'ud', 'library.db'), { recursive: true });
+          const f2 = makeFake({ dir, root: path.resolve(dir, 'photos-root-xyz'), ud: path.join(dir, 'ud'), logDir: path.join(dir, 'logs') });
+          const m2 = [await errOf(f2.call('gallery:preview-edit', [1], { source: 'direct', date: '2024-03-05' })), await errOf(f2.call('gallery:undo-last'))];
+          const ids2 = await f2.call('gallery:list-ids', {});
+          out.push(sub(
+            '24n 백업 폴더가 없거나 DB를 열 수 없으면 넣기, 미리보기, 되돌리기는 읽을 수 있는 한국어 오류, listIds는 빈 목록, getCopySource는 null',
+            m1.every((x) => typeof x === 'string' && x.includes('백업 폴더')) && same(ids, []) && cs === null && st.root === '' && st.lastBatch === null
+              && m2.every((x) => typeof x === 'string' && x.includes('library.db')) && same(ids2, []),
+            JSON.stringify([m1, m2]),
+          ));
+        });
+
+        // 24k 3,277장 넣기 시간 (10초 넘으면 실패)
+        await scene('24k', async () => {
+          const dir = path.join(base, `big-${++seq}`);
+          const P = { dir, root: path.resolve(dir, 'photos-root-xyz'), ud: path.join(dir, 'ud'), logDir: path.join(dir, 'logs') };
+          fs.mkdirSync(P.ud, { recursive: true });
+          const o = openDb(path.join(P.ud, 'library.db'));
+          o.db.upsertFiles([rowOf(P.root, 'src.jpg', 0)]); // 먼저 넣어서 id 1
+          fillFakeLibrary(o.db, P.root, 3277);
+          o.db.close();
+          const f = makeFake(P);
+          const all = f.db.listIds(P.root, { tab: 'all', sort: 'newest', query: '', tag: null }).filter((i) => i !== 1);
+          const edit = COPY_LOC(1);
+          const t0 = Date.now();
+          const pv = await f.call('gallery:preview-edit', all, edit);
+          const t1 = Date.now();
+          const ap = await f.call('gallery:apply-edit', all, edit);
+          const t2 = Date.now();
+          const un = await f.call('gallery:undo-last');
+          const t3 = Date.now();
+          const lineCount = jlines(P).length;
+          out.push(sub(
+            '24k 3,277장 미리보기, 넣기, 되돌리기가 되고 넣기는 10초 안에 끝남 (시간은 detail)',
+            all.length === 3277 && pv.counts.changed === 3277 && ap.count === 3277 && un.count === 3277 && t2 - t1 < 10000 && lineCount === 2,
+            `미리보기 ${t1 - t0}ms, 넣기 ${t2 - t1}ms, 되돌리기 ${t3 - t2}ms, 장수 ${all.length}, 기록 줄 ${lineCount}`,
+          ));
+        });
+      } finally {
+        for (const f of fakes) {
+          try { f.g.close(); } catch (e) { /* 이미 닫힘 */ }
+        }
+      }
+      return out;
+    },
+  },
 ];
 
 module.exports = { items };

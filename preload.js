@@ -48,6 +48,12 @@ contextBridge.exposeInMainWorld('api', {
     listDays: (filter) => ipcRenderer.invoke('gallery:list-days', filter),
     listFiles: (day, filter) => ipcRenderer.invoke('gallery:list-files', day, filter),
     getFile: (id) => ipcRenderer.invoke('gallery:get-file', id),
+    // 날짜와 위치 직접 넣기 (경로 없이 id로만 부탁해요)
+    listIds: (filter) => ipcRenderer.invoke('gallery:list-ids', filter),
+    getCopySource: (id) => ipcRenderer.invoke('gallery:get-copy-source', id),
+    previewEdit: (ids, edit) => ipcRenderer.invoke('gallery:preview-edit', ids, edit),
+    applyEdit: (ids, edit) => ipcRenderer.invoke('gallery:apply-edit', ids, edit),
+    undoLast: () => ipcRenderer.invoke('gallery:undo-last'),
     rescan: () => ipcRenderer.invoke('gallery:rescan'),
     openScreen: (name) => ipcRenderer.invoke('gallery:open-screen', name), // 'import' | 'gallery'
     // 구독을 끊는 함수를 돌려줘요

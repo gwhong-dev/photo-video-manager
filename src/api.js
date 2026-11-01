@@ -18,6 +18,12 @@ export const api = {
   listDays: (filter) => gallery().listDays(filter),
   listFiles: (day, filter) => gallery().listFiles(day, filter),
   getFile: (id) => gallery().getFile(id),
+  // 날짜와 위치 직접 넣기
+  listIds: (filter) => gallery().listIds(filter),
+  getCopySource: (id) => gallery().getCopySource(id),
+  previewEdit: (ids, edit) => gallery().previewEdit(ids, edit),
+  applyEdit: (ids, edit) => gallery().applyEdit(ids, edit),
+  undoLast: () => gallery().undoLast(),
   rescan: () => gallery().rescan(),
   openScreen: (name) => gallery().openScreen(name),
   // 구독을 끊는 함수를 돌려줘요 (React에서 정리할 때 써요)
