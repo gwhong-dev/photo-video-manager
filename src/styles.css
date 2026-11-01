@@ -325,6 +325,27 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .edit-same { color: var(--faint); }
 .edit-more { padding: 8px 0 2px 8px; font-size: 13px; color: var(--faint); }
 .dialog-foot { flex: none; display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; }
+/* ---------- 위치 제안 ---------- */
+.suggest { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.suggest-top { flex: none; display: flex; align-items: center; gap: 16px; padding: 4px 24px 12px; color: var(--sub); font-size: 13px; }
+.suggest-top .link-button { margin-left: auto; }
+.suggest-body { flex: 1; min-height: 0; display: flex; gap: 24px; padding: 0 24px 16px; overflow-y: auto; align-items: flex-start; }
+.suggest-source { flex: none; width: 260px; position: sticky; top: 0; }
+.suggest-source .detail-sub { margin: 8px 0; }
+.suggest-source-button { display: block; width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: pointer; }
+.suggest-source-button.selected .suggest-source-img { outline: 2px solid var(--text); outline-offset: -2px; }
+.suggest-source-img { position: relative; width: 100%; aspect-ratio: 4 / 3; background: var(--panel); overflow: hidden; }
+.suggest-source-img img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.suggest-targets { flex: 1; min-width: 0; }
+.suggest-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px 8px; }
+.suggest-cell { position: relative; min-width: 0; }
+.suggest-cell .cell { width: 100%; }
+.suggest-cell.left-out .cell img { opacity: 0.35; }
+.suggest-check { position: absolute; top: 0; right: 0; display: flex; padding: 6px; background: rgba(0, 0, 0, 0.45); cursor: pointer; }
+.suggest-check input { margin: 0; width: 16px; height: 16px; accent-color: var(--text); cursor: pointer; }
+.suggest-gap { display: block; margin-top: 4px; font-size: 12px; color: var(--sub); }
+.suggest-actions { flex: none; display: flex; gap: 8px; padding: 12px 24px; border-top: 1px solid var(--line); }
+
 button.primary { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
 button.primary:hover:not(:disabled) { border-color: var(--text); }
 button.primary:disabled { background: var(--panel); color: var(--sub); border-color: var(--line); font-weight: 400; }

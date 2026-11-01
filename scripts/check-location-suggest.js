@@ -575,6 +575,40 @@ const items = [
       return out;
     },
   },
+  {
+    no: 32,
+    name: '위치 제안 화면 열기',
+    async run(env) {
+      // 샘플 복사본을 백업 폴더로 정한 임시 userData로 앱을 띄우고, "정보 없는 사진"과 "위치 제안"을 눌러 글자와 화면 오류를 봐요
+      //   (진짜 설정, 진짜 사진은 읽지 않아요. 값은 넣지 않아요)
+      const out = [];
+      const APP = path.join(__dirname, '..');
+      const { launchCheck } = require('./launch-check');
+      const { detectTools, runOrThrow } = require('../lib/tools');
+      const copyRoot = path.join(env.tmp, 'launch-suggest-root');
+      fs.cpSync(path.join(APP, 'test', 'samples', 'auto'), copyRoot, { recursive: true });
+      // 샘플에는 위치 있는 사진이 없어서, 복사본 한 장에만 위치를 적어 같은 날 사진들의 근거로 만들어요
+      const tools = await detectTools({}, APP);
+      await runOrThrow(tools.exiftool.path, ['-overwrite_original', '-GPSLatitude=37.5', '-GPSLatitudeRef=N', '-GPSLongitude=127', '-GPSLongitudeRef=E', path.join(copyRoot, 'IMG_0104.jpg')], 'exiftool');
+      const ud = path.join(env.tmp, 'launch-suggest-ud');
+      fs.mkdirSync(ud, { recursive: true });
+      fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: copyRoot }), 'utf8');
+      const r = await launchCheck(APP, {
+        port: 9337,
+        env: { PVM_USER_DATA: ud },
+        until: '10.28',
+        clickText: '정보 없는 사진',
+        clickUntil: '내가 넣은 정보',
+        thenClickText: '위치 제안',
+        thenClickUntil: '이 묶음 건너뛰기',
+      });
+      const text = String(r.text);
+      out.push(sub('32a 묶음 글자가 보임', r.clicked === true && text.includes('남은 묶음') && text.includes('장에 이 위치 넣기') && text.includes('이 묶음 건너뛰기'), `화면 글자: ${text.slice(0, 300).replace(/\s+/g, ' ')}`));
+      out.push(sub('32b 검색과 목록 전체 선택이 숨겨짐', !text.includes('목록 전체 선택')));
+      out.push(sub('32c 화면 오류 없음, 정상 종료', r.errors.length === 0 && r.exitCode === 0, `${r.errors.join(' / ')} 종료 코드 ${r.exitCode}`));
+      return out;
+    },
+  },
 ];
 
 module.exports = { items };

@@ -48,7 +48,8 @@ async function launchCheck(appDir, opts = {}) {
 // until: 화면 글자에 이 글이 나올 때까지 더 기다려요 (최대 untilMs). probe: 화면에서 더 읽고 싶은 값(자바스크립트 식)
 // clickText: until 을 기다린 뒤 이 글자가 든 버튼 하나를 눌러요. clickUntil: 누른 뒤 화면 글자에 이 글이 나올 때까지 기다려요 (최대 untilMs)
 //   결과의 clicked 는 버튼을 찾아 눌렀는지예요 (clickText 를 안 주면 undefined)
-async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: exeOverride, until = '', untilMs = 20000, probe = '', clickText = '', clickUntil = '' } = {}) {
+//   thenClickText, thenClickUntil: 그다음에 누를 버튼 하나 더 (메뉴를 연 뒤 탭을 누를 때)
+async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: exeOverride, until = '', untilMs = 20000, probe = '', clickText = '', clickUntil = '', thenClickText = '', thenClickUntil = '' } = {}) {
   const bad = syntaxErrors(appDir);
   if (bad.length) return { ok: false, title: '', text: '', errors: bad, exitCode: null, mainOut: '' };
   const exe = exeOverride || path.join(appDir, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
@@ -113,13 +114,19 @@ async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: e
   if (until) {
     for (let waited = 0; waited < untilMs && !String(await readText()).includes(until); waited += 500) await sleep(500);
   }
+  // 글자가 든 버튼 하나를 누르고, 화면에 다음 글이 나올 때까지 기다려요
+  const clickButton = async (label, waitFor) => {
+    const expr = `(() => { const b = Array.from(document.querySelectorAll('button')).find((x) => (x.innerText || '').includes(${JSON.stringify(label)})); if (!b) return false; b.click(); return true; })()`;
+    const done = (await send('Runtime.evaluate', { expression: expr, returnByValue: true })).result.result.value === true;
+    if (done && waitFor) {
+      for (let waited = 0; waited < untilMs && !String(await readText()).includes(waitFor); waited += 500) await sleep(500);
+    }
+    return done;
+  };
   let clicked;
   if (clickText) {
-    const expr = `(() => { const b = Array.from(document.querySelectorAll('button')).find((x) => (x.innerText || '').includes(${JSON.stringify(clickText)})); if (!b) return false; b.click(); return true; })()`;
-    clicked = (await send('Runtime.evaluate', { expression: expr, returnByValue: true })).result.result.value === true;
-    if (clicked && clickUntil) {
-      for (let waited = 0; waited < untilMs && !String(await readText()).includes(clickUntil); waited += 500) await sleep(500);
-    }
+    clicked = await clickButton(clickText, clickUntil);
+    if (clicked && thenClickText) clicked = await clickButton(thenClickText, thenClickUntil);
   }
   const title = (await send('Runtime.evaluate', { expression: 'document.title', returnByValue: true })).result.result.value;
   const text = await readText();

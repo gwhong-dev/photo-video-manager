@@ -8,6 +8,7 @@
 //   복사한 값(copySource)은 기준 사진의 번호와 요약만 기억해요. 화면을 바꿔도 남고, 프로그램을 끄면 사라져요
 //   값을 넣은 뒤와 되돌린 뒤에는 선택을 비워요. 오류와 "N장 위치를 되돌렸어요" 알림은 모두 기존 notice 줄로 보여요
 //   화면을 바꿔도 검색어는 그대로예요 (선택은 비워져요)
+//   위치 제안 탭(suggestOpen)을 열면 격자 대신 SuggestPanel을 보여 주고, 오른쪽 패널은 읽기 전용이 돼요
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from './api.js';
@@ -18,6 +19,7 @@ import EditDialog from './components/EditDialog.jsx';
 import EmptyState from './components/EmptyState.jsx';
 import ScanBanner from './components/ScanBanner.jsx';
 import Sidebar from './components/Sidebar.jsx';
+import SuggestPanel from './components/SuggestPanel.jsx';
 import Toolbar from './components/Toolbar.jsx';
 import UndoBar from './components/UndoBar.jsx';
 import { undoneText } from './format.mjs';
@@ -55,6 +57,9 @@ export default function App() {
   const [selectingAll, setSelectingAll] = useState(false); // "목록 전체 선택"으로 번호를 받아오는 중
   const [notice, setNotice] = useState(''); // 화면 전환이 거절된 이유 등
   const [rescanning, setRescanning] = useState(false);
+  // "위치 제안" 탭을 보는 중인지. filter.info 에 넣으면 격자 목록을 헛되이 읽어서 따로 둬요
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestFocus, setSuggestFocus] = useState(null); // 위치 제안에서 오른쪽 패널에 보여 줄 사진 번호
 
   // ---------- 상태 읽기 ----------
   const refresh = useCallback(async () => {
@@ -111,7 +116,7 @@ export default function App() {
 
   // ---------- 고른 사진 비우기 ----------
   // 화면, 탭, 검색어, 태그가 달라지면 비워요 (정렬은 같은 사진들이라 그대로). 그려지기 전에 바로 바꿔서 한 번도 어긋나게 보이지 않아요
-  const scope = `${screen}|${filterScope(filter)}`;
+  const scope = `${screen}|${suggestOpen}|${filterScope(filter)}`;
   const [scopeSeen, setScopeSeen] = useState(scope);
   if (scopeSeen !== scope) {
     setScopeSeen(scope);
@@ -189,6 +194,7 @@ export default function App() {
   //   (갤러리에서 날짜를 찾아 복사한 뒤 정보 없는 사진 화면으로 가도 그 검색이 남아 있게). 고른 사진은 화면이 바뀌어서 비워져요
   const goScreen = (next) => {
     if (next === screen) return;
+    setSuggestOpen(false);
     setScreen(next);
     setFilter({ ...(next === 'missing' ? MISSING_FILTER : START_FILTER), sort: filter.sort, query: filter.query });
   };
@@ -344,6 +350,8 @@ export default function App() {
         </EmptyState>
       );
     }
+  } else if (suggestOpen) {
+    center = <SuggestPanel gen={gen} focusId={suggestFocus} onFocus={setSuggestFocus} onApplied={onApplied} onNotice={setNotice} />;
   } else if (daysError && !view) {
     center = (
       <EmptyState title="사진 목록을 불러오지 못했어요" action={<button type="button" onClick={() => setGen((g) => g + 1)}>다시 불러오기</button>}>
@@ -374,7 +382,7 @@ export default function App() {
   const showTools = !!(state && state.root && !state.dbError && state.total > 0);
   // 되돌리기 줄: "내가 넣은 정보" 탭에서는 위쪽에 늘, 그 밖에서는 넣은 직후에만 (같은 줄이 두 번 보이지 않게)
   const lastBatch = (state && state.lastBatch) || null;
-  const manualTab = screen === 'missing' && filter.info === 'manual';
+  const manualTab = screen === 'missing' && filter.info === 'manual' && !suggestOpen;
   const showTopUndo = showTools && manualTab && !!lastBatch;
   const showAfterUndo = showTools && !manualTab && !!lastBatch && !!justApplied && justApplied.batchId === lastBatch.id;
   // 오른쪽 패널에 자세히 보여 줄 사진: 한 장만 골랐으면 그 사진 ("이 날 모두 선택"이 한 장짜리 날이어도 보이게)
@@ -400,7 +408,15 @@ export default function App() {
             searchText={searchText}
             onSearchText={setSearchText}
             onTab={(tab) => setField({ tab })}
-            onInfo={(info) => setField({ info })}
+            onInfo={(info) => {
+              setSuggestOpen(false);
+              setField({ info });
+            }}
+            suggestOpen={suggestOpen}
+            onSuggest={() => {
+              setSuggestFocus(null);
+              setSuggestOpen(true);
+            }}
             onSort={(sort) => setField({ sort })}
             onSelectAll={selectAll}
             selectingAll={selectingAll || !viewCurrent}
@@ -420,7 +436,8 @@ export default function App() {
       </main>
       {showTools && (
         <DetailPanel
-          selectedId={soleId !== null ? soleId : selection.focus}
+          selectedId={suggestOpen ? suggestFocus : (soleId !== null ? soleId : selection.focus)}
+          readOnly={suggestOpen}
           gen={gen}
           count={selection.ids.size}
           copySource={copySource}

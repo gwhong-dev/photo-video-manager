@@ -21,7 +21,8 @@ const INFO_TABS = [
   ['manual', '내가 넣은 정보', 'manualCount'],
 ];
 
-export default function Toolbar({ screen, state, filter, searchText, onSearchText, onTab, onInfo, onSort, onSelectAll, selectingAll }) {
+// suggestOpen = "위치 제안" 탭을 보는 중. 이 탭은 묶음을 하나씩 보여 줘서 검색, 정렬, 목록 전체 선택을 숨겨요
+export default function Toolbar({ screen, state, filter, searchText, onSearchText, onTab, onInfo, onSort, onSelectAll, selectingAll, suggestOpen, onSuggest }) {
   const missing = screen === 'missing';
   const s = state || {};
   return (
@@ -33,13 +34,14 @@ export default function Toolbar({ screen, state, filter, searchText, onSearchTex
               key={key}
               type="button"
               role="tab"
-              aria-selected={filter.info === key}
-              className={`tab${filter.info === key ? ' active' : ''}`}
+              aria-selected={!suggestOpen && filter.info === key}
+              className={`tab${!suggestOpen && filter.info === key ? ' active' : ''}`}
               onClick={() => onInfo(key)}
             >
               {label} <span className="tab-count">{formatCount(s[countKey] || 0)}</span>
             </button>
           ))}
+          <button type="button" role="tab" aria-selected={!!suggestOpen} className={`tab${suggestOpen ? ' active' : ''}`} onClick={onSuggest}>위치 제안</button>
         </div>
       ) : (
         <div className="tabs" role="tablist" aria-label="종류">
@@ -57,6 +59,7 @@ export default function Toolbar({ screen, state, filter, searchText, onSearchTex
           ))}
         </div>
       )}
+      {!suggestOpen && <>
       <label className="search">
         <SearchIcon />
         <input
@@ -77,6 +80,7 @@ export default function Toolbar({ screen, state, filter, searchText, onSearchTex
         <option value="oldest">찍은 날짜 오래된순</option>
       </select>
       <button type="button" className="link-button" onClick={onSelectAll} disabled={selectingAll}>목록 전체 선택</button>
+      </>}
     </header>
   );
 }
