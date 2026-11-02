@@ -672,6 +672,21 @@ const items = [
       const csp = (html.match(/http-equiv="Content-Security-Policy"\s+content="([^"]*)"/) || [])[1];
       out.push(sub('35i 화면 보안 설정에 인터넷 주소가 없음', !!csp && !/https?:/.test(csp), String(csp)));
 
+      // 35q 앱 화면 파일만 창에 열 수 있어요 (주소 뒤의 #, ?는 보지 않고, 바깥 주소와 다른 파일은 막아요)
+      const { isAppScreen } = require('../lib/window-guard');
+      {
+        const screen = path.join(APP, 'dist', 'renderer', 'index.html');
+        const url = pathToFileURL(screen).href;
+        const screens = [screen];
+        const ok = isAppScreen(url, screens) && isAppScreen(`${url}#a`, screens) && isAppScreen(url.toUpperCase().replace('FILE:', 'file:'), screens);
+        const no = [
+          'https://example.com/', 'http://127.0.0.1:5173/', 'about:blank', 'data:text/html,x', 'pvm://thumb/1', '읽을 수 없는 주소',
+          pathToFileURL(path.join(APP, 'dist', 'renderer', 'other.html')).href,
+          pathToFileURL(path.join(APP, 'test', 'samples', 'photo.jpg')).href,
+        ].filter((u) => isAppScreen(u, screens));
+        out.push(sub('35q 앱 화면 파일만 허용', ok && no.length === 0, JSON.stringify(no)));
+      }
+
       // ---------- 진짜 앱 ----------
       // 샘플 복사본과 임시 userData로 띄워요. 지도와 검색 주소는 닿지 않는 127.0.0.1:1 이라 진짜 인터넷에 나가지 않아요. 값은 넣지 않아요
       const { launchCheck } = require('./launch-check');
@@ -705,6 +720,12 @@ const items = [
       out.push(sub('35n 지도를 가만히 두면 지도 칸 요청이 늘지 않음', q.tilesSettled > 0 && q.tilesSettled === q.tilesAfterWait, seen));
       out.push(sub('35o 지도를 조금 옮기면 실패한 칸을 다시 받음', q.tilesAfterPan > q.tilesAfterWait, seen));
       out.push(sub('35j 창 안의 Tab 순환과 Esc 닫기 (지도에 초점이 있어도)', q.tabWraps === true && q.shiftTabWraps === true && q.closedByEsc === true && q.undoBar === false, seen));
+      out.push(sub('35r 앱 창이 바깥 주소로 나가지 않고 새 창도 안 열림', q.stayed === true && q.newWindow === null, seen));
+      {
+        const logs = fs.existsSync(path.join(ud, 'logs')) ? fs.readdirSync(path.join(ud, 'logs')) : [];
+        const blocked = logs.filter((n) => n.includes('window-guard')).map((n) => fs.readFileSync(path.join(ud, 'logs', n), 'utf8')).join('\n');
+        out.push(sub('35s 막은 이동과 새 창이 로그에 남음', blocked.includes('창 이동 막음') && blocked.includes('새 창 막음'), logs.join(',')));
+      }
       // 끊긴 상태라 지도 칸 실패 로그는 당연히 나와요. 그 밖의 화면 오류는 없어야 해요
       const realErrors = r.errors.filter((e) => !/Failed to load resource/.test(e));
       out.push(sub('35k 화면 오류 없음, 정상 종료', realErrors.length === 0 && r.exitCode === 0, `${realErrors.join(' / ')} 종료 코드 ${r.exitCode}`));
@@ -824,6 +845,13 @@ async function mapProbe() {
   key(canvas, { key: 'Escape' });
   q.closedByEsc = !!(await wait(() => !document.querySelector('.dialog'), 3000));
   q.undoBar = document.body.innerText.includes('되돌리기');
+
+  // 앱 화면 밖으로 나가는 이동과 새 창은 막혀요. 막히지 않으면 이 조사 자체가 끊겨서 점검이 실패해요
+  const startUrl = location.href;
+  q.newWindow = window.open('https://127.0.0.1:1/new');
+  location.href = 'https://127.0.0.1:1/away';
+  await new Promise((res) => setTimeout(res, 800));
+  q.stayed = location.href === startUrl;
   return q;
 }
 
