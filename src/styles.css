@@ -352,7 +352,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .map-results button { display: block; width: 100%; padding: 5px 8px; border: 0; border-radius: 0; background: transparent; color: var(--sub); font-size: 13px; text-align: left; }
 .map-results button:hover:not(:disabled), .map-results button:focus-visible { background: var(--sidebar); color: var(--text); outline: 0; }
 .map-frame { position: relative; isolation: isolate; }
-.map-canvas { height: 320px; border: 1px solid var(--line); }
+/* 창이 낮으면 지도를 줄여서, 넣기 버튼이 지도와 미리보기를 가리지 않게 해요 (최대 320px, 최소 150px) */
+.map-canvas { height: clamp(150px, calc(92vh - 402px), 320px); border: 1px solid var(--line); }
 .map-canvas.leaflet-container { background: var(--panel); font-family: inherit; font-size: 13px; }
 .map-canvas:focus-visible { outline: 2px solid var(--sub); outline-offset: 1px; }
 .map-notes { position: absolute; z-index: 1001; top: 8px; left: 56px; right: 8px; display: flex; flex-direction: column; gap: 4px; pointer-events: none; }

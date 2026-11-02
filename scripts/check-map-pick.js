@@ -672,6 +672,10 @@ const items = [
       const csp = (html.match(/http-equiv="Content-Security-Policy"\s+content="([^"]*)"/) || [])[1];
       out.push(sub('35i 화면 보안 설정에 인터넷 주소가 없음', !!csp && !/https?:/.test(csp), String(csp)));
 
+      // 35p 창이 낮으면 지도가 줄어서, 넣기 버튼이 지도를 가리지 않아요 (실제 높이별 측정은 PR에 적었어요)
+      const css = fs.readFileSync(path.join(APP, 'src', 'styles.css'), 'utf8');
+      out.push(sub('35p 지도 높이가 창 높이를 따라 줄어듦', /\.map-canvas \{ height: clamp\(150px, calc\(92vh - 402px\), 320px\);/.test(css)));
+
       // ---------- 진짜 앱 ----------
       // 샘플 복사본과 임시 userData로 띄워요. 지도와 검색 주소는 닿지 않는 127.0.0.1:1 이라 진짜 인터넷에 나가지 않아요. 값은 넣지 않아요
       const { launchCheck } = require('./launch-check');
