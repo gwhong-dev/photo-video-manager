@@ -54,7 +54,7 @@ const items = [
 
       // 33b 앱 이름표를 달고, 다른 주소로 넘기는 응답은 따라가지 않아요
       const init = h.calls[0].init;
-      out.push(sub('33b User-Agent 이름표 + 리다이렉트 안 따라감 + 제한시간', init.headers['User-Agent'] === 'photo-video-manager/1.0.0 (https://github.com/gwhong-dev/photo-video-manager)' && init.redirect === 'error' && !!init.signal, JSON.stringify(init.headers)));
+      out.push(sub('33b User-Agent 이름표 + 리다이렉트 안 따라감 + 쿠키 안 씀 + 제한시간', init.headers['User-Agent'] === 'photo-video-manager/1.0.0 (https://github.com/gwhong-dev/photo-video-manager)' && init.redirect === 'error' && init.credentials === 'omit' && !!init.signal, JSON.stringify(init.headers)));
 
       // 33c 잘못된 주소는 나가기 전에 404예요
       const bad = ['pvm://tile/20/0/0', 'pvm://tile/1/2/0', 'pvm://tile/1/0/-1', 'pvm://tile/01/0/0', 'pvm://tile/1/0', 'pvm://tile/1/0/0/0', 'pvm://tile/1/0/0?a=1', 'pvm://thumb/1', 'pvm://tile/1/0/0#x', 'pvm://u:p@tile/1/0/0', 'pvm://tile:80/1/0/0', 'pvm://tile/1/0/0/', 'pvm://tile/a/0/0', 'pvm://tile/1.5/0/0', 'pvm://tile/19/524288/0', '글자', ''];
@@ -181,14 +181,14 @@ const items = [
         await f.net.search(' 경복궁 ');
         const u = new URL(f.calls[0].url);
         const names = [...u.searchParams.keys()].sort().join(',');
-        out.push(sub('33h 검색 요청 모양 (q 공백 제거, jsonv2, limit 5, ko, User-Agent, 리다이렉트 안 따라감, 제한시간)',
+        out.push(sub('33h 검색 요청 모양 (q 공백 제거, jsonv2, limit 5, ko, User-Agent, 리다이렉트 안 따라감, 제한시간), 쿠키 안 씀',
           u.origin + u.pathname === SEARCH_DEFAULT
           && u.searchParams.get('q') === '경복궁' && u.searchParams.get('format') === 'jsonv2'
           && u.searchParams.get('limit') === '5' && u.searchParams.get('accept-language') === 'ko'
           && names === 'accept-language,format,limit,q'
           && f.calls[0].init.headers['User-Agent'] === 'photo-video-manager/1.0.0 (https://github.com/gwhong-dev/photo-video-manager)'
           && f.calls[0].init.redirect === 'error' && !!f.calls[0].init.signal
-          && f.calls[0].init.cache === 'no-store',
+          && f.calls[0].init.cache === 'no-store' && f.calls[0].init.credentials === 'omit',
           f.calls[0].url));
       }
 
