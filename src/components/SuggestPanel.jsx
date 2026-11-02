@@ -3,14 +3,15 @@
 //   이 화면 자체가 미리보기예요. 사용자가 버튼을 눌렀을 때만 값이 들어가요
 //   사진을 누르면 오른쪽 패널에 크게 보이고, 모서리 체크 칸을 끄면 넣기에서 빠져요
 //   기기 정보 없는 사진은 처음에 체크가 꺼져 있어요 (설계서 12절). 넣을 때 건너뛴 사진으로 기억하는 것은
-//   사람이 직접 끈 기기 정보 있는 사진뿐이에요 (처음부터 꺼져 있던 사진은 다음에 다시 나와요)
+//   사람이 직접 끈 기기 정보 있는 사진뿐이에요. 처음부터 꺼져 있던 사진은 제안에 남아서 뒤쪽 묶음으로 다시 나와요
+//   그래서 넣은 뒤에는 보던 묶음에 머물지 않고 맨 앞 묶음으로 가요
 //   목록은 gen이 바뀔 때마다 다시 받고, 늦게 온 옛 응답은 버려요 (요청 번호)
 //   넣기와 건너뛰기는 하는 동안 다시 눌러도 한 번만 실행돼요. 빠른 두 번 누름의 뒤쪽은 다음 묶음에 닿지 않게 받지 않아요
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { checkAllLabel, formatCount, formatTakenAt, gapText, suggestApplyLabel } from '../format.mjs';
-import { checkAll, checkedIds, groupKey, isChecked, isRepeatClick, rememberIds, settleView } from '../suggest-view.mjs';
+import { checkAll, checkedIds, groupKey, isChecked, isRepeatClick, rememberIds, settleView, viewAfterApply } from '../suggest-view.mjs';
 import EmptyState from './EmptyState.jsx';
 
 const SKIP_NOT_SAVED = '건너뛴 사진을 파일에 저장하지 못했어요. 이번 실행 동안만 기억해요.';
@@ -56,6 +57,7 @@ export default function SuggestPanel({ gen, focusId, onFocus, onApplied, onNotic
   const seq = useRef(0);
   const viewRef = useRef(null);
   viewRef.current = view;
+  const appliedRef = useRef(false); // 넣기가 끝난 직후의 목록 받기인지
 
   const load = useCallback(async () => {
     const mine = ++seq.current;
@@ -64,7 +66,9 @@ export default function SuggestPanel({ gen, focusId, onFocus, onApplied, onNotic
       if (mine !== seq.current) return;
       setData(next);
       setError('');
-      setView(settleView(next.groups, viewRef.current));
+      const settle = appliedRef.current ? viewAfterApply : settleView;
+      appliedRef.current = false;
+      setView(settle(next.groups, viewRef.current));
     } catch (e) {
       if (mine === seq.current) setError(errorText(e));
     }
@@ -110,6 +114,7 @@ export default function SuggestPanel({ gen, focusId, onFocus, onApplied, onNotic
     const checked = checkedIds(group, view.flipped);
     const left = rememberIds(group, view.flipped); // 사람이 끈 사진만 건너뛴 사진으로 기억해요
     const r = await api.applyEdit(checked, { source: 'copy', sourceId: group.source.id, date: false, time: false, location: true, via: 'suggest' });
+    appliedRef.current = true; // 넣기가 됐으면 다음 목록에서 맨 앞 묶음으로
     if (r.dropped) onNotice(`그 사이 위치가 생긴 ${formatCount(r.dropped)}장은 빼고 넣었어요.`);
     if (left.length) await skip(left);
     await onApplied(r);

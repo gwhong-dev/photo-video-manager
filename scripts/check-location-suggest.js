@@ -601,7 +601,7 @@ const items = [
       // src의 .mjs 파일도 React가 없는 순수 계산이에요 (file:// 주소로 불러와요)
       const { pathToFileURL } = require('url');
       const load = (name) => import(pathToFileURL(path.join(__dirname, '..', 'src', name)).href);
-      const { groupKey, isRepeatClick, settleView, isChecked, checkedIds, rememberIds, checkAll } = await load('suggest-view.mjs');
+      const { groupKey, isRepeatClick, settleView, viewAfterApply, isChecked, checkedIds, rememberIds, checkAll } = await load('suggest-view.mjs');
       const { gapText, suggestApplyLabel, checkAllLabel } = await load('format.mjs');
 
       // ids의 사진은 기기 정보 있음, noDeviceIds의 사진은 기기 정보 없음
@@ -641,6 +641,14 @@ const items = [
       // 되돌리기로 같은 묶음에 사진이 늘면, 새 사진은 처음 상태예요
       const grown = group('2026-01-03', 3, [31, 32, 35], [33, 34, 36]);
       const settled = settleView([grown], { key: groupKey(mixed), flipped: new Set([31, 33]) });
+      // 섞인 묶음에서 넣은 뒤 기기 정보 없는 사진만 남아도, 그 묶음에 머물지 않고 맨 앞 묶음으로 가요
+      //   (머물면 체크 0장 화면에서 건너뛰기를 눌러 처음부터 꺼져 있던 사진이 건너뛴 목록으로 사라져요)
+      {
+        const left = group('2026-01-03', 3, [], [33]);
+        const next = group('2026-01-04', 4, [41]);
+        const after = typeof viewAfterApply === 'function' ? viewAfterApply([next, left], { key: groupKey(mixed), flipped: new Set([33]) }) : null;
+        out.push(sub('31m 넣은 뒤에는 맨 앞 묶음을 처음 상태로', !!after && after.key === groupKey(next) && after.flipped.size === 0, JSON.stringify(after && [after.key, [...after.flipped]])));
+      }
       out.push(sub(
         '31k 같은 묶음에 사진이 늘면 새 사진은 처음 상태, 바꾼 체크는 유지',
         checkedIds(grown, settled.flipped).join(',') === '32,35,33',

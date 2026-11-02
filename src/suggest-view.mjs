@@ -33,3 +33,8 @@ export function settleView(groups, current) {
   const ids = new Set(same.targets.map((t) => t.id));
   return { key: current.key, flipped: new Set([...current.flipped].filter((id) => ids.has(id))) };
 }
+
+// 넣기가 끝나고 목록을 새로 받은 뒤 보여 줄 것: 보던 묶음이 남아 있어도 맨 앞 묶음을 처음 상태로 보여 줘요
+//   섞인 묶음은 넣은 뒤 기기 정보 없는 사진만 남는데, 거기 머물면 기기 정보 있는 다음 묶음이 뒤로 밀리고
+//   체크 0장 화면에서 건너뛰기를 누르게 돼서 처음부터 꺼져 있던 사진이 건너뛴 목록으로 사라져요
+export const viewAfterApply = (groups, _current) => settleView(groups, null);
