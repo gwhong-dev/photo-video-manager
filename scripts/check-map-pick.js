@@ -702,6 +702,14 @@ const items = [
         const deep = createTileBoard();
         deep.loaded({ x: 0, y: 0, z: 0 });
         out.push(sub('35m2 윗단계 칸이 떠 있으면 허용 (5단계까지)', canPlacePin(parent, child) && !canPlacePin(parent, { x: 12, y: 20, z: 5 }) && canPlacePin(deep, { x: 31, y: 31, z: 5 }) && !canPlacePin(deep, { x: 63, y: 63, z: 6 })));
+        // 35m4 축소 직후에는 아랫단계 칸 4개를 줄여 보여 주니 4개가 모두 떠 있으면 허용해요 (2단계까지, 하나라도 비면 막음)
+        const kids = createTileBoard();
+        for (const [x, y] of [[20, 40], [21, 40], [20, 41]]) kids.loaded({ x, y, z: 6 });
+        const threeOnly = !canPlacePin(kids, { x: 10, y: 20, z: 5 });
+        for (const [x, y] of [[42, 82], [43, 82], [42, 83], [43, 83]]) kids.loaded({ x, y, z: 7 }); // 빈 넷째 칸(21, 41)의 아래 4개
+        const filledBelow = canPlacePin(kids, { x: 10, y: 20, z: 5 });
+        const tooDeep = !canPlacePin(kids, { x: 5, y: 10, z: 4 }); // 3단계 아래는 안 봐요
+        out.push(sub('35m4 아랫단계 칸 4개가 모두 떠 있으면 허용 (2단계까지)', threeOnly && filledBelow && tooDeep, JSON.stringify([threeOnly, filledBelow, tooDeep])));
         // 35m3 픽셀 자리 → 칸 번호 (한 변 256, 지구 복사본 왼쪽은 음수)
         const c1 = tileCoordsAt({ x: 2559.9, y: 256, z: 0 }, 4);
         const c2 = tileCoordsAt({ x: -1, y: 0 }, 4);

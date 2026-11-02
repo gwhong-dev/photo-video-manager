@@ -46,19 +46,33 @@ export function tileCoordsAt(point, zoom, tileSize = 256) {
   return { x: Math.floor(point.x / tileSize), y: Math.floor(point.y / tileSize), z: zoom };
 }
 
-// 확대·축소 직후에는 새 칸이 오기 전까지 Leaflet이 이전 단계의 칸을 늘려서 보여 줘요 (최대 5단계 위까지)
+// 확대·축소 직후에는 새 칸이 오기 전까지 Leaflet이 이전 단계의 칸을 보여 줘요
+//   확대 뒤에는 윗단계 칸을 늘려서 (최대 5단계 위), 축소 뒤에는 아랫단계 칸 4개를 줄여서 (최대 2단계 아래)
 const PARENT_LEVELS = 5;
+const CHILD_LEVELS = 2;
 
-// 누른 자리에 핀을 놓아도 되는지. 그 자리를 덮는 칸(또는 늘려서 보여 주는 윗단계 칸)이 떠 있어야 어디를 누르는지 알 수 있어요
+// 아랫단계 칸 4개가 모두 떠 있는지 (빈 칸은 그 아래 4개로 다시 봐요. Leaflet의 _retainChildren과 같은 순서)
+function childrenShown(board, x, y, z, depth) {
+  for (const cx of [2 * x, 2 * x + 1]) {
+    for (const cy of [2 * y, 2 * y + 1]) {
+      if (board.has({ x: cx, y: cy, z: z + 1 })) continue;
+      if (depth <= 1 || !childrenShown(board, cx, cy, z + 1, depth - 1)) return false;
+    }
+  }
+  return true;
+}
+
+// 누른 자리에 핀을 놓아도 되는지. 그 자리를 덮는 칸(또는 대신 보여 주는 윗단계·아랫단계 칸)이 떠 있어야 어디를 누르는지 알 수 있어요
 //   화면에 다른 칸이 떠 있어도 누른 자리가 비어 있으면 막고, 다른 칸이 실패했어도 누른 자리가 보이면 허용해요
 export function canPlacePin(board, coords) {
   let { x, y, z } = coords;
-  for (let up = 0; up <= PARENT_LEVELS; up++) {
-    if (board.has({ x, y, z })) return true;
+  if (board.has(coords) || childrenShown(board, x, y, z, CHILD_LEVELS)) return true;
+  for (let up = 0; up < PARENT_LEVELS; up++) {
     if (z <= 0) return false;
     x = Math.floor(x / 2);
     y = Math.floor(y / 2);
     z -= 1;
+    if (board.has({ x, y, z })) return true;
   }
   return false;
 }
