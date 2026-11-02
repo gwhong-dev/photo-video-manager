@@ -71,6 +71,8 @@ export function undoneText(count, kind) {
 // ---------- 위치 제안 ----------
 // 넣기 버튼: "4장에 이 위치 넣기". 0장이면 빈 글자
 export const suggestApplyLabel = (count) => (countOk(count) ? `${formatCount(count)}장에 이 위치 넣기` : '');
+// 묶음의 모든 사진을 체크하는 버튼 글: 4 → "4장 모두 체크하기"
+export const checkAllLabel = (count) => `${formatCount(count)}장 모두 체크하기`;
 
 // 근거 사진과의 시간 차이: 0 → "1분 안", 12 → "12분 차이", 65 → "1시간 5분 차이"
 export function gapText(minutes) {

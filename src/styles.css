@@ -391,6 +391,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .suggest-check { position: absolute; top: 0; right: 0; display: flex; padding: 6px; background: rgba(0, 0, 0, 0.45); cursor: pointer; }
 .suggest-check input { margin: 0; width: 16px; height: 16px; accent-color: var(--text); cursor: pointer; }
 .suggest-gap { display: block; margin-top: 4px; font-size: 12px; color: var(--sub); }
+.suggest-nodevice { display: block; font-size: 12px; color: var(--sub); }
 .suggest-actions { flex: none; display: flex; gap: 8px; padding: 12px 24px; border-top: 1px solid var(--line); }
 
 button.primary { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }

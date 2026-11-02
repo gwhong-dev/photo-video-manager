@@ -199,6 +199,39 @@ const items = [
         out.push(sub('28n 조회에 시각 출처가 있음', k.takenAtSource === 'filename', String(k.takenAtSource)));
       });
 
+      // 28o 기기 정보 없음 표시: 없음, 빈 글자, 공백뿐이면 "없음"이에요
+      {
+        const models = [null, '', '  ', 'iPhone 12'];
+        const r = buildSuggestions([
+          located({ takenAt: '2026-10-25T14:00:00' }),
+          ...models.map((model, i) => file({ takenAt: `2026-10-25T14:0${i + 1}:00`, model })),
+        ], NONE);
+        const flags = r.groups[0].targets.map((t) => t.noDevice).join(',');
+        out.push(sub('28o 기기 정보 없음 표시 (null, 빈 글자, 공백은 없음)', flags === 'true,true,true,false', flags));
+      }
+
+      // 28p 기기 정보 있는 사진이 든 묶음이 먼저 (섞인 묶음 포함). 그 안에서는 기존 순서 (장수 많은 순)
+      {
+        const r = buildSuggestions([
+          located({ id: 941, takenAt: '2026-02-01T10:00:00', takenDay: '2026-02-01' }),
+          ...[1, 2, 3, 4, 5].map((m) => file({ takenAt: `2026-02-01T10:0${m}:00`, takenDay: '2026-02-01' })),
+          located({ id: 942, takenAt: '2026-02-02T10:00:00', takenDay: '2026-02-02' }),
+          file({ takenAt: '2026-02-02T10:01:00', takenDay: '2026-02-02', model: 'iPhone 12' }),
+          located({ id: 943, takenAt: '2026-02-03T10:00:00', takenDay: '2026-02-03' }),
+          file({ takenAt: '2026-02-03T10:01:00', takenDay: '2026-02-03', model: 'iPhone 12' }),
+          file({ takenAt: '2026-02-03T10:02:00', takenDay: '2026-02-03' }),
+        ], NONE);
+        const order = r.groups.map((g) => g.source.id).join(',');
+        out.push(sub('28p 기기 정보 있는 묶음 먼저, 그 안에서 장수 순', order === '943,942,941', order));
+      }
+
+      // 28q DB 조회가 기기 정보를 같이 읽어요
+      await withDb(env, 'suggest-model', (db) => {
+        db.upsertFiles([row({ path: 'R1/m.jpg', name: 'm.jpg', model: 'X' })]);
+        const k = db.listSuggestionRows('R1')[0] || {};
+        out.push(sub('28q 조회에 기기 정보가 있음', k.model === 'X', String(k.model)));
+      });
+
       // 28l 가짜 6만 건에서 계산 시간 (목표 0.5초, 2초를 넘으면 실패)
       await withDb(env, 'suggest-speed', (db) => {
         fillFakeLibrary(db, 'R1', 60000);
@@ -568,24 +601,59 @@ const items = [
       // src의 .mjs 파일도 React가 없는 순수 계산이에요 (file:// 주소로 불러와요)
       const { pathToFileURL } = require('url');
       const load = (name) => import(pathToFileURL(path.join(__dirname, '..', 'src', name)).href);
-      const { groupKey, isRepeatClick, settleView } = await load('suggest-view.mjs');
-      const { gapText, suggestApplyLabel } = await load('format.mjs');
+      const { groupKey, isRepeatClick, settleView, viewAfterApply, isChecked, checkedIds, rememberIds, checkAll } = await load('suggest-view.mjs');
+      const { gapText, suggestApplyLabel, checkAllLabel } = await load('format.mjs');
 
-      const group = (day, sourceId, ids) => ({ day, source: { id: sourceId }, targets: ids.map((id) => ({ id })) });
+      // ids의 사진은 기기 정보 있음, noDeviceIds의 사진은 기기 정보 없음
+      const group = (day, sourceId, ids, noDeviceIds = []) => ({
+        day,
+        source: { id: sourceId },
+        targets: [...ids.map((id) => ({ id, noDevice: false })), ...noDeviceIds.map((id) => ({ id, noDevice: true }))],
+      });
       const g1 = group('2026-01-01', 1, [11, 12, 13]);
       const g2 = group('2026-01-02', 2, [21, 22]);
       const key1 = groupKey(g1);
 
-      const kept = settleView([g2, g1], { key: key1, unchecked: new Set([11, 99]) });
+      const kept = settleView([g2, g1], { key: key1, flipped: new Set([11, 99]) });
       out.push(sub(
         '31a 보던 묶음이 남으면 그대로, 체크 유지, 사라진 번호는 정리',
-        kept.key === key1 && kept.unchecked.size === 1 && kept.unchecked.has(11),
-        JSON.stringify([kept.key, [...kept.unchecked]]),
+        kept.key === key1 && kept.flipped.size === 1 && kept.flipped.has(11),
+        JSON.stringify([kept.key, [...kept.flipped]]),
       ));
-      const moved = settleView([g2], { key: key1, unchecked: new Set([11]) });
-      out.push(sub('31b 보던 묶음이 사라지면 첫 묶음, 체크는 새로', moved.key === groupKey(g2) && moved.unchecked.size === 0));
+      const moved = settleView([g2], { key: key1, flipped: new Set([11]) });
+      out.push(sub('31b 보던 묶음이 사라지면 첫 묶음, 체크는 새로', moved.key === groupKey(g2) && moved.flipped.size === 0));
       out.push(sub('31c 처음 열 때는 첫 묶음', settleView([g1, g2], null).key === key1));
-      out.push(sub('31d 묶음이 없으면 null', settleView([], { key: key1, unchecked: new Set() }) === null));
+      out.push(sub('31d 묶음이 없으면 null', settleView([], { key: key1, flipped: new Set() }) === null));
+
+      // 기기 정보 없는 사진은 처음에 체크가 꺼져 있어요 (설계서 12절)
+      const mixed = group('2026-01-03', 3, [31, 32], [33, 34]);
+      const none = new Set();
+      out.push(sub('31h 처음엔 기기 정보 있는 사진만 체크', checkedIds(mixed, none).join(',') === '31,32' && !isChecked(mixed.targets[2], none), checkedIds(mixed, none).join(',')));
+      // 31은 사람이 끔. 33은 켰다가 다시 꺼서 처음 상태 (flipped에 없음). 34는 손대지 않음
+      const remember = rememberIds(mixed, new Set([31]));
+      out.push(sub(
+        '31i 사람이 끈 기기 정보 있는 사진만 기억, 처음부터 꺼진 사진은 기억 안 함',
+        remember.join(',') === '31' && rememberIds(mixed, none).length === 0 && rememberIds(mixed, new Set([33])).length === 0,
+        JSON.stringify([remember, rememberIds(mixed, none), rememberIds(mixed, new Set([33]))]),
+      ));
+      const all = checkAll(mixed);
+      out.push(sub('31j 모두 체크하면 전부 넣고 기억할 사진 없음', checkedIds(mixed, all).join(',') === '31,32,33,34' && rememberIds(mixed, all).length === 0, checkedIds(mixed, all).join(',')));
+      // 되돌리기로 같은 묶음에 사진이 늘면, 새 사진은 처음 상태예요
+      const grown = group('2026-01-03', 3, [31, 32, 35], [33, 34, 36]);
+      const settled = settleView([grown], { key: groupKey(mixed), flipped: new Set([31, 33]) });
+      // 섞인 묶음에서 넣은 뒤 기기 정보 없는 사진만 남아도, 그 묶음에 머물지 않고 맨 앞 묶음으로 가요
+      //   (머물면 체크 0장 화면에서 건너뛰기를 눌러 처음부터 꺼져 있던 사진이 건너뛴 목록으로 사라져요)
+      {
+        const left = group('2026-01-03', 3, [], [33]);
+        const next = group('2026-01-04', 4, [41]);
+        const after = typeof viewAfterApply === 'function' ? viewAfterApply([next, left], { key: groupKey(mixed), flipped: new Set([33]) }) : null;
+        out.push(sub('31m 넣은 뒤에는 맨 앞 묶음을 처음 상태로', !!after && after.key === groupKey(next) && after.flipped.size === 0, JSON.stringify(after && [after.key, [...after.flipped]])));
+      }
+      out.push(sub(
+        '31k 같은 묶음에 사진이 늘면 새 사진은 처음 상태, 바꾼 체크는 유지',
+        checkedIds(grown, settled.flipped).join(',') === '32,35,33',
+        checkedIds(grown, settled.flipped).join(','),
+      ));
       // 빠른 두 번 누름의 뒤쪽은 받지 않아요 (보지 않은 다음 묶음에 값이 들어가지 않게). 키보드로 누르면 detail이 0이에요
       out.push(sub(
         '31g 두 번째 누름은 무시, 첫 누름과 키보드 누름은 받음',
@@ -598,6 +666,7 @@ const items = [
         [gapText(0), gapText(12), gapText(60), gapText(65)].join(' / '),
       ));
       out.push(sub('31f 넣기 버튼 글 (천 단위 쉼표), 0장은 빈 글자', suggestApplyLabel(1234) === '1,234장에 이 위치 넣기' && suggestApplyLabel(4) === '4장에 이 위치 넣기' && suggestApplyLabel(0) === ''));
+      out.push(sub('31l 모두 체크 버튼 글 (천 단위 쉼표)', typeof checkAllLabel === 'function' && checkAllLabel(1234) === '1,234장 모두 체크하기' && checkAllLabel(4) === '4장 모두 체크하기'));
       return out;
     },
   },
@@ -629,7 +698,9 @@ const items = [
         thenClickUntil: '이 묶음 건너뛰기',
       });
       const text = String(r.text);
-      out.push(sub('32a 묶음 글자가 보임', r.clicked === true && text.includes('남은 묶음') && text.includes('장에 이 위치 넣기') && text.includes('이 묶음 건너뛰기'), `화면 글자: ${text.slice(0, 300).replace(/\s+/g, ' ')}`));
+      // 넣기 버튼 글은 샘플 사진에 기기 정보가 있는지에 따라 달라요 (없으면 처음에 체크가 꺼져 있어요)
+      const applyText = text.includes('장에 이 위치 넣기') || text.includes('넣을 사진을 골라 주세요');
+      out.push(sub('32a 묶음 글자가 보임', r.clicked === true && text.includes('남은 묶음') && applyText && text.includes('모두 체크하기') && text.includes('이 묶음 건너뛰기'), `화면 글자: ${text.slice(0, 300).replace(/\s+/g, ' ')}`));
       out.push(sub('32b 검색과 목록 전체 선택이 숨겨짐', !text.includes('목록 전체 선택')));
       out.push(sub('32c 화면 오류 없음, 정상 종료', r.errors.length === 0 && r.exitCode === 0, `${r.errors.join(' / ')} 종료 코드 ${r.exitCode}`));
       return out;
