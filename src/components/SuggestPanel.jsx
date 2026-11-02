@@ -11,7 +11,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { checkAllLabel, formatCount, formatTakenAt, gapText, suggestApplyLabel } from '../format.mjs';
-import { checkAll, checkedIds, groupKey, isChecked, isRepeatClick, rememberIds, settleView, viewAfterApply } from '../suggest-view.mjs';
+import { checkAll, checkedIds, finishApply, groupKey, isChecked, isRepeatClick, rememberIds, settleView, viewAfterApply } from '../suggest-view.mjs';
 import EmptyState from './EmptyState.jsx';
 
 const SKIP_NOT_SAVED = '건너뛴 사진을 파일에 저장하지 못했어요. 이번 실행 동안만 기억해요.';
@@ -116,8 +116,7 @@ export default function SuggestPanel({ gen, focusId, onFocus, onApplied, onNotic
     const r = await api.applyEdit(checked, { source: 'copy', sourceId: group.source.id, date: false, time: false, location: true, via: 'suggest' });
     appliedRef.current = true; // 넣기가 됐으면 다음 목록에서 맨 앞 묶음으로
     if (r.dropped) onNotice(`그 사이 위치가 생긴 ${formatCount(r.dropped)}장은 빼고 넣었어요.`);
-    if (left.length) await skip(left);
-    await onApplied(r);
+    await finishApply(left, skip, (e) => onNotice(errorText(e)), () => onApplied(r));
   });
   const skipGroup = () => run(() => skip(group.targets.map((t) => t.id)));
   const clearSkips = () => run(async () => {

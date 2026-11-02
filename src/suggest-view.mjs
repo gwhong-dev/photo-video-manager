@@ -23,6 +23,21 @@ export const rememberIds = (group, flipped) => group.targets.filter((t) => !t.no
 // 모두 체크한 상태의 flipped: 처음에 꺼져 있던 사진(기기 정보 없음)만 바꾼 것
 export const checkAll = (group) => new Set(group.targets.filter((t) => t.noDevice).map((t) => t.id));
 
+// 넣기가 끝난 뒤의 마무리: 건너뛴 사진 저장이 거절돼도 값은 이미 들어갔으니, 되돌리기 줄이 나오게 finish까지 꼭 불러요
+//   오류는 finish 뒤에 알려요. finish가 띄우는 안내("바꿀 사진이 없어서")가 오류를 덮지 않게
+export async function finishApply(left, skip, onSkipError, finish) {
+  let failed = null;
+  if (left.length) {
+    try {
+      await skip(left);
+    } catch (e) {
+      failed = e;
+    }
+  }
+  await finish();
+  if (failed) onSkipError(failed);
+}
+
 // 목록을 새로 받은 뒤 보여 줄 것을 정해요
 //   current: { key, flipped } 지금 보던 묶음과 처음 상태에서 바꾼 사진 번호들 (없으면 null)
 //   보던 묶음이 남아 있으면 그대로 두고 사라진 번호만 지워요. 없어졌으면 첫 묶음을 처음 상태로. 묶음이 없으면 null

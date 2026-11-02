@@ -397,7 +397,10 @@ export default function App() {
         filter={filter}
         onOpenImport={openImport}
         onScreen={goScreen}
-        onPickTag={(tag) => setField({ tag })}
+        onPickTag={(tag) => {
+          setSuggestOpen(false); // 위치 제안 탭에는 태그 목록이 없어서, 고른 태그의 사진이 보이는 격자로 돌아가요
+          setField({ tag });
+        }}
         onRescan={rescan}
         rescanning={rescanning}
       />
