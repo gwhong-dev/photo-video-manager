@@ -1,14 +1,15 @@
 # 파일 위치: .github/workflows/check.yml
-# 역할: feature 브랜치에 푸시할 때마다 GitHub의 Windows PC에서 npm run check 실행
+# 역할: main으로 가는 PR을 열거나 새 커밋을 올릴 때마다 GitHub의 Windows PC에서 npm run check 실행
+#   브랜치 이름과 상관없이 돌아요 (feature/, claude/, docs/ 모두)
 #   CI = 코드를 올릴 때마다 자동으로 점검해 주는 기능. 결과는 PR 화면에 ✅/❌로 나와요.
 #   수동 샘플(개인 사진)은 저장소에 없어서 해당 점검은 ⏭ 건너뛰어요.
 
 name: 점검
 
 on:
-  push:
+  pull_request:
     branches:
-      - 'feature/**'
+      - main
 
 jobs:
   check:
