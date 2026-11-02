@@ -1649,7 +1649,7 @@ const items = [
         const spellCalls = [];
         let readyRun = null;
         const win = {
-          webContents: { once() {}, send() {} },
+          webContents: { once() {}, send() {}, on() {}, setWindowOpenHandler() {} },
           on() {},
           loadFile: async () => {},
           isDestroyed: () => false,

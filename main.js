@@ -18,6 +18,7 @@ const { JobStore, jobStats } = require('./lib/job');
 const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals } = require('./lib/cleaner');
 const { createDriveKindOf } = require('./lib/platform');
 const { createLogger } = require('./lib/logger');
+const { guardWindow } = require('./lib/window-guard');
 const { writePlanLog, nextTodo, checkSpace, runBatch } = require('./lib/runner');
 const { setupGallery, registerScheme } = require('./gallery-main');
 
@@ -141,6 +142,10 @@ function createWindow() {
     title: '사진/영상 관리 프로그램',
     // spellcheck: false = 맞춤법 검사를 끔. 아래 whenReady 쪽 설명처럼 사전 내려받기를 막으려는 것 (점검 34k)
     webPreferences: { preload: path.join(__dirname, 'preload.js'), spellcheck: false },
+  });
+  // 앱 화면 밖으로 나가는 이동과 새 창은 막고 로그에 남겨요 (주소가 길면 앞부분만)
+  guardWindow(win.webContents, [GALLERY_FILE, IMPORT_FILE], (kind, url) => {
+    try { logger.newLog('window-guard', `${kind} 막음: ${String(url).slice(0, 200)}`); } catch (e) { /* 로그를 못 써도 막기는 그대로예요 */ }
   });
   showStartScreen();
   // 창이 처음 다 열리면 갤러리가 백업 폴더 읽기를 시작해요
