@@ -13,7 +13,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { checkAllLabel, formatCount, formatTakenAt, gapText, suggestApplyLabel } from '../format.mjs';
-import { checkAll, checkedIds, createLoadOrder, finishApply, groupKey, isChecked, isRepeatClick, rememberIds, settleView, viewAfterApply } from '../suggest-view.mjs';
+import { checkAll, checkedIds, createLoadOrder, finishApply, groupKey, isChecked, isRepeatClick, receiveList, rememberIds } from '../suggest-view.mjs';
 import EmptyState from './EmptyState.jsx';
 
 const SKIP_NOT_SAVED = '건너뛴 사진을 파일에 저장하지 못했어요. 이번 실행 동안만 기억해요.';
@@ -58,20 +58,17 @@ export default function SuggestPanel({ gen, focusId, onFocus, onApplied, onNotic
   const busyRef = useRef(false);
   const order = useRef(null); // 요청 번호와 "넣은 뒤" 표시 (createLoadOrder)
   if (!order.current) order.current = createLoadOrder();
-  const viewRef = useRef(null);
-  viewRef.current = view;
-  const groupRef = useRef(null); // 지금 보이는 묶음 (새 목록에서 같은 사진이 든 묶음을 찾을 때 써요)
+  const shown = useRef({ view: null, group: null }); // 지금 보이는 것. 렌더마다 맞추고, 응답을 받으면 receiveList가 바로 적어요
 
   const load = useCallback(async () => {
     const mine = order.current.next();
     try {
       const next = await api.listSuggestions();
-      if (!order.current.accept(mine)) return; // 더 새 응답이 이미 화면에 있어요
+      const got = receiveList(order.current, mine, next.groups, shown.current);
+      if (!got) return; // 더 새 응답이 이미 화면에 있어요
       setData(next);
       setError('');
-      const settle = order.current.afterApply(mine) ? viewAfterApply : settleView;
-      const shown = groupRef.current ? groupRef.current.targets.map((t) => t.id) : [];
-      setView(settle(next.groups, viewRef.current && { ...viewRef.current, ids: shown }));
+      setView(got.view);
     } catch (e) {
       if (order.current.accept(mine)) setError(errorText(e));
     }
@@ -79,7 +76,8 @@ export default function SuggestPanel({ gen, focusId, onFocus, onApplied, onNotic
   useEffect(() => { load(); }, [gen, load]);
 
   const group = data && view ? data.groups.find((g) => groupKey(g) === view.key) : null;
-  groupRef.current = group;
+  shown.current.view = view; // 체크를 바꾼 것(flipped)도 다음 응답에 이어지게
+  shown.current.group = group;
 
   // 새 묶음을 보여 줄 때는 근거 사진을 오른쪽 패널에 보여 줘요
   const groupSourceId = group ? group.source.id : null;

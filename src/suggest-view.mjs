@@ -91,6 +91,19 @@ export function createLoadOrder() {
   };
 }
 
+// 목록 응답 하나를 받아 보여 줄 것을 정해요. 받지 않으면(옛 응답) null, 받으면 { view }
+//   shown: { view, group } 지금 보여 주는 것. 여기에 결과를 바로 적어요. React 상태는 재렌더 뒤에나 바뀌는데,
+//   느린 PC에서 응답 둘이 재렌더 전에 연달아 처리되면 두 번째가 첫 번째 결과를 못 보고 넣기 전 묶음을 다시 찾아 거기 머물 수 있어요
+export function receiveList(order, ticket, groups, shown) {
+  if (!order.accept(ticket)) return null;
+  const settle = order.afterApply(ticket) ? viewAfterApply : settleView;
+  const current = shown.view && { ...shown.view, ids: shown.group ? shown.group.targets.map((t) => t.id) : [] };
+  const view = settle(groups, current);
+  shown.view = view;
+  shown.group = view ? groups.find((g) => groupKey(g) === view.key) || null : null;
+  return { view };
+}
+
 // 넣기가 끝나고 목록을 새로 받은 뒤 보여 줄 것: 보던 묶음이 남아 있어도 맨 앞 묶음을 처음 상태로 보여 줘요
 //   섞인 묶음은 넣은 뒤 기기 정보 없는 사진만 남는데, 거기 머물면 기기 정보 있는 다음 묶음이 뒤로 밀리고
 //   체크 0장 화면에서 건너뛰기를 누르게 돼서 처음부터 꺼져 있던 사진이 건너뛴 목록으로 사라져요
