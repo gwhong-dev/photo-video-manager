@@ -181,7 +181,7 @@ const items = [
         await f.net.search(' 경복궁 ');
         const u = new URL(f.calls[0].url);
         const names = [...u.searchParams.keys()].sort().join(',');
-        out.push(sub('33h 검색 요청 모양 (q 공백 제거, jsonv2, limit 5, ko, User-Agent, 리다이렉트 안 따라감, 제한시간)',
+        out.push(sub('33h 검색 요청 모양 (q 공백 제거, jsonv2, limit 5, ko, User-Agent, 리다이렉트 안 따라감, 제한시간), 쿠키 안 씀',
           u.origin + u.pathname === SEARCH_DEFAULT
           && u.searchParams.get('q') === '경복궁' && u.searchParams.get('format') === 'jsonv2'
           && u.searchParams.get('limit') === '5' && u.searchParams.get('accept-language') === 'ko'
