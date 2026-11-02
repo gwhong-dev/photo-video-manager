@@ -672,7 +672,8 @@ const items = [
         const seen = [];
         const fail = async () => { throw new Error('거절'); };
         await finishApply([31], fail, (e) => seen.push(e.message), async () => seen.push('끝'));
-        out.push(sub('31n 건너뛰기 저장이 거절돼도 오류를 알리고 마무리까지 감', seen.join(',') === '거절,끝', seen.join(',')));
+        const panelSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'SuggestPanel.jsx'), 'utf8');
+        out.push(sub('31n 건너뛰기 저장이 거절돼도 마무리한 뒤 오류를 알림, 화면이 이 길을 씀', seen.join(',') === '끝,거절' && panelSrc.includes('await finishApply(left, skip,'), seen.join(',')));
         const quiet = [];
         await finishApply([], async () => quiet.push('저장'), () => quiet.push('오류'), async () => quiet.push('끝'));
         out.push(sub('31o 기억할 사진이 없으면 저장하지 않고 마무리', quiet.join(',') === '끝', quiet.join(',')));

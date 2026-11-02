@@ -24,15 +24,18 @@ export const rememberIds = (group, flipped) => group.targets.filter((t) => !t.no
 export const checkAll = (group) => new Set(group.targets.filter((t) => t.noDevice).map((t) => t.id));
 
 // 넣기가 끝난 뒤의 마무리: 건너뛴 사진 저장이 거절돼도 값은 이미 들어갔으니, 되돌리기 줄이 나오게 finish까지 꼭 불러요
+//   오류는 finish 뒤에 알려요. finish가 띄우는 안내("바꿀 사진이 없어서")가 오류를 덮지 않게
 export async function finishApply(left, skip, onSkipError, finish) {
+  let failed = null;
   if (left.length) {
     try {
       await skip(left);
     } catch (e) {
-      onSkipError(e);
+      failed = e;
     }
   }
   await finish();
+  if (failed) onSkipError(failed);
 }
 
 // 목록을 새로 받은 뒤 보여 줄 것을 정해요
