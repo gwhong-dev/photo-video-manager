@@ -56,6 +56,24 @@ const items = [
       const init = h.calls[0].init;
       out.push(sub('33b User-Agent 이름표 + 리다이렉트 안 따라감 + 쿠키 안 씀 + 제한시간', init.headers['User-Agent'] === 'photo-video-manager/1.0.0 (https://github.com/gwhong-dev/photo-video-manager)' && init.redirect === 'error' && init.credentials === 'omit' && !!init.signal, JSON.stringify(init.headers)));
 
+      // 33b2 화면이 칸을 더 안 기다리면(지도를 옮김, 창을 닫음) 그 신호가 fetch까지 이어져 받기를 끊어요. 끊은 것은 로그에 남기지 않아요
+      {
+        const ctrl = new AbortController();
+        const f = harness((url, init) => new Promise((resolve, reject) => {
+          init.signal.addEventListener('abort', () => reject(init.signal.reason));
+        }));
+        const pending = f.net.tile('pvm://tile/2/1/1', { signal: ctrl.signal });
+        ctrl.abort();
+        const r = await pending;
+        const fetchAborted = f.calls[0].init.signal.aborted;
+        // 이미 끊긴 신호면 보내지도 않아요
+        const already = await f.net.tile('pvm://tile/2/1/2', { signal: ctrl.signal });
+        // 신호가 없거나 끊기지 않은 신호면 제한시간만 걸려요 (33f2는 제한시간 쪽)
+        const g = harness(png);
+        const plain = await g.net.tile('pvm://tile/2/1/3', { signal: new AbortController().signal });
+        out.push(sub('33b2 화면이 끊으면 fetch도 끊김 + 502 + 로그 없음, 이미 끊긴 신호는 안 보냄', r.status === 502 && fetchAborted && f.errs.length === 0 && already.status === 502 && f.calls.length === 1 && plain.status === 200 && !g.calls[0].init.signal.aborted, JSON.stringify([r.status, fetchAborted, f.errs, already.status, f.calls.length, plain.status])));
+      }
+
       // 33c 잘못된 주소는 나가기 전에 404예요
       const bad = ['pvm://tile/20/0/0', 'pvm://tile/1/2/0', 'pvm://tile/1/0/-1', 'pvm://tile/01/0/0', 'pvm://tile/1/0', 'pvm://tile/1/0/0/0', 'pvm://tile/1/0/0?a=1', 'pvm://thumb/1', 'pvm://tile/1/0/0#x', 'pvm://u:p@tile/1/0/0', 'pvm://tile:80/1/0/0', 'pvm://tile/1/0/0/', 'pvm://tile/a/0/0', 'pvm://tile/1.5/0/0', 'pvm://tile/19/524288/0', '글자', ''];
       const notFound = [];
@@ -649,7 +667,7 @@ const items = [
 
       // ---------- 순수 계산 (React와 Leaflet 없이) ----------
       const { pathToFileURL } = require('url');
-      const { pinFrom, nextPin, createLatest, nearLng, canPlacePin } = await import(pathToFileURL(path.join(APP, 'src', 'map-view.mjs')).href);
+      const { pinFrom, nextPin, createLatest, nearLng, canPlacePin, createTileBoard, tileCoordsAt } = await import(pathToFileURL(path.join(APP, 'src', 'map-view.mjs')).href);
       out.push(sub('35g 경도 감기', pinFrom(37, 190).lng === -170 && pinFrom(37, -190).lng === 170 && pinFrom(0, 0).lat === 0, JSON.stringify([pinFrom(37, 190), pinFrom(37, -190)])));
       out.push(sub('35h 반올림', pinFrom(37.12345678, 127).lat === 37.123457));
       // 35d 늦은 검색 응답: 새 검색이나 창 닫기 뒤의 옛 번호는 버려요
@@ -665,8 +683,39 @@ const items = [
       out.push(sub('35e 넣는 중에는 핀이 안 바뀜', nextPin(here, there, true) === here && nextPin(here, there, false) === there));
       // 35e2 날짜변경선 근처에서 지도를 눌러도 핀이 보던 화면 안에 있어요 (값은 감긴 그대로)
       out.push(sub('35e2 핀은 보고 있는 지구 복사본에 그림', nearLng(-170, 170) === 190 && nearLng(170, -170) === -190 && nearLng(127, 127) === 127, String(nearLng(-170, 170))));
-      // 35m 지도가 보일 때만 눌러서 핀을 놓아요 (빈 지도를 눌러 엉뚱한 곳에 넣지 않게)
-      out.push(sub('35m 지도 클릭 허용: 그림이 하나 이상 떴고 실패 문장이 없을 때만', canPlacePin({ tilesLoaded: true, mapFailed: false }) === true && canPlacePin({ tilesLoaded: true, mapFailed: true }) === false && canPlacePin({ tilesLoaded: false, mapFailed: false }) === false && canPlacePin({ tilesLoaded: false, mapFailed: true }) === false));
+      // 35m 누른 자리에 그림이 떠 있을 때만 핀을 놓아요 (빈 지도를 눌러 엉뚱한 곳에 넣지 않게)
+      //   화면 어딘가에 칸 하나가 떴다고 빈 자리를 허용하지 않고, 다른 칸이 실패했어도 누른 자리가 보이면 허용해요
+      {
+        const board = createTileBoard();
+        const here = { x: 10, y: 20, z: 5 };
+        const next = { x: 11, y: 20, z: 5 };
+        const emptyRefused = !canPlacePin(board, here);
+        board.loaded(here);
+        const onlyHere = canPlacePin(board, here) && !canPlacePin(board, next);
+        board.gone(here);
+        const goneRefused = !canPlacePin(board, here) && board.count() === 0;
+        out.push(sub('35m 지도 클릭 허용: 누른 자리의 칸이 떠 있을 때만 (다른 칸만 떴거나 치워졌으면 막음)', emptyRefused && onlyHere && goneRefused, JSON.stringify([emptyRefused, onlyHere, goneRefused])));
+        // 35m2 확대 직후에는 윗단계 칸을 늘려 보여 주니 그 칸이 떠 있으면 허용해요 (5단계까지, 그보다 위는 막음)
+        const parent = createTileBoard();
+        parent.loaded({ x: 2, y: 5, z: 3 });
+        const child = { x: 11, y: 20, z: 5 };
+        const deep = createTileBoard();
+        deep.loaded({ x: 0, y: 0, z: 0 });
+        out.push(sub('35m2 윗단계 칸이 떠 있으면 허용 (5단계까지)', canPlacePin(parent, child) && !canPlacePin(parent, { x: 12, y: 20, z: 5 }) && canPlacePin(deep, { x: 31, y: 31, z: 5 }) && !canPlacePin(deep, { x: 63, y: 63, z: 6 })));
+        // 35m4 축소 직후에는 아랫단계 칸 4개를 줄여 보여 주니 4개가 모두 떠 있으면 허용해요 (2단계까지, 하나라도 비면 막음)
+        const kids = createTileBoard();
+        for (const [x, y] of [[20, 40], [21, 40], [20, 41]]) kids.loaded({ x, y, z: 6 });
+        const threeOnly = !canPlacePin(kids, { x: 10, y: 20, z: 5 });
+        for (const [x, y] of [[42, 82], [43, 82], [42, 83], [43, 83]]) kids.loaded({ x, y, z: 7 }); // 빈 넷째 칸(21, 41)의 아래 4개
+        const filledBelow = canPlacePin(kids, { x: 10, y: 20, z: 5 });
+        const tooDeep = !canPlacePin(kids, { x: 5, y: 10, z: 4 }); // 3단계 아래는 안 봐요
+        out.push(sub('35m4 아랫단계 칸 4개가 모두 떠 있으면 허용 (2단계까지)', threeOnly && filledBelow && tooDeep, JSON.stringify([threeOnly, filledBelow, tooDeep])));
+        // 35m3 픽셀 자리 → 칸 번호 (한 변 256, 지구 복사본 왼쪽은 음수)
+        const c1 = tileCoordsAt({ x: 2559.9, y: 256, z: 0 }, 4);
+        const c2 = tileCoordsAt({ x: -1, y: 0 }, 4);
+        const c3 = tileCoordsAt({ x: 512, y: 0 }, 3, 512);
+        out.push(sub('35m3 픽셀 자리 → 칸 번호', c1.x === 9 && c1.y === 1 && c1.z === 4 && c2.x === -1 && c2.y === 0 && c3.x === 1 && c3.z === 3, JSON.stringify([c1, c2, c3])));
+      }
       // 35i 화면이 직접 나가지 않아요
       const html = fs.readFileSync(path.join(APP, 'src', 'index.html'), 'utf8');
       const csp = (html.match(/http-equiv="Content-Security-Policy"\s+content="([^"]*)"/) || [])[1];

@@ -518,7 +518,9 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   protocol.handle(SCHEME, async (request) => {
     try {
       if (new URL(request.url).hostname === 'tile') {
-        const t = await mapNet.tile(request.url);
+        // 화면이 칸을 더 안 기다리면(지도를 옮김, 창을 닫음) request.signal로 받기를 끊게 해 둬요
+        //   Electron 45.2.1은 이 signal을 끊어 주지 않아서(lib/browser/api/protocol.ts의 new Request에 signal 없음) 지금은 효과가 없고, 나중 버전을 위해 준비만 한 것이에요
+        const t = await mapNet.tile(request.url, { signal: request.signal });
         if (t.status !== 200) return notFound();
         return new Response(t.buffer, { status: 200, headers: { 'Content-Type': t.type, 'Cache-Control': 'no-cache' } });
       }
