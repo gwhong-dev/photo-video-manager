@@ -199,6 +199,39 @@ const items = [
         out.push(sub('28n 조회에 시각 출처가 있음', k.takenAtSource === 'filename', String(k.takenAtSource)));
       });
 
+      // 28o 기기 정보 없음 표시: 없음, 빈 글자, 공백뿐이면 "없음"이에요
+      {
+        const models = [null, '', '  ', 'iPhone 12'];
+        const r = buildSuggestions([
+          located({ takenAt: '2026-10-25T14:00:00' }),
+          ...models.map((model, i) => file({ takenAt: `2026-10-25T14:0${i + 1}:00`, model })),
+        ], NONE);
+        const flags = r.groups[0].targets.map((t) => t.noDevice).join(',');
+        out.push(sub('28o 기기 정보 없음 표시 (null, 빈 글자, 공백은 없음)', flags === 'true,true,true,false', flags));
+      }
+
+      // 28p 기기 정보 있는 사진이 든 묶음이 먼저 (섞인 묶음 포함). 그 안에서는 기존 순서 (장수 많은 순)
+      {
+        const r = buildSuggestions([
+          located({ id: 941, takenAt: '2026-02-01T10:00:00', takenDay: '2026-02-01' }),
+          ...[1, 2, 3, 4, 5].map((m) => file({ takenAt: `2026-02-01T10:0${m}:00`, takenDay: '2026-02-01' })),
+          located({ id: 942, takenAt: '2026-02-02T10:00:00', takenDay: '2026-02-02' }),
+          file({ takenAt: '2026-02-02T10:01:00', takenDay: '2026-02-02', model: 'iPhone 12' }),
+          located({ id: 943, takenAt: '2026-02-03T10:00:00', takenDay: '2026-02-03' }),
+          file({ takenAt: '2026-02-03T10:01:00', takenDay: '2026-02-03', model: 'iPhone 12' }),
+          file({ takenAt: '2026-02-03T10:02:00', takenDay: '2026-02-03' }),
+        ], NONE);
+        const order = r.groups.map((g) => g.source.id).join(',');
+        out.push(sub('28p 기기 정보 있는 묶음 먼저, 그 안에서 장수 순', order === '943,942,941', order));
+      }
+
+      // 28q DB 조회가 기기 정보를 같이 읽어요
+      await withDb(env, 'suggest-model', (db) => {
+        db.upsertFiles([row({ path: 'R1/m.jpg', name: 'm.jpg', model: 'X' })]);
+        const k = db.listSuggestionRows('R1')[0] || {};
+        out.push(sub('28q 조회에 기기 정보가 있음', k.model === 'X', String(k.model)));
+      });
+
       // 28l 가짜 6만 건에서 계산 시간 (목표 0.5초, 2초를 넘으면 실패)
       await withDb(env, 'suggest-speed', (db) => {
         fillFakeLibrary(db, 'R1', 60000);
