@@ -601,7 +601,7 @@ const items = [
       // src의 .mjs 파일도 React가 없는 순수 계산이에요 (file:// 주소로 불러와요)
       const { pathToFileURL } = require('url');
       const load = (name) => import(pathToFileURL(path.join(__dirname, '..', 'src', name)).href);
-      const { groupKey, isRepeatClick, settleView, viewAfterApply, isChecked, checkedIds, rememberIds, checkAll } = await load('suggest-view.mjs');
+      const { groupKey, isRepeatClick, settleView, viewAfterApply, isChecked, checkedIds, rememberIds, checkAll, finishApply } = await load('suggest-view.mjs');
       const { gapText, suggestApplyLabel, checkAllLabel } = await load('format.mjs');
 
       // ids의 사진은 기기 정보 있음, noDeviceIds의 사진은 기기 정보 없음
@@ -667,6 +667,22 @@ const items = [
       ));
       out.push(sub('31f 넣기 버튼 글 (천 단위 쉼표), 0장은 빈 글자', suggestApplyLabel(1234) === '1,234장에 이 위치 넣기' && suggestApplyLabel(4) === '4장에 이 위치 넣기' && suggestApplyLabel(0) === ''));
       out.push(sub('31l 모두 체크 버튼 글 (천 단위 쉼표)', typeof checkAllLabel === 'function' && checkAllLabel(1234) === '1,234장 모두 체크하기' && checkAllLabel(4) === '4장 모두 체크하기'));
+      // 건너뛴 사진 저장이 거절돼도 값은 이미 들어갔으니, 되돌리기 줄이 나오게 마무리까지 가요
+      {
+        const seen = [];
+        const fail = async () => { throw new Error('거절'); };
+        await finishApply([31], fail, (e) => seen.push(e.message), async () => seen.push('끝'));
+        out.push(sub('31n 건너뛰기 저장이 거절돼도 오류를 알리고 마무리까지 감', seen.join(',') === '거절,끝', seen.join(',')));
+        const quiet = [];
+        await finishApply([], async () => quiet.push('저장'), () => quiet.push('오류'), async () => quiet.push('끝'));
+        out.push(sub('31o 기억할 사진이 없으면 저장하지 않고 마무리', quiet.join(',') === '끝', quiet.join(',')));
+      }
+      // 왼쪽 태그를 누르면 위치 제안 탭을 닫고 그 태그의 격자로 가요 (실제 화면 확인은 실사용 기록)
+      {
+        const appSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.jsx'), 'utf8');
+        const m = appSrc.match(/onPickTag=\{\(tag\) => \{([\s\S]*?)\n\s*\}\}/);
+        out.push(sub('31p 태그를 고르면 위치 제안 탭을 닫음', !!m && m[1].includes('setSuggestOpen(false)') && m[1].includes('setField({ tag })')));
+      }
       return out;
     },
   },
