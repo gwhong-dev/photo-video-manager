@@ -9,7 +9,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api, errorText } from '../api.js';
 import { formatCoords } from '../format.mjs';
-import { canPlacePin, createLatest, nearLng, pinFrom } from '../map-view.mjs';
+import { canPlacePin, createLatest, createTileBoard, nearLng, pinFrom, tileCoordsAt } from '../map-view.mjs';
 
 const KOREA = { center: [36.5, 127.8], zoom: 7 }; // 고른 곳이 없을 때 처음 위치
 const START_ZOOM = 15; // 이번 실행에서 마지막으로 고른 곳을 열 때
@@ -57,6 +57,7 @@ export default function MapPicker({ value, onChange, startAt, disabled }) {
   const mapRef = useRef(null);
   const markerRef = useRef(null);
   const draggingRef = useRef(false); // 핀을 끄는 중인지
+  const shownAtRef = useRef(() => false); // 그 자리에 지도 그림이 떠 있는지 (지도를 만들 때 채워요)
   const searchSeq = useRef(null); // 검색 번호표
   const [mapFailed, setMapFailed] = useState(false);
   const [clickRefused, setClickRefused] = useState(false); // 그림이 없는 지도를 눌렀을 때 안내
@@ -88,26 +89,30 @@ export default function MapPicker({ value, onChange, startAt, disabled }) {
     });
     mapRef.current = map;
     L.control.zoom({ zoomInTitle: '크게 보기', zoomOutTitle: '작게 보기' }).addTo(map);
-    let tilesLoaded = false; // 그림이 하나라도 떴는지
-    let failed = false; // 실패 문장이 보이는 중인지
+    const board = createTileBoard(); // 지금 떠 있는 칸들
     const tiles = new QuietTileLayer('pvm://tile/{z}/{x}/{y}', { maxZoom: 19, bounds: [[-85.06, -180], [85.06, 180]] });
     tiles.on('tileerror', (e) => {
-      failed = true;
       setMapFailed(true);
       // Leaflet은 실패한 칸을 그대로 들고 있어서 조금 옮겨도 다시 받지 않아요. 치워 두면 사용자가 움직일 때 다시 받아요
       //   칸을 새로 받는 일은 지도가 움직일 때만 일어나서, 가만히 있으면 저절로 되풀이되지 않아요 (설계서 4-4)
       tiles._removeTile(tiles._tileCoordsToKey(e.coords));
     });
-    tiles.on('tileload', () => {
-      tilesLoaded = true;
-      failed = false;
+    tiles.on('tileload', (e) => {
+      board.loaded(e.coords);
       setMapFailed(false);
       setClickRefused(false);
     });
+    tiles.on('tileunload', (e) => board.gone(e.coords));
     tiles.addTo(map);
+    // 그 자리에 그림이 떠 있는지. 화면 어딘가에 칸 하나가 떴다고 빈 자리를 눌러 엉뚱한 곳에 넣지 않게, 누른 자리의 칸을 봐요
+    const shownAt = (latlng) => {
+      const zoom = map.getZoom();
+      return canPlacePin(board, tileCoordsAt(map.project(latlng, zoom), zoom, tiles.getTileSize().x));
+    };
+    shownAtRef.current = shownAt;
     map.on('click', (e) => {
       if (latest.current.disabled) return;
-      if (!canPlacePin({ tilesLoaded, mapFailed: failed })) {
+      if (!shownAt(e.latlng)) {
         setClickRefused(true);
         return;
       }
@@ -142,12 +147,13 @@ export default function MapPicker({ value, onChange, startAt, disabled }) {
       marker.on('dragstart', () => { draggingRef.current = true; });
       marker.on('dragend', () => {
         draggingRef.current = false;
-        // 끄는 사이에 넣기가 시작됐으면 핀을 원래 자리로 돌려놔요
-        if (latest.current.disabled) {
+        const at = marker.getLatLng();
+        // 끄는 사이에 넣기가 시작됐거나, 그림이 없는 자리에 놓았으면 핀을 원래 자리로 돌려놔요 (빈 지도에서는 어디에 놓는지 알 수 없어요)
+        if (latest.current.disabled || !shownAtRef.current(at)) {
+          if (!latest.current.disabled) setClickRefused(true);
           drawMarker();
           return;
         }
-        const at = marker.getLatLng();
         latest.current.onChange(pinFrom(at.lat, at.lng));
       });
       marker.addTo(map);

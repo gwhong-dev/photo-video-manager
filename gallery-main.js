@@ -518,7 +518,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   protocol.handle(SCHEME, async (request) => {
     try {
       if (new URL(request.url).hostname === 'tile') {
-        const t = await mapNet.tile(request.url);
+        // 화면이 칸을 더 안 기다리면(지도를 옮김, 창을 닫음) request.signal로 알려 와서 받기를 끊어요
+        const t = await mapNet.tile(request.url, { signal: request.signal });
         if (t.status !== 200) return notFound();
         return new Response(t.buffer, { status: 200, headers: { 'Content-Type': t.type, 'Cache-Control': 'no-cache' } });
       }
