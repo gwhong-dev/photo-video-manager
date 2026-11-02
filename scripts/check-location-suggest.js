@@ -690,7 +690,9 @@ const items = [
         thenClickUntil: '이 묶음 건너뛰기',
       });
       const text = String(r.text);
-      out.push(sub('32a 묶음 글자가 보임', r.clicked === true && text.includes('남은 묶음') && text.includes('장에 이 위치 넣기') && text.includes('이 묶음 건너뛰기'), `화면 글자: ${text.slice(0, 300).replace(/\s+/g, ' ')}`));
+      // 넣기 버튼 글은 샘플 사진에 기기 정보가 있는지에 따라 달라요 (없으면 처음에 체크가 꺼져 있어요)
+      const applyText = text.includes('장에 이 위치 넣기') || text.includes('넣을 사진을 골라 주세요');
+      out.push(sub('32a 묶음 글자가 보임', r.clicked === true && text.includes('남은 묶음') && applyText && text.includes('모두 체크하기') && text.includes('이 묶음 건너뛰기'), `화면 글자: ${text.slice(0, 300).replace(/\s+/g, ' ')}`));
       out.push(sub('32b 검색과 목록 전체 선택이 숨겨짐', !text.includes('목록 전체 선택')));
       out.push(sub('32c 화면 오류 없음, 정상 종료', r.errors.length === 0 && r.exitCode === 0, `${r.errors.join(' / ')} 종료 코드 ${r.exitCode}`));
       return out;
