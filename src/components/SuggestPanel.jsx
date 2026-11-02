@@ -5,13 +5,15 @@
 //   기기 정보 없는 사진은 처음에 체크가 꺼져 있어요 (설계서 12절). 넣을 때 건너뛴 사진으로 기억하는 것은
 //   사람이 직접 끈 기기 정보 있는 사진뿐이에요. 처음부터 꺼져 있던 사진은 제안에 남아서 뒤쪽 묶음으로 다시 나와요
 //   그래서 넣은 뒤에는 보던 묶음에 머물지 않고 맨 앞 묶음으로 가요
-//   목록은 gen이 바뀔 때마다 다시 받고, 늦게 온 옛 응답은 버려요 (요청 번호)
+//   목록은 gen이 바뀔 때마다 다시 받아요. 화면에 있는 것보다 새 응답은 받고, 그보다 옛 응답만 버려요 (createLoadOrder).
+//   마지막 요청의 응답만 받으면, 느린 PC에서 폴더를 읽는 동안 응답마다 새 요청이 나가서 화면이 계속 "계산하는 중"에 머물러요
+//   다시 읽기로 근거 사진이 바뀌어 묶음 이름표가 달라져도, 보던 사진이 든 묶음에 머물러 끈 체크가 풀리지 않아요 (settleView)
 //   넣기와 건너뛰기는 하는 동안 다시 눌러도 한 번만 실행돼요. 빠른 두 번 누름의 뒤쪽은 다음 묶음에 닿지 않게 받지 않아요
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { checkAllLabel, formatCount, formatTakenAt, gapText, suggestApplyLabel } from '../format.mjs';
-import { checkAll, checkedIds, finishApply, groupKey, isChecked, isRepeatClick, rememberIds, settleView, viewAfterApply } from '../suggest-view.mjs';
+import { checkAll, checkedIds, createLoadOrder, finishApply, groupKey, isChecked, isRepeatClick, rememberIds, settleView, viewAfterApply } from '../suggest-view.mjs';
 import EmptyState from './EmptyState.jsx';
 
 const SKIP_NOT_SAVED = '건너뛴 사진을 파일에 저장하지 못했어요. 이번 실행 동안만 기억해요.';
@@ -54,28 +56,30 @@ export default function SuggestPanel({ gen, focusId, onFocus, onApplied, onNotic
   const [view, setView] = useState(null); // { key, flipped } 보여 줄 묶음과 처음 상태에서 바꾼 사진 번호들
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
-  const seq = useRef(0);
+  const order = useRef(null); // 요청 번호와 "넣은 뒤" 표시 (createLoadOrder)
+  if (!order.current) order.current = createLoadOrder();
   const viewRef = useRef(null);
   viewRef.current = view;
-  const appliedRef = useRef(false); // 넣기가 끝난 직후의 목록 받기인지
+  const groupRef = useRef(null); // 지금 보이는 묶음 (새 목록에서 같은 사진이 든 묶음을 찾을 때 써요)
 
   const load = useCallback(async () => {
-    const mine = ++seq.current;
+    const mine = order.current.next();
     try {
       const next = await api.listSuggestions();
-      if (mine !== seq.current) return;
+      if (!order.current.accept(mine)) return; // 더 새 응답이 이미 화면에 있어요
       setData(next);
       setError('');
-      const settle = appliedRef.current ? viewAfterApply : settleView;
-      appliedRef.current = false;
-      setView(settle(next.groups, viewRef.current));
+      const settle = order.current.afterApply(mine) ? viewAfterApply : settleView;
+      const shown = groupRef.current ? groupRef.current.targets.map((t) => t.id) : [];
+      setView(settle(next.groups, viewRef.current && { ...viewRef.current, ids: shown }));
     } catch (e) {
-      if (mine === seq.current) setError(errorText(e));
+      if (order.current.accept(mine)) setError(errorText(e));
     }
   }, []);
   useEffect(() => { load(); }, [gen, load]);
 
   const group = data && view ? data.groups.find((g) => groupKey(g) === view.key) : null;
+  groupRef.current = group;
 
   // 새 묶음을 보여 줄 때는 근거 사진을 오른쪽 패널에 보여 줘요
   const groupSourceId = group ? group.source.id : null;
@@ -114,7 +118,7 @@ export default function SuggestPanel({ gen, focusId, onFocus, onApplied, onNotic
     const checked = checkedIds(group, view.flipped);
     const left = rememberIds(group, view.flipped); // 사람이 끈 사진만 건너뛴 사진으로 기억해요
     const r = await api.applyEdit(checked, { source: 'copy', sourceId: group.source.id, date: false, time: false, location: true, via: 'suggest' });
-    appliedRef.current = true; // 넣기가 됐으면 다음 목록에서 맨 앞 묶음으로
+    order.current.markApplied(); // 이 뒤에 받는 목록에서는 맨 앞 묶음으로
     if (r.dropped) onNotice(`그 사이 위치가 생긴 ${formatCount(r.dropped)}장은 빼고 넣었어요.`);
     await finishApply(left, skip, (e) => onNotice(errorText(e)), () => onApplied(r));
   });
