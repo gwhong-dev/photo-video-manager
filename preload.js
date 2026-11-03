@@ -63,6 +63,8 @@ contextBridge.exposeInMainWorld('api', {
     openMapCredit: () => ipcRenderer.invoke('gallery:open-map-credit'),
     // 비슷한 사진: 묶음 목록, 버리기 미리보기, 버리기 (id로만)
     listSimilar: () => ipcRenderer.invoke('gallery:similar-list'),
+    keepAllSimilar: (ids) => ipcRenderer.invoke('gallery:similar-keep-all', ids),
+    clearSimilarKeeps: () => ipcRenderer.invoke('gallery:similar-clear-keeps'),
     previewDiscard: (ids) => ipcRenderer.invoke('gallery:similar-preview', ids),
     discardSimilar: (ids) => ipcRenderer.invoke('gallery:similar-discard', ids),
     onSimilarProgress: (cb) => subscribe('gallery:similar-progress', cb),

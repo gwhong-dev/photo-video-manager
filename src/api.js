@@ -33,6 +33,8 @@ export const api = {
   openMapCredit: () => gallery().openMapCredit(),
   // 비슷한 사진
   listSimilar: () => gallery().listSimilar(),
+  keepAllSimilar: (ids) => gallery().keepAllSimilar(ids), // "모두 남기기"를 다음 실행에도 기억
+  clearSimilarKeeps: () => gallery().clearSimilarKeeps(),
   previewDiscard: (ids) => gallery().previewDiscard(ids),
   discardSimilar: (ids) => gallery().discardSimilar(ids),
   onSimilarProgress: (cb) => gallery().onSimilarProgress(cb),

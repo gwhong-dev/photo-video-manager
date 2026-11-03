@@ -535,20 +535,50 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       });
   }
 
-  // 묶음 목록 → { progress: { total, done, hashing }, groups: [{ ids, keepId, takenAt, files: [{ id, name, width, height, size, takenAt }] }] }
+  // "이 묶음은 모두 남기기"를 누른 사진 (다음 실행에도 기억해요, 2026-11-04 사용자 결정). DB를 새로 만들어도 남게 경로로 적어요
+  const similarKeeps = createSkips(path.join(base, 'similar-keeps.json'), { onError: errorLog, label: '모두 남긴 사진 목록' });
+
+  // 묶음 목록 → { progress: { total, done, hashing }, hiddenKept: 숨긴 묶음 수,
+  //   groups: [{ ids, keepId, softIds, keptIds, takenAt, files: [{ id, name, width, height, size, takenAt }] }] }
+  //   모든 사진을 "모두 남기기"로 기억한 묶음은 숨겨요. 일부만 기억한 묶음(새 사진이 들어옴)은 기억한 사진이 처음부터 남김(keptIds)
   ipcMain.handle('gallery:similar-list', () => {
     const root = editReady();
     startHashing(root);
     const rows = db.similarRows(root);
     const byId = new Map(rows.map((r) => [r.id, r]));
-    const groups = buildGroups(rows).map((g) => ({
-      ...g,
-      files: g.ids.map((id) => {
-        const r = byId.get(id);
-        return { id: r.id, name: r.name, width: r.width, height: r.height, size: r.size, takenAt: r.takenAt };
-      }),
-    }));
-    return { progress: similarProgress(root), groups };
+    const kept = similarKeeps.paths();
+    let hiddenKept = 0;
+    const groups = [];
+    for (const g of buildGroups(rows)) {
+      const keptIds = g.ids.filter((id) => kept.has(byId.get(id).path));
+      if (keptIds.length === g.ids.length) {
+        hiddenKept++;
+        continue;
+      }
+      groups.push({
+        ...g,
+        keptIds,
+        files: g.ids.map((id) => {
+          const r = byId.get(id);
+          return { id: r.id, name: r.name, width: r.width, height: r.height, size: r.size, takenAt: r.takenAt };
+        }),
+      });
+    }
+    return { progress: similarProgress(root), groups, hiddenKept };
+  });
+
+  // 모두 남기기 기억: 번호를 경로로 바꿔 지금 백업 폴더의 사진만 더해요. saved = 파일에 저장했는지
+  ipcMain.handle('gallery:similar-keep-all', (e, ids) => {
+    const root = editReady();
+    checkIds(ids);
+    const paths = db.getFilesByIds(ids).filter((f) => f.root === root).map((f) => f.path);
+    return { saved: similarKeeps.add(paths) };
+  });
+
+  // 숨긴 묶음 다시 보기: 기억을 비워요. 사진 파일에는 영향이 없어요
+  ipcMain.handle('gallery:similar-clear-keeps', () => {
+    editReady();
+    return { saved: similarKeeps.clear() };
   });
 
   // 버리기 미리보기: 몇 장이 휴지통으로, 몇 장이 _정리완료원본으로 가는지 (아무것도 옮기지 않아요)
@@ -578,7 +608,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
         }
       }
       send('gallery:library-changed');
-      return { trashed: r.trashed, moved: r.moved, fail: r.fail, logFail: r.logFail, logName: path.basename(r.logPath || '') };
+      return { trashed: r.trashed, moved: r.moved, fail: r.fail, pairs: r.pairs, pairFail: r.pairFail, logFail: r.logFail, logName: path.basename(r.logPath || '') };
     } finally {
       discarding = false;
     }

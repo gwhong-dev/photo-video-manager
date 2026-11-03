@@ -1,16 +1,24 @@
 // 파일 위치: src/similar-view.mjs
 // 역할: "비슷한 사진" 화면의 계산 (React 없이 점검할 수 있게 따로 둬요. 점검 37)
 //   표시: 묶음마다 처음에는 keepId 한 장만 "남김", 나머지는 "버림"
+//     예외로 처음부터 "남김": 지문 없이 시간만으로 들어온 사진(softIds), 전에 "모두 남기기"를 누른 사진(keptIds)
 //   화면에 보인 묶음은 그 표시를 overrides(Map<id, 'keep'|'discard'>)에 고정해요 (pinMarks)
 //     → 목록을 다시 받아 keepId가 바뀌어도 사용자가 본 표시는 그대로예요
 //     → 버릴 번호는 고정된 "버림"만 세요. 아직 화면에 안 보인 묶음의 사진은 버리지 않아요
 //   묶음마다 적어도 한 장은 남아야 해요 (마지막 남김을 버림으로 바꾸려 하면 거절)
 
+// 처음 표시 (사용자가 아직 안 바꾼 사진)
+function firstMark(group, id) {
+  if (id === group.keepId) return 'keep';
+  if ((group.softIds || []).includes(id) || (group.keptIds || []).includes(id)) return 'keep';
+  return 'discard';
+}
+
 // 사진 한 장의 표시
 export function markOf(group, id, overrides) {
   const o = overrides && overrides.get(id);
   if (o === 'keep' || o === 'discard') return o;
-  return id === group.keepId ? 'keep' : 'discard';
+  return firstMark(group, id);
 }
 
 // 표시 바꾸기 → { overrides: 새 Map, refused: 거절했으면 true }
@@ -33,7 +41,7 @@ export function keepAll(group, overrides) {
 }
 
 // 화면에 보인 묶음의 표시를 고정해요 (바뀐 것이 없으면 같은 Map을 그대로 돌려줘요)
-//   처음 보이는 묶음: keepId만 남김, 나머지 버림
+//   처음 보이는 묶음: keepId(와 softIds, keptIds)만 남김, 나머지 버림
 //   이미 본 묶음에 새로 들어온 사진: 남김 (사용자가 버림을 고르기 전에는 버리지 않아요)
 export function pinMarks(groups, overrides) {
   let next = null;
@@ -45,7 +53,7 @@ export function pinMarks(groups, overrides) {
     const seen = g.ids.some((id) => overrides && overrides.has(id));
     for (const id of g.ids) {
       if (overrides && overrides.has(id)) continue;
-      put(id, seen || id === g.keepId ? 'keep' : 'discard');
+      put(id, seen ? 'keep' : firstMark(g, id));
     }
   }
   return next || overrides || new Map();
@@ -92,6 +100,7 @@ export function previewLines(info) {
   const lines = [`묶음 ${count(info.groups)}개에서 ${count(info.count)}장을 옮겨요.`];
   if (info.trash > 0) lines.push(`휴지통으로 ${count(info.trash)}장`);
   if (info.move > 0) lines.push(`휴지통이 없는 드라이브라 백업 폴더 안 _정리완료원본 폴더로 ${count(info.move)}장 (갤러리에는 안 보이고, 지우는 것은 직접 확인한 뒤에 해 주세요)`);
+  if (info.pairs > 0) lines.push(`라이브 포토의 짝 영상 ${count(info.pairs)}개도 사진과 같은 곳으로 옮겨요`);
   for (const w of info.warnings || []) lines.push(`주의: ${w}`);
   return lines;
 }
@@ -103,7 +112,9 @@ export function resultText(r) {
   if (r.trashed) parts.push(`휴지통으로 ${count(r.trashed)}장`);
   if (r.moved) parts.push(`_정리완료원본 폴더로 ${count(r.moved)}장`);
   let text = parts.length ? `${parts.join(', ')} 옮겼어요.` : '옮긴 사진이 없어요.';
+  if (r.pairs) text += ` 라이브 포토의 짝 영상 ${count(r.pairs)}개도 같이 옮겼어요.`;
   if (r.fail) text += ` ${count(r.fail)}장은 옮기지 못했어요${r.logName ? ` (로그 ${r.logName})` : ''}.`;
+  if (r.pairFail) text += ` 짝 영상 ${count(r.pairFail)}개는 옮기지 못했어요${r.logName ? ` (로그 ${r.logName})` : ''}.`;
   if (r.logFail) text += ` 로그에 ${count(r.logFail)}줄을 적지 못했어요 (디스크 공간을 확인해 주세요).`;
   return text;
 }
