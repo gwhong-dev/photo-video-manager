@@ -53,10 +53,12 @@ const items = [
         const jp = placeNameOf({ display_name: '神宮前, 渋谷区, 東京都, 150-0001, 일본', address: { country: '일본', country_code: 'jp', postcode: '150-0001' } });
         const short = placeNameOf({ display_name: '독도, 대한민국', address: { country: '대한민국', country_code: 'kr' } });
         const none = placeNameOf({ display_name: '' });
+        const noAddr = placeNameOf({ display_name: '세종대로, 세종로, 종로구, 서울특별시, 대한민국' }); // 주소 칸 없는 서버
         const bad = [placeNameOf(null), placeNameOf([]), placeNameOf('글자')];
         out.push(sub('39a 이름 만들기 (한국은 3칸, 외국은 나라 이름 앞, 이름 없으면 빈 값, 모양 틀리면 null)',
-          kr === '서울특별시 종로구 세종로' && jp === '일본 東京都 渋谷区 神宮前' && short === '독도' && none === '' && bad.every((x) => x === null),
-          JSON.stringify([kr, jp, short, none, bad])));
+          kr === '서울특별시 종로구 세종로' && jp === '일본 東京都 渋谷区 神宮前' && short === '독도' && none === '' && bad.every((x) => x === null)
+          && noAddr === '서울특별시 종로구 세종로',
+          JSON.stringify([kr, jp, short, none, bad, noAddr])));
       }
 
       // 39b 요청 모양: reverse 주소, 소수점 3자리로 줄인 좌표, 이름표, 캐시 안 남김, 쿠키 안 씀, 리다이렉트 안 따라감
@@ -200,6 +202,20 @@ const items = [
           peek && peek.name === null && noFetchYet && got.name === '서울특별시 종로구 세종로' && fetchCalls.length === 1
           && nearPeek.name === '서울특별시 종로구 세종로' && nearAsk.name === '서울특별시 종로구 세종로' && noLoc === null && !!badId,
           JSON.stringify([peek, got, nearPeek, noLoc, badId, fetchCalls.length])));
+
+        // 39g2 묻는 중에 같은 곳을 또 누르면 한 번만 나가요 (다른 사진에 다녀오기, 같은 동네 사진)
+        {
+          const o3 = openDb(path.join(P.ud, 'library.db'));
+          const mk = (name, lat, lng) => row({ root: P.root, path: path.join(P.root, name), name, lat, lng, locationSource: 'gps' });
+          const twins = [mk('t1.jpg', 35.1601, 129.1601), mk('t2.jpg', 35.1603, 129.1599)];
+          for (const t of twins) fs.writeFileSync(t.path, '사진');
+          o3.db.upsertFiles(twins);
+          const tIds = ['t1.jpg', 't2.jpg'].map((n) => o3.db.listSuggestionRows(P.root).find((x) => x.name === n).id);
+          o3.db.close();
+          const n0 = fetchCalls.length;
+          const both = await Promise.all([call('gallery:place-name', tIds[0], true), call('gallery:place-name', tIds[0], true), call('gallery:place-name', tIds[1], true)]);
+          out.push(sub('39g2 묻는 중에 같은 곳을 또 물으면 한 번만 나가고 셋 다 같은 이름', fetchCalls.length - n0 === 1 && both.every((b) => b.name === '서울특별시 종로구 세종로'), JSON.stringify([fetchCalls.length - n0, both])));
+        }
 
         // 39h 실패하면 정해진 문장, 저장하지 않아서 다음에 다시 누를 수 있음. 오류 로그에 좌표가 없음
         const o2 = openDb(path.join(P.ud, 'library.db'));
