@@ -7,10 +7,11 @@
 //   현재 칸에 맞는 미리보기가 도착하기 전에는 넣기 버튼이 꺼져 있어요. 넣는 중에는 다시 눌러도 한 번만 저장돼요
 //   창에 보이는 대상 장수는 고른 장수가 아니라 main이 계산한 값이에요 (사라진 사진과 기준 사진은 빠져요)
 //   미리보기 오류는 창 안에 보이고 넣기 버튼은 꺼져요. 넣기 오류는 창을 연 채로 보여요
+//   바뀌는 사진이 100장 이상이면 "N장에 한 번에 넣는 것이 맞아요"를 체크해야 넣기 버튼이 켜져요 (칸이 바뀌면 다시 체크)
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
-import { applyLabel, formatCoords, formatCount, formatTakenAt } from '../format.mjs';
+import { applyLabel, formatCoords, formatCount, formatTakenAt, manyCheckText, needsManyCheck } from '../format.mjs';
 import { nextPin } from '../map-view.mjs';
 import MapPicker from './MapPicker.jsx';
 
@@ -83,6 +84,7 @@ export default function EditDialog({ mode, ids, source, prefer, startAt, onPinCh
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState('');
   const busy = useRef(false); // 같은 순간에 두 번 눌러도 한 번만 저장하려고 (state는 다음 그림에야 바뀌어서)
+  const [manyOk, setManyOk] = useState(null); // 많은 장 체크를 한 칸(key). 다른 칸이면 체크 안 한 것
   const seq = useRef(0); // 미리보기 요청 번호
   const dialogRef = useRef(null);
   const maxDay = useMemo(todayText, []);
@@ -163,7 +165,9 @@ export default function EditDialog({ mode, ids, source, prefer, startAt, onPinCh
   const stale = !!preview && (!fresh || pv.loading);
   const counts = preview ? preview.counts : null;
   const label = counts ? applyLabel(counts.changed, preview.kind) : '';
-  const ready = fresh && !pv.loading && !pv.error && !!preview && !!label && !applying;
+  const many = !!counts && needsManyCheck(counts.changed);
+  const manyChecked = manyOk === key; // 지금 칸에서 체크했을 때만 (칸이 바뀌면 다시 체크해요)
+  const ready = fresh && !pv.loading && !pv.error && !!preview && !!label && !applying && (!many || manyChecked);
 
   let buttonText = label;
   if (applying) buttonText = '넣는 중';
@@ -171,6 +175,7 @@ export default function EditDialog({ mode, ids, source, prefer, startAt, onPinCh
   else if (pv.error) buttonText = '넣을 수 없어요';
   else if (!fresh || pv.loading || !preview) buttonText = '미리보기 만드는 중';
   else if (!label) buttonText = '바꿀 사진이 없어요';
+  else if (many && !manyChecked) buttonText = '위의 장수를 확인해 주세요';
 
   const apply = async () => {
     if (!ready || busy.current) return;
@@ -256,6 +261,12 @@ export default function EditDialog({ mode, ids, source, prefer, startAt, onPinCh
                 {counts.excluded > 0 && <span>제외 {formatCount(counts.excluded)}장</span>}
               </p>
               {counts.excluded > 0 && <p className="dialog-sub dialog-note">제외한 사진은 기준 사진이거나 폴더에서 사라진 사진이에요.</p>}
+              {many && (
+                <label className="dialog-many">
+                  <input type="checkbox" checked={manyChecked} disabled={applying || stale} onChange={(e) => setManyOk(e.target.checked ? key : null)} />
+                  <span>{manyCheckText(counts.changed)}</span>
+                </label>
+              )}
               {preview.items.length > 0 ? (
                 <ul className="edit-list" aria-label="바뀌는 내용">
                   {preview.items.map((it) => (

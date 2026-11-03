@@ -59,6 +59,7 @@ const Cell = memo(function Cell({ file, day, selected, onClick, onMenu }) {
       ) : (
         <img src={`pvm://thumb/${file.id}`} alt="" loading="lazy" draggable="false" onError={() => setBroken(true)} />
       )}
+      {file.live && <span className="badge live">라이브</span>}
       {duration && <span className="badge">{duration}</span>}
     </button>
   );

@@ -1781,7 +1781,11 @@ const items = [
       } catch (e) {
         return [sub('src/format.mjs 불러오기', false, e.message)];
       }
-      const { applyLabel, undoLabel, appliedText, undoneText } = m;
+      const { applyLabel, undoLabel, appliedText, undoneText, needsManyCheck, manyCheckText } = m;
+      // 사용자 결정 (2026-11-04): 100장 이상에 한 번에 넣을 때는 체크를 한 번 더 받아요
+      out.push(sub('26g 100장 이상이면 체크 한 번 더 ("1,234장에 한 번에 넣는 것이 맞아요"), 99장 이하는 없음',
+        typeof needsManyCheck === 'function' && needsManyCheck(100) && !needsManyCheck(99) && !needsManyCheck(0)
+          && manyCheckText(1234) === '1,234장에 한 번에 넣는 것이 맞아요' && manyCheckText(99) === ''));
       out.push(sub('26a applyLabel(1234, location) === "1,234장에 위치 넣기" (천 단위 쉼표)', typeof applyLabel === 'function' && applyLabel(1234, 'location') === '1,234장에 위치 넣기', typeof applyLabel === 'function' ? applyLabel(1234, 'location') : '함수 없음'));
       out.push(sub('26b applyLabel(3, both) === "3장에 날짜와 위치 넣기", date는 날짜', typeof applyLabel === 'function' && applyLabel(3, 'both') === '3장에 날짜와 위치 넣기' && applyLabel(1, 'date') === '1장에 날짜 넣기'));
       out.push(sub('26c 0장이거나 모르는 종류면 빈 글자 (화면은 버튼을 끄고 "바꿀 사진이 없어요"를 보임)', typeof applyLabel === 'function' && applyLabel(0, 'date') === '' && applyLabel(0, 'location') === '' && applyLabel(5, 'nope') === '' && applyLabel(undefined, 'date') === ''));
