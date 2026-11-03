@@ -6,6 +6,7 @@
 //   고른 사진들(selection)은 탭, 필터(검색어와 태그 포함), 화면이 바뀌면 비워요. 정렬이 바뀔 때와 목록 갱신 때는 그대로 둬요
 //   날짜와 위치 넣기: 우클릭 메뉴(ContextMenu)나 오른쪽 패널 버튼 -> 미리보기 창(EditDialog) -> 넣기 -> 되돌리기 줄(UndoBar)
 //   복사한 값(copySource)은 기준 사진의 번호와 요약만 기억해요. 화면을 바꿔도 남고, 프로그램을 끄면 사라져요
+//   번호는 sessionStorage에도 적어 두어서 가져오기 화면에 다녀와도 남고, 목록이 바뀔 때마다 요약을 DB에서 다시 읽어요
 //   값을 넣은 뒤와 되돌린 뒤에는 선택을 비워요. 오류와 "N장 위치를 되돌렸어요" 알림은 모두 기존 notice 줄로 보여요
 //   화면을 바꿔도 검색어는 그대로예요 (선택은 비워져요)
 //   위치 제안 탭(suggestOpen)을 열면 격자 대신 SuggestPanel을 보여 주고, 오른쪽 패널은 읽기 전용이 돼요
@@ -37,6 +38,23 @@ const EMPTY_INFO_TEXT = {
   noDate: ['날짜 없는 사진이 없어요', '모든 사진에 찍은 날짜가 있어요.'],
   manual: ['직접 넣은 정보가 아직 없어요', '날짜나 위치를 직접 넣은 사진이 여기에 모여요.'],
 };
+
+// 복사해 둔 사진 번호를 창이 다시 불러와도 남게 적어 둬요 (프로그램을 끄면 사라져요). 저장소를 못 쓰면 없이 동작해요
+const COPY_KEY = 'pvm.copySourceId';
+function readCopyId() {
+  try {
+    const n = Number(window.sessionStorage.getItem(COPY_KEY));
+    return Number.isInteger(n) && n > 0 ? n : null;
+  } catch (e) {
+    return null;
+  }
+}
+function writeCopyId(id) {
+  try {
+    if (id == null) window.sessionStorage.removeItem(COPY_KEY);
+    else window.sessionStorage.setItem(COPY_KEY, String(id));
+  } catch (e) { /* 저장 못 해도 이번 화면에서는 그대로 써요 */ }
+}
 
 export default function App() {
   const [state, setState] = useState(null);
@@ -234,6 +252,30 @@ export default function App() {
     }
   };
 
+  // ---------- 복사해 둔 값 이어 가기 ----------
+  // 가져오기 화면에 다녀오면 화면을 새로 불러와서 state가 비어요. 번호만 sessionStorage에 두고 다시 읽어요
+  const copyIdRef = useRef(readCopyId());
+  const keepCopy = (source) => {
+    copyIdRef.current = source ? source.id : null;
+    writeCopyId(copyIdRef.current);
+    setCopySource(source);
+  };
+  // 처음 켤 때와 목록이 바뀔 때마다(gen) 요약을 DB 값으로 맞춰요
+  useEffect(() => {
+    const id = copyIdRef.current;
+    if (id == null) return undefined;
+    let alive = true;
+    api.getCopySource(id).then(
+      (source) => {
+        if (!alive || copyIdRef.current !== id) return; // 그사이 다른 사진을 복사했으면 버려요
+        // null이면(켜는 중이라 목록이 아직 없거나 사진이 사라짐) 지금 요약을 그대로 둬요. 붙여 넣을 때 main이 다시 확인해요
+        if (source) setCopySource(source);
+      },
+      () => { /* 읽기 실패면 지금 요약을 그대로 둬요. 붙여 넣을 때 main이 다시 읽어요 */ },
+    );
+    return () => { alive = false; };
+  }, [gen]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ---------- 날짜와 위치 넣기 ----------
   const closeMenu = useCallback(() => setCellMenuAt(null), []);
   // 복사: 한 장일 때만. 값은 main이 DB에서 읽어 줘요 (화면은 번호와 요약만 기억)
@@ -248,7 +290,7 @@ export default function App() {
       } else if (!source.takenAt && !(typeof source.lat === 'number' && typeof source.lng === 'number')) {
         setNotice('이 사진에는 복사할 날짜나 위치가 없어요.');
       } else {
-        setCopySource(source);
+        keepCopy(source);
         setNotice('');
       }
     } catch (e) {

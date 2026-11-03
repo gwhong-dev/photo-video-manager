@@ -955,6 +955,40 @@ const items = [
         });
       }
 
+      // 23j 예전에 복구가 실패한 묶음이 다음 켤 때 다시 시도될 때: 뒤 묶음이 같은 사진을 이미 바꿨으면 덮지 않고 버림 (void)
+      {
+        const j = createJournal(jpath());
+        const old1 = apply('bad', [item('a', null, val({ lat: 8, lng: 8 }))]); // a: 뒤의 b2와 겹침
+        const old2 = apply('ok-later', [item('c', null, val({ lat: 7, lng: 7 }))], { at: '2026-11-01T09:00:00' }); // c: 겹치는 뒤 묶음 없음
+        j.append(A1);
+        j.append(old1);
+        j.append(old2);
+        await withDb(env, 'recover', (db) => {
+          // 첫 번째 켜기: 'bad' 묶음은 DB 오류로 실패, old2('ok-later')는 이번엔 실패시키지 않으려고 이름을 'bad'와 다르게 둠
+          const r1 = recover(failing(db), j);
+          // 사용자가 그 뒤 a를 다시 바꿈 (b2) → 화면과 같은 순서로 기록 파일과 DB에 들어감
+          j.append(A2);
+          db.applyManualBatch({ id: 'b2', root: 'R1', kind: 'date', createdAt: A2.at, items: A2.items });
+          const afterB2 = db.getManual(P('a'));
+          // 두 번째 켜기: 이번엔 DB 오류 없음
+          const r2 = recover(db, j);
+          const r3 = recover(db, j); // 세 번째 켜기: 이미 버렸으니 다시 시도하지 않음
+          const voided = j.read().lines.filter((l) => l.type === 'void' && l.batchId === 'bad').length;
+          out.push(sub(
+            '23j 실패했던 옛 묶음은 뒤 묶음이 같은 사진을 바꿨으면 넣지 않음 (a는 b2 값 그대로), void 줄 1개, 다음 켜기에는 다시 시도 안 함',
+            r1.skipped === 1 && r2.superseded === 1 && r2.applied === 0 && db.batchStatus('bad') === 'none'
+              && same(db.getManual(P('a')), afterB2) && voided === 1 && r3.superseded === 0 && r3.errors.length === 0
+              && r2.errors.some((x) => x.batchId === 'bad' && x.type === 'apply'),
+            JSON.stringify([r1, r2, r3, voided]),
+          ));
+          out.push(sub('23j 겹치지 않는 묶음은 그대로 들어감 (c)', db.batchStatus('ok-later') === 'applied' && same(db.getManual(P('c')), val({ lat: 7, lng: 7 })), JSON.stringify(db.getManual(P('c')))));
+        });
+        // 새 DB에서 처음부터 복구하면(모두 없음) 기록 순서대로 넣음: 겹쳐도 버리지 않음
+        await run([A1, apply('first', [item('a', null, val({ lat: 8, lng: 8 }))]), A2], (db, r) => {
+          out.push(sub('23j 새 DB에서는 겹쳐도 순서대로 모두 넣음 (버린 묶음 0)', r.applied === 3 && r.superseded === 0, JSON.stringify(r)));
+        });
+      }
+
       return out;
     },
   },
