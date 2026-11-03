@@ -694,6 +694,100 @@ const ITEMS = [
         const r = await cleaner.cleanOriginals({ job: c.job, store: c.store, targets: [c.job.items[0]], logger: c.logger, trash: async (p) => trashed.push(p), driveKindOf: async () => 'unknown' });
         out.push(sub('12f 드라이브 종류 모름 → 이동', trashed.length === 0 && r.moved === 1, `휴지통 ${trashed.length}번, 이동 ${r.moved}개`));
       }
+
+      // 12t 원본 정리 로그는 동작 전에 "예정" 줄을 먼저 적음 (L3: 그 사이에 꺼져도 무엇을 하려던 건지 남게)
+      if (!cleaner || !cleaner.cleanOriginals) {
+        out.push(missing('12t 정리 로그 예정 줄'));
+      } else {
+        const c = makeCase('12t');
+        const logText = () => {
+          const names = fs.existsSync(c.logger.dir) ? fs.readdirSync(c.logger.dir).filter((n) => n.startsWith('clean_')) : [];
+          return names.length ? fs.readFileSync(path.join(c.logger.dir, names[0]), 'utf8') : '';
+        };
+        const it = c.job.items[0];
+        let plannedBeforeAction = false;
+        const r = await cleaner.cleanOriginals({
+          job: c.job, store: c.store, targets: [it], logger: c.logger, driveKindOf: async () => 'fixed',
+          trash: async (p) => { plannedBeforeAction = logText().includes(`\t예정(휴지통)\t${p}\t`); }, // 휴지통에 보내는 순간 이미 예정 줄이 있어야
+        });
+        const text = logText();
+        const iPlan = text.indexOf('\t예정(휴지통)\t');
+        const iDone = text.indexOf('\t휴지통\t');
+        out.push(sub('12t 휴지통 전에 예정 줄, 뒤에 결과 줄', r.trashed === 1 && plannedBeforeAction && iPlan >= 0 && iDone > iPlan, `예정 ${iPlan}, 결과 ${iDone}, 동작 전 기록 ${plannedBeforeAction}`));
+        const c2 = makeCase('12t-move');
+        let movePlanned = false;
+        const origRename = fs.renameSync;
+        fs.renameSync = (...args) => { movePlanned = fs.readdirSync(c2.logger.dir).some((n) => n.startsWith('clean_') && fs.readFileSync(path.join(c2.logger.dir, n), 'utf8').includes('\t예정(이동)\t')); return origRename(...args); };
+        let r2;
+        try {
+          r2 = await cleaner.cleanOriginals({ job: c2.job, store: c2.store, targets: [c2.job.items[0]], logger: c2.logger, trash: async () => {}, driveKindOf: async () => 'removable' });
+        } finally {
+          fs.renameSync = origRename;
+        }
+        out.push(sub('12t 이동 전에 예정 줄', r2.moved === 1 && movePlanned, `이동 ${r2.moved}, 동작 전 기록 ${movePlanned}`));
+      }
+
+      // 12u exiftool이 쓰는 중에 꺼져 남은 임시 파일(파일_exiftool_tmp)이 있어도 다음 실행이 실패하지 않음 (L4)
+      {
+        const processor = require('../lib/processor');
+        if (!processor.exiftoolTmpOf) {
+          out.push(missing('12u exiftool 임시 파일 치우기'));
+        } else {
+          out.push(sub('12u exiftool 임시 파일 이름 규칙', processor.exiftoolTmpOf('a.jpg') === 'a.jpg_exiftool_tmp'));
+          // 먼저, 남은 임시 파일이 있으면 exiftool 쓰기가 정말 실패하는지 (이 점검이 의미 있는지)
+          const d = path.join(root, '12u-stale');
+          fs.mkdirSync(d, { recursive: true });
+          const f = path.join(d, 'x.jpg');
+          fs.copyFileSync(path.join(AUTO, 'IMG_0101.jpg'), f);
+          fs.writeFileSync(processor.exiftoolTmpOf(f), 'stale');
+          const staleErr = await env.et.write(['-overwrite_original', '-FileModifyDate=2026:10:28 13:40:58', f]).then(() => null, (e) => e.message);
+          out.push(sub('12u 남은 임시 파일이 있으면 exiftool 쓰기가 실패함 (확인용)', staleErr !== null, staleErr || '실패하지 않음'));
+          // 진짜 흐름: 작업 파일(.__tmp__)의 exiftool 임시 파일이 남아 있어도 처리는 완료되고 임시 파일은 없어짐
+          const p = await pipeline(path.join(root, '12u'), env, { manual: false, run: false });
+          const it = p.job.items.find((x) => x.kind === 'copy' && x.date && x.src.toLowerCase().endsWith('.jpg'));
+          const ext = path.extname(it.dest);
+          const tmp = path.join(path.dirname(it.dest), path.basename(it.dest, ext) + '.__tmp__' + ext);
+          fs.mkdirSync(path.dirname(it.dest), { recursive: true });
+          fs.writeFileSync(processor.exiftoolTmpOf(tmp), 'stale');
+          const r = await processor.processItem(it, env.ctx);
+          const leftovers = fs.readdirSync(path.dirname(it.dest)).filter((n) => n.endsWith('_exiftool_tmp'));
+          out.push(sub('12u 남은 임시 파일이 있어도 처리 완료, 임시 파일 없음', r.status === 'done' && fs.existsSync(r.finalPath) && leftovers.length === 0, `${r.status} ${r.note || ''}, 남은 것 ${leftovers.join(', ') || '없음'}`));
+        }
+      }
+
+      // 12v 작업 보관(store.close)이 반쯤 실패해도 진행 기록을 잃지 않음 (L5)
+      {
+        const dir = path.join(root, '12v', 'jobs');
+        const plan = { source: 'S', backupRoot: 'B', items: [{ i: 0, status: 'todo' }, { i: 1, status: 'todo' }] };
+        const store = new JobStore(dir);
+        const job = store.create(plan);
+        store.mark(job, 0, { status: 'done', finalPath: 'B/a.jpg' });
+        // 계획 옮기기(두 번째 rename)만 실패시켜요
+        const origRename = fs.renameSync;
+        let calls = 0;
+        let msg = null;
+        fs.renameSync = (a, b) => { calls++; if (calls === 2) throw new Error('가짜 실패'); return origRename(a, b); };
+        try {
+          store.close('done');
+        } catch (e) {
+          msg = e.message;
+        } finally {
+          fs.renameSync = origRename;
+        }
+        const back = store.load();
+        out.push(sub('12v 보관이 반쯤 실패하면 오류를 알리고 계획과 진행 기록이 그대로', msg === '가짜 실패' && store.exists() && fs.existsSync(store.progPath) && back && back.items[0].status === 'done', `오류 ${msg}, 계획 ${store.exists()}, 기록 ${fs.existsSync(store.progPath)}`));
+        // 계획만 사라지고 진행 기록이 남은 상태에서 새 작업을 만들면 → 기록을 지우지 않고 done 폴더에 보관
+        fs.unlinkSync(store.planPath);
+        const job2 = store.create(plan);
+        const doneDir = path.join(dir, 'done');
+        const archived = fs.existsSync(doneDir) ? fs.readdirSync(doneDir).filter((n) => n.endsWith('_orphan.progress.log')) : [];
+        out.push(sub('12v 계획 없이 남은 진행 기록은 새 작업 때 지우지 않고 보관', !!job2 && archived.length === 1 && !fs.existsSync(store.progPath) && fs.readFileSync(path.join(doneDir, archived[0]), 'utf8').includes('"finalPath":"B/a.jpg"'), archived.join(', ') || '보관 안 됨'));
+        // 정상 보관: 계획과 진행 기록이 함께 done 폴더로
+        store.mark(job2, 1, { status: 'done' });
+        store.close('done');
+        const names = fs.readdirSync(doneDir);
+        out.push(sub('12v 정상 보관은 계획과 진행 기록이 함께 done 폴더로', !store.exists() && !fs.existsSync(store.progPath) && names.some((n) => n.endsWith('_done.json')) && names.some((n) => n.endsWith('_done.progress.log')), names.join(', ')));
+      }
       return out;
     },
   },
