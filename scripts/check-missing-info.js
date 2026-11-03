@@ -989,6 +989,30 @@ const items = [
         });
       }
 
+      // 23k 검증 지적: 실패했던 옛 묶음의 사진 일부만 뒤 묶음과 겹치면, 겹친 사진만 빼고 넣음 (d 값을 잃지 않음)
+      //   늦게 복구한 옛 묶음은 "마지막 묶음"(되돌리기 대상)이 되지 않음 (만든 시각 순)
+      {
+        const j = createJournal(jpath());
+        j.append(apply('bad', [item('a', null, val({ lat: 8, lng: 8 })), item('d', null, val({ lat: 6, lng: 6 }))], { at: '2026-11-01T10:00:00' }));
+        const NW = apply('nw', [item('a', null, val({ lat: 9, lng: 9 }))], { at: '2026-11-01T11:00:00' });
+        await withDb(env, 'recover', (db) => {
+          const r1 = recover(failing(db), j); // 첫 번째 켜기: 'bad'는 DB 오류로 실패
+          j.append(NW); // 사용자가 그 뒤 a를 다시 바꿈
+          db.applyManualBatch({ id: 'nw', root: 'R1', kind: 'location', createdAt: NW.at, items: NW.items });
+          const r2 = recover(db, j); // 두 번째 켜기
+          const r3 = recover(db, j); // 세 번째 켜기: 이미 넣었으니 다시 안 넣음
+          const voided = j.read().lines.filter((l) => l.type === 'void').length;
+          out.push(sub(
+            '23k 겹친 사진(a)만 빼고 넣음: a는 뒤 묶음 값, d는 옛 묶음 값, void 줄 없음, 다음 켜기엔 다시 안 넣음',
+            r1.skipped === 1 && r2.partial === 1 && r2.applied === 1 && r2.superseded === 0 && db.batchStatus('bad') === 'applied'
+              && same(db.getManual(P('a')), val({ lat: 9, lng: 9 })) && same(db.getManual(P('d')), val({ lat: 6, lng: 6 }))
+              && voided === 0 && r3.applied === 0 && r3.partial === 0 && r2.errors.some((x) => x.batchId === 'bad' && x.message.includes('1장')),
+            JSON.stringify([r1, r2, r3, db.getManual(P('a')), db.getManual(P('d'))]),
+          ));
+          out.push(sub('23k 늦게 복구한 옛 묶음이 아니라 사용자의 마지막 묶음이 되돌리기 대상', db.lastBatch('R1').id === 'nw', JSON.stringify(db.lastBatch('R1'))));
+        });
+      }
+
       return out;
     },
   },
