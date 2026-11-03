@@ -51,6 +51,7 @@
 ```
 지도 그림: 화면 → pvm://tile/<z>/<x>/<y> → gallery-main.js → map-net → 지도 서버
 장소 검색: 화면 → IPC gallery:search-place → gallery-main.js → map-net → 검색 서버
+장소 이름: 화면 → IPC gallery:place-name(사진 번호) → gallery-main.js (DB에서 좌표) → map-net → 검색 서버
 ```
 
 `lib/map-net.js`는 Electron을 부르지 않고, `fetch`를 받아서 쓴다. 그래서 점검을 일반 Node와 가짜 응답으로 돌릴 수 있다 (`lib/` 규칙).
@@ -60,6 +61,7 @@
 - 나감: 보고 있는 지역의 지도 번호, 입력한 검색어, IP 주소, 앱 이름표(User-Agent)
 - 나가지 않음: 사진, 파일 이름, 폴더 경로, 사진에 든 좌표 목록
 - 로그에 남기지 않음: 검색어 (실패 로그에는 HTTP 상태와 오류 코드만)
+- 장소 이름 (2026-11-04 추가, 사용자 승인): 오른쪽 패널의 "장소 이름 보기"를 누른 사진 한 장의 좌표만, 소수점 3자리(약 100m)로 줄여 보낸다. 자동으로 여러 장을 보내지 않는다. 받은 이름은 DB `place_names`에 두고, 같은 동네(줄인 좌표가 같은 곳)는 다시 보내지 않는다. 좌표는 로그에 남기지 않는다. 검색과 한 줄로 서서 둘을 합쳐 1초에 하나
 
 ### 4-3. 연결하는 곳
 
@@ -67,6 +69,7 @@
 |---|---|---|
 | 지도 그림 | `https://tile.openstreetmap.org/{z}/{x}/{y}.png` | `mapTileUrl` |
 | 장소 검색 | `https://nominatim.openstreetmap.org/search` | `placeSearchUrl` |
+| 장소 이름 | `https://nominatim.openstreetmap.org/reverse` | `placeReverseUrl` |
 
 - 검색 서버 정책은 요청을 받으면 앱을 다시 설치하지 않고 서비스를 바꿀 수 있어야 한다고 요구한다. 그래서 주소를 `settings.json`에서 바꿀 수 있게 한다. 화면에 설정 칸은 만들지 않는다
 - 설정 값이 비어 있으면 기본 주소를 쓴다. `https://`가 아니거나, 지도 주소에 `{z}`, `{x}`, `{y}`가 없으면 기본 주소를 쓰고 오류 로그에 키 이름만 남긴다

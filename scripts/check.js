@@ -968,6 +968,8 @@ const ITEMS = [
   ...require('./check-map-pick').items,
   // 36번부터는 비슷한 사진 점검 (scripts/check-similar.js)
   ...require('./check-similar').items,
+  // 39번은 장소 이름 점검 (scripts/check-places.js)
+  ...require('./check-places').items,
 ];
 
 // ---------- 점검 임시 폴더 정리 ----------

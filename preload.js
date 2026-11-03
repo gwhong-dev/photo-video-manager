@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('api', {
     clearSuggestionSkips: () => ipcRenderer.invoke('gallery:clear-suggestion-skips'),
     // 지도에서 위치 고르기: 장소 검색 결과 [{ name, lat, lng }], 지도 출처 링크 열기 (주소는 main이 정해요)
     searchPlace: (query) => ipcRenderer.invoke('gallery:search-place', query),
+    placeName: (id, ask) => ipcRenderer.invoke('gallery:place-name', id, ask),
     openMapCredit: () => ipcRenderer.invoke('gallery:open-map-credit'),
     // 비슷한 사진: 묶음 목록, 버리기 미리보기, 버리기 (id로만)
     listSimilar: () => ipcRenderer.invoke('gallery:similar-list'),
