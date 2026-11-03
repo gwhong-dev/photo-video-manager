@@ -1743,6 +1743,10 @@ const items = [
           const t0 = await call('check-tools');
           out.push(sub('쉬는 중에는 check-tools가 도구 정보를 돌려줌', !!t0 && !!t0.exiftool && t0.exiftool.ok === true));
           out.push(sub('창을 먼저 만들고 도구 찾기는 뒤에서 끝남, 켤 때 찾기는 한 번', windowFirst && startedOnce && order.includes('찾기 끝'), order.join(' → ')));
+          // 동시에 둘이 다시 찾기를 불러도 같은 찾기를 기다려요 (toolsPromise). 켤 때 화면이 get-state와 check-tools를 함께 보내는 경우
+          const startsBefore = order.filter((x) => x === '찾기 시작').length;
+          const [tA, tB] = await Promise.all([call('check-tools'), call('check-tools')]);
+          out.push(sub('check-tools를 동시에 둘 불러도 찾기는 한 번, 둘 다 같은 결과', order.filter((x) => x === '찾기 시작').length - startsBefore === 1 && tA === tB && !!tA.exiftool, `찾기 ${order.filter((x) => x === '찾기 시작').length - startsBefore}번`));
 
           // 미리보기 중 (make-plan은 planning = true 를 먼저 켜고 기다려요)
           const planning = call('make-plan', { source: srcDir, backupRoot: destDir, includeSub: true });

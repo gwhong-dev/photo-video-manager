@@ -69,6 +69,13 @@ function refreshTools() {
   return toolsPromise;
 }
 
+// 켤 때 시작한 도구 찾기가 아직 돌고 있으면 끝나길 기다려요. 화면은 get-state 뒤에만 작업 버튼을 보여서 드물지만,
+//   tools가 null인 채로 작업이 시작되면 TypeError나 "exiftool을 찾지 못했어요"라는 틀린 안내가 나와요
+async function waitTools() {
+  if (!tools && toolsPromise) await toolsPromise.catch(() => {});
+  if (!tools) throw new Error('도구를 아직 찾는 중이에요. 잠시 뒤 다시 해 주세요.');
+}
+
 async function refreshToolsNow() {
   const found = await detectTools(settings, __dirname);
   // 찾는 동안(몇백 ms) 작업이 시작됐을 수 있어서, 바꾸기 직전에 한 번 더 확인해요
@@ -275,6 +282,7 @@ ipcMain.handle('check-folders', async (e, source, backupRoot) => validatePick(so
 // 미리보기 (읽기만 함!)
 ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
   if (running) throw new Error('실행 중에는 미리보기를 할 수 없어요');
+  await waitTools();
   if (!et) throw new Error('exiftool을 찾지 못했어요. 위쪽 도구 상태를 확인해 주세요.');
   // 폴더 조합 확인 (같은 폴더, 백업 안쪽/상위, 후가공 폴더 → 거부). 화면에서도 고를 때 확인하지만 한 번 더
   const v = validateFolders(source, backupRoot);
@@ -323,6 +331,7 @@ ipcMain.handle('pause', async () => {
 ipcMain.handle('run-batch', async (e, batchSize) => {
   if (!job) throw new Error('작업이 없어요');
   if (running) throw new Error('이미 실행 중이에요');
+  await waitTools();
 
   const n = Math.max(1, Number(batchSize) || 2000);
   const todo = nextTodo(job, n);
@@ -366,6 +375,7 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
 let cleanDriveKindOf = null;
 ipcMain.handle('trash-info', async () => {
   if (running) throw new Error('다른 작업이 끝난 뒤에 해 주세요');
+  await waitTools();
   running = true;
   try {
     cleanDriveKindOf = createDriveKindOf();
@@ -380,6 +390,7 @@ ipcMain.handle('trash-info', async () => {
 // 원본 정리 (하드디스크 → 휴지통 / USB·SD·네트워크 → _정리완료원본으로 이동, 영구 삭제 없음)
 ipcMain.handle('trash-originals', async () => {
   if (running) throw new Error('실행 중에는 할 수 없어요');
+  await waitTools();
   // 정리하는 동안에는 "실행 중"으로 표시 → 미리보기·새 작업·작업 끝내기를 막아요 (기록이 섞이지 않게)
   running = true;
   try {
