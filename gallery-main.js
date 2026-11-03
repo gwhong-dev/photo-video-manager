@@ -569,9 +569,16 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     try {
       const noTrash = async () => { throw new Error('휴지통을 쓸 수 없어요'); };
       const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: makeDriveKindOf(), logger });
-      if (r.done.length) db.setMissing(r.done, 1);
+      // DB에 적다가 실패해도 옮긴 결과는 알려요 (다음에 백업 폴더를 읽으면 "사라짐"으로 맞춰져요)
+      if (r.done.length) {
+        try {
+          db.setMissing(r.done, 1);
+        } catch (err) {
+          errorLog('비슷한 사진 사라짐 표시', err);
+        }
+      }
       send('gallery:library-changed');
-      return { trashed: r.trashed, moved: r.moved, fail: r.fail, logName: path.basename(r.logPath || '') };
+      return { trashed: r.trashed, moved: r.moved, fail: r.fail, logFail: r.logFail, logName: path.basename(r.logPath || '') };
     } finally {
       discarding = false;
     }

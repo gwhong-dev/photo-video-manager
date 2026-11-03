@@ -1,7 +1,9 @@
 // 파일 위치: src/similar-view.mjs
 // 역할: "비슷한 사진" 화면의 계산 (React 없이 점검할 수 있게 따로 둬요. 점검 37)
 //   표시: 묶음마다 처음에는 keepId 한 장만 "남김", 나머지는 "버림"
-//   사용자가 바꾼 것(overrides: Map<id, 'keep'|'discard'>)은 목록을 다시 받아도 같은 사진이면 그대로 둬요
+//   화면에 보인 묶음은 그 표시를 overrides(Map<id, 'keep'|'discard'>)에 고정해요 (pinMarks)
+//     → 목록을 다시 받아 keepId가 바뀌어도 사용자가 본 표시는 그대로예요
+//     → 버릴 번호는 고정된 "버림"만 세요. 아직 화면에 안 보인 묶음의 사진은 버리지 않아요
 //   묶음마다 적어도 한 장은 남아야 해요 (마지막 남김을 버림으로 바꾸려 하면 거절)
 
 // 사진 한 장의 표시
@@ -19,28 +21,41 @@ export function toggleMark(group, id, overrides) {
     const keeps = group.ids.filter((x) => markOf(group, x, overrides) === 'keep');
     if (keeps.length <= 1) return { overrides: overrides || new Map(), refused: true };
   }
-  const want = now === 'keep' ? 'discard' : 'keep';
-  const base = id === group.keepId ? 'keep' : 'discard';
-  if (want === base) next.delete(id); // 처음 상태로 돌아가면 기록을 지워요
-  else next.set(id, want);
+  next.set(id, now === 'keep' ? 'discard' : 'keep');
   return { overrides: next, refused: false };
 }
 
 // 이 묶음은 모두 남기기
 export function keepAll(group, overrides) {
   const next = new Map(overrides || []);
-  for (const id of group.ids) {
-    if (id === group.keepId) next.delete(id);
-    else next.set(id, 'keep');
-  }
+  for (const id of group.ids) next.set(id, 'keep');
   return next;
 }
 
-// 버릴 사진 번호들 (모든 묶음). 혹시 한 묶음이 전부 버림이면 그 묶음은 빼요 (main도 다시 확인해요)
+// 화면에 보인 묶음의 표시를 고정해요 (바뀐 것이 없으면 같은 Map을 그대로 돌려줘요)
+//   처음 보이는 묶음: keepId만 남김, 나머지 버림
+//   이미 본 묶음에 새로 들어온 사진: 남김 (사용자가 버림을 고르기 전에는 버리지 않아요)
+export function pinMarks(groups, overrides) {
+  let next = null;
+  const put = (id, v) => {
+    if (!next) next = new Map(overrides || []);
+    next.set(id, v);
+  };
+  for (const g of groups || []) {
+    const seen = g.ids.some((id) => overrides && overrides.has(id));
+    for (const id of g.ids) {
+      if (overrides && overrides.has(id)) continue;
+      put(id, seen || id === g.keepId ? 'keep' : 'discard');
+    }
+  }
+  return next || overrides || new Map();
+}
+
+// 버릴 사진 번호들: 고정된 "버림"만 (pinMarks로 화면에 보인 묶음). 혹시 한 묶음이 전부 버림이면 그 묶음은 빼요 (main도 다시 확인해요)
 export function discardIds(groups, overrides) {
   const out = [];
   for (const g of groups || []) {
-    const gone = g.ids.filter((id) => markOf(g, id, overrides) === 'discard');
+    const gone = g.ids.filter((id) => overrides && overrides.get(id) === 'discard');
     if (gone.length === g.ids.length) continue;
     out.push(...gone);
   }
@@ -88,6 +103,7 @@ export function resultText(r) {
   if (r.moved) parts.push(`_정리완료원본 폴더로 ${count(r.moved)}장`);
   let text = parts.length ? `${parts.join(', ')} 옮겼어요.` : '옮긴 사진이 없어요.';
   if (r.fail) text += ` ${count(r.fail)}장은 옮기지 못했어요${r.logName ? ` (로그 ${r.logName})` : ''}.`;
+  if (r.logFail) text += ` 로그에 ${count(r.logFail)}줄을 적지 못했어요 (디스크 공간을 확인해 주세요).`;
   return text;
 }
 

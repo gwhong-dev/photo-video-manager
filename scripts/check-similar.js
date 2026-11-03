@@ -259,13 +259,28 @@ const items = [
         out.push(sub('37a 처음엔 가장 큰 사진만 남김, 바꿀 수 있고, 마지막 남김은 버림으로 못 바꿈',
           first === 'discard,keep,discard' && !t1.refused && !t2.refused && t3.refused && V.markOf(g, 1, t3.overrides) === 'keep',
           JSON.stringify([first, [...o]])));
-        const back = V.toggleMark(g, 2, V.toggleMark(g, 2, new Map()).overrides);
-        out.push(sub('37a 처음 상태로 돌아가면 기록이 남지 않음', back.overrides.size === 0));
         const all = V.keepAll(g, new Map());
         out.push(sub('37a 이 묶음은 모두 남기기', [1, 2, 3].every((id) => V.markOf(g, id, all) === 'keep')));
-        out.push(sub('37a 버릴 번호: 묶음마다 남김 빼고, 전부 버림인 묶음은 뺌',
-          JSON.stringify(V.discardIds([g, g2], new Map())) === JSON.stringify([1, 3, 7])
-            && JSON.stringify(V.discardIds([g2], new Map([[8, 'discard']]))) === '[]'));
+        const pinned = V.pinMarks([g, g2], new Map());
+        out.push(sub('37a 버릴 번호: 보인 묶음의 고정된 버림만, 전부 버림인 묶음은 뺌',
+          JSON.stringify(V.discardIds([g, g2], pinned)) === JSON.stringify([1, 3, 7])
+            && JSON.stringify(V.discardIds([g2], new Map([[7, 'discard'], [8, 'discard']]))) === '[]'
+            && V.pinMarks([g, g2], pinned) === pinned,
+          JSON.stringify([...pinned])));
+        // 검증 지적: 화면에 30개만 보이는데 안 본 묶음의 사진도 버림에 들어갔음
+        out.push(sub('37a 아직 화면에 안 보인 묶음의 사진은 버리지 않음',
+          JSON.stringify(V.discardIds([g, g2], V.pinMarks([g], new Map()))) === JSON.stringify([1, 3])
+            && V.discardIds([g, g2], new Map()).length === 0));
+        // 검증 지적: 목록을 다시 받아 가장 큰 사진(keepId)이 바뀌면 본 "남김"이 "버림"으로 바뀌었음
+        {
+          const seen = V.pinMarks([g], new Map()); // 2 남김, 1·3 버림
+          const regrouped = { ids: [1, 2, 3, 4], keepId: 4 }; // 더 큰 4가 들어옴
+          const again = V.pinMarks([regrouped], seen);
+          out.push(sub('37a 다시 받은 목록에서도 본 표시는 그대로, 본 묶음에 새로 들어온 사진은 남김',
+            [1, 2, 3, 4].map((id) => V.markOf(regrouped, id, again)).join() === 'discard,keep,discard,keep'
+              && JSON.stringify(V.discardIds([regrouped], again)) === JSON.stringify([1, 3]),
+            JSON.stringify([...again])));
+        }
         const pruned = V.pruneOverrides([g], new Map([[1, 'keep'], [99, 'keep']]));
         out.push(sub('37a 다시 받은 목록에 없는 사진의 기록은 지움', pruned.size === 1 && pruned.get(1) === 'keep'));
       }
@@ -361,6 +376,29 @@ const items = [
         const doneIdx = lines.findIndex((l) => /\t휴지통\t/.test(l) && l.includes('1.jpg'));
         out.push(sub('37d 로그: 예정 줄이 결과 줄보다 먼저, 끝 줄에 합계', planIdx >= 0 && doneIdx > planIdx && logText.includes('# 끝 / 휴지통 1, 이동 3, 실패 2') && progress.length > 0, logText.slice(-200)));
         out.push(sub('37d 원래 _정리완료원본에 있던 파일은 그대로', fs.readFileSync(path.join(root, '_정리완료원본', 'usb', '2026', '2.jpg'), 'utf8') === path.join('_정리완료원본', 'usb', '2026', '2.jpg')));
+
+        // 37e 검증 지적: 목록을 읽은 뒤 바뀐 파일은 안 옮김, 결과 줄을 못 적어도 옮긴 목록은 돌려줌, 예정 줄을 못 적으면 안 옮김
+        const fresh = put(path.join('hdd', 'fresh.jpg'));
+        const changed = put(path.join('hdd', 'changed.jpg'));
+        const stOf = (p) => fs.statSync(p);
+        const cList = [fresh, changed].map((p, i) => ({ id: i + 1, path: p, name: path.basename(p), size: stOf(p).size, mtimeMs: stOf(p).mtimeMs }));
+        fs.writeFileSync(changed, 'changed after list'); // 목록을 읽은 뒤 다른 내용으로 저장됨
+        const failLogger = (when) => ({
+          newLog: (prefix, header) => {
+            const lg = createLogger(logDir).newLog(prefix, header);
+            return { path: lg.path, write: (line) => { if (when(line)) throw new Error('디스크 가득 참'); lg.write(line); } };
+          },
+        });
+        const fixed = async () => 'fixed';
+        const r2 = await D.discardFiles({ root, files: cList, trash, driveKindOf: fixed, recycleOf: async () => null, logger: failLogger((l) => /\t휴지통\t/.test(l)) });
+        out.push(sub('37e 바뀐 파일은 실패로 남기고 안 옮김, 결과 줄을 못 적어도 옮긴 사진은 done에 있음',
+          r2.trashed === 1 && r2.fail === 1 && fs.existsSync(changed) && !fs.existsSync(fresh)
+            && r2.done.length === 1 && r2.done[0] === fresh && r2.logFail === 1,
+          JSON.stringify(r2)));
+        const planFail = put(path.join('hdd', 'planfail.jpg'));
+        const r3 = await D.discardFiles({ root, files: [{ id: 9, path: planFail, name: 'planfail.jpg', size: 1 }], trash, driveKindOf: fixed, recycleOf: async () => null, logger: failLogger((l) => l.includes('예정(')) });
+        out.push(sub('37e 예정 줄을 못 적으면 그 사진은 옮기지 않음', r3.fail === 1 && r3.done.length === 0 && fs.existsSync(planFail), JSON.stringify(r3)));
+        out.push(sub('37e 결과 문구에 못 적은 로그 줄 수', V.resultText({ trashed: 1, logFail: 2 }).includes('로그에 2줄을 적지 못했어요')));
       }
       return out;
     },
