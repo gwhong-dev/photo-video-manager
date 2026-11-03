@@ -268,6 +268,27 @@ const items = [
         out.push(sub('36g 이 번호 다음부터 할 일 (afterId)', db.hashJobs('R1', 2, 7).map((f) => f.id).join() === '10,20'));
       });
 
+      // 36h 검증 지적: 연속 촬영 사이에 낀 다른 한 장이 묶음을 끊지 않음 (3초 안 앞 사진들과 비교), 모양 거리 설정이 6보다 크면 오류
+      {
+        const A = '0f0f0f0f33333333';
+        const A2 = '0f0f0f0f3333ffff'; // A와 거리 8 (시간으로는 묶임, 모양으로는 아님)
+        const C = 'f0f0f0f0cccccccc'; // A와 거리 64
+        const r = (id, sec, h) => ({ id, name: `${id}.jpg`, takenAt: `2026-01-01T00:00:0${sec}`, width: 10, height: 10, size: 1, dhash: h });
+        const ids = (rows) => JSON.stringify(S.buildGroups(rows).map((g) => g.ids));
+        const inter = ids([r(1, 0, A), r(2, 1, C), r(3, 2, A2)]);
+        const far = ids([r(1, 0, A), r(2, 2, C), r(3, 4, A2)]); // 1과 3은 4초 차이 → 안 묶임
+        out.push(sub('36h 사이에 다른 사진이 껴도 3초 안의 비슷한 두 장은 묶이고, 3초 넘으면 안 묶임', inter === '[[1,3]]' && far === '[]', `${inter} ${far}`));
+        const same = [];
+        for (let i = 1; i <= 5000; i++) same.push(r(i, 0, i % 2 ? A : C));
+        const t0 = Date.now();
+        const gs = S.buildGroups(same);
+        const ms = Date.now() - t0;
+        out.push(sub('36h 같은 시각 5천 장도 빠르게 (앞 50장까지만 비교)', gs.length === 2 && ms < 3000, `${ms}ms, 묶음 ${gs.length}`));
+        let threw = false;
+        try { S.buildGroups([], { shapeMaxDist: 7 }); } catch (e) { threw = true; }
+        out.push(sub('36h 모양 거리 설정이 6보다 크면 오류 (조용히 꺼지지 않음)', threw));
+      }
+
       return out;
     },
   },
@@ -334,6 +355,8 @@ const items = [
           && V.resultText({ trashed: 2, moved: 1, fail: 1, logName: 'x.log' }) === '휴지통으로 2장, _정리완료원본 폴더로 1장 옮겼어요. 1장은 옮기지 못했어요 (로그 x.log).'
           && V.progressText({ total: 10, done: 3 }).startsWith('사진 지문 만드는 중 3 / 10장') && V.progressText({ total: 10, done: 10 }) === '',
         V.resultText({ trashed: 2, moved: 1, fail: 1, logName: 'x.log' })));
+      out.push(sub('37b 휴지통 용량 경고는 확인 창에 "주의:"로',
+        V.previewLines({ count: 1, groups: 1, trash: 1, move: 0, warnings: ['C:\ 드라이브: 넘어요'] }).at(-1) === '주의: C:\ 드라이브: 넘어요'));
 
       // 37c 버리기 확인(checkDiscard): 지금 DB로 묶음을 다시 만들어서 확인
       await withDb(env, 'similar-check', async (db) => {
@@ -350,7 +373,10 @@ const items = [
         const id = (n) => db.similarRows('R1').find((r) => r.name === n).id;
         const err = (ids) => { try { D.checkDiscard(db, 'R1', ids); return null; } catch (e) { return e.message; } };
         const ok = D.checkDiscard(db, 'R1', [id('b.jpg')]);
-        out.push(sub('37c 묶음의 한 장은 버릴 수 있음 (경로와 크기를 돌려줌)', ok.files.length === 1 && ok.files[0].path === 'R1/b.jpg' && ok.groups === 1, JSON.stringify(ok)));
+        out.push(sub('37c 묶음의 한 장은 버릴 수 있음 (경로, 크기, 수정 시각, 그 묶음에서 남는 사진을 돌려줌)',
+          ok.files.length === 1 && ok.files[0].path === 'R1/b.jpg' && ok.files[0].mtimeMs === 1000 && ok.groups === 1
+            && JSON.stringify(ok.files[0].keepers) === JSON.stringify([{ path: 'R1/a.jpg', size: 100, mtimeMs: 1000 }]),
+          JSON.stringify(ok)));
         out.push(sub('37c 묶음을 전부 버리려 하면 거절', err([id('a.jpg'), id('b.jpg')]) === '묶음마다 적어도 한 장은 남겨 주세요'));
         out.push(sub('37c 묶음에 없는 사진, 같은 번호 두 번, 빈 목록, 이상한 번호는 거절',
           !!err([id('c.jpg')]) && !!err([id('b.jpg'), id('b.jpg')]) && !!err([]) && !!err(['x']) && !!err(null)));
@@ -436,6 +462,30 @@ const items = [
         const r3 = await D.discardFiles({ root, files: [{ id: 9, path: planFail, name: 'planfail.jpg', size: 1 }], trash, driveKindOf: fixed, recycleOf: async () => null, logger: failLogger((l) => l.includes('예정(')) });
         out.push(sub('37e 예정 줄을 못 적으면 그 사진은 옮기지 않음', r3.fail === 1 && r3.done.length === 0 && fs.existsSync(planFail), JSON.stringify(r3)));
         out.push(sub('37e 결과 문구에 못 적은 로그 줄 수', V.resultText({ trashed: 1, logFail: 2 }).includes('로그에 2줄을 적지 못했어요')));
+
+        // 37f 검증 지적: 그 묶음에서 남길 사진이 그 사이 없어지거나 바뀌었으면 버릴 사진을 옮기지 않음
+        const disk = (p) => ({ path: p, size: stOf(p).size, mtimeMs: stOf(p).mtimeMs });
+        const keepOk = disk(put(path.join('hdd', 'keep-ok.jpg')));
+        const keepGone = disk(put(path.join('hdd', 'keep-gone.jpg')));
+        const keepEdit = disk(put(path.join('hdd', 'keep-edit.jpg')));
+        const kList = ['k-ok.jpg', 'k-gone.jpg', 'k-edit.jpg'].map((n, i) => ({ id: 20 + i, name: n, ...disk(put(path.join('hdd', n))), keepers: [[keepOk], [keepGone], [keepEdit]][i] }));
+        fs.rmSync(keepGone.path); // 남길 사진을 탐색기에서 지움
+        fs.appendFileSync(keepEdit.path, ' edited'); // 남길 사진을 그 사이 고침
+        const r4 = await D.discardFiles({ root, files: kList, trash, driveKindOf: fixed, recycleOf: async () => null, logger: createLogger(logDir) });
+        out.push(sub('37f 남길 사진이 그대로인 묶음만 옮기고, 남길 사진이 없어지거나 바뀐 묶음은 그대로',
+          r4.trashed === 1 && r4.fail === 2 && r4.done.length === 1 && r4.done[0] === kList[0].path && fs.existsSync(kList[1].path) && fs.existsSync(kList[2].path)
+            && fs.readFileSync(r4.logPath, 'utf8').includes('남길 사진이 백업 폴더에 없거나 바뀌어서'),
+          JSON.stringify(r4)));
+        // 휴지통 용량 경고 (설정 크기, 모르면 드라이브의 5%)
+        const noFs = () => { throw new Error('점검'); };
+        const wList = [{ path: kList[1].path, size: 100 }, { path: kList[2].path, size: 100 }];
+        const okInfo = await D.discardInfo(wList, { driveKindOf: fixed, recycleOf: async () => null, statfs: noFs });
+        const small = await D.discardInfo(wList, { driveKindOf: fixed, recycleOf: async () => ({ maxBytes: 150 }), statfs: noFs });
+        const tiny = await D.discardInfo(wList, { driveKindOf: fixed, recycleOf: async () => null, statfs: () => ({ blocks: 10, bsize: 100 }) });
+        out.push(sub('37f 휴지통 용량을 넘으면 경고 (설정 크기, 모르면 드라이브의 5%), 넘지 않으면 경고 없음',
+          okInfo.warnings.length === 0 && small.warnings.length === 1 && small.warnings[0].includes('휴지통 설정 크기')
+            && tiny.warnings.length === 1 && tiny.warnings[0].includes('약 5%'),
+          JSON.stringify([okInfo.warnings, small.warnings, tiny.warnings])));
       }
       return out;
     },

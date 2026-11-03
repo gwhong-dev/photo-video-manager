@@ -92,6 +92,7 @@ export function previewLines(info) {
   const lines = [`묶음 ${count(info.groups)}개에서 ${count(info.count)}장을 옮겨요.`];
   if (info.trash > 0) lines.push(`휴지통으로 ${count(info.trash)}장`);
   if (info.move > 0) lines.push(`휴지통이 없는 드라이브라 백업 폴더 안 _정리완료원본 폴더로 ${count(info.move)}장 (갤러리에는 안 보이고, 지우는 것은 직접 확인한 뒤에 해 주세요)`);
+  for (const w of info.warnings || []) lines.push(`주의: ${w}`);
   return lines;
 }
 
