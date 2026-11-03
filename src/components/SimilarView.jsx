@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { formatCount, formatTakenAt } from '../format.mjs';
-import { discardIds, discardLabel, keepAll, markOf, previewLines, progressText, pruneOverrides, resultText, reviewLabel, toggleMark } from '../similar-view.mjs';
+import { discardIds, discardLabel, keepAll, markOf, pinMarks, previewLines, progressText, pruneOverrides, resultText, reviewLabel, toggleMark } from '../similar-view.mjs';
 import EmptyState from './EmptyState.jsx';
 
 const PAGE = 30; // 한 번에 보여 주는 묶음 수
@@ -71,6 +71,11 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
     } catch (e) { /* electron 밖 */ }
     return () => off();
   }, [load]);
+
+  // 화면에 보인 묶음의 남김/버림 표시를 고정해요 (안 본 묶음은 버리지 않고, 다시 받아도 본 표시는 안 바뀌어요)
+  useEffect(() => {
+    if (data) setOverrides((o) => pinMarks(data.groups.slice(0, shown), o));
+  }, [data, shown]);
 
   // 확인 창: 열리면 그만두기 버튼에 초점, Esc로 닫기 (옮기는 중에는 안 닫혀요)
   const cancelRef = useRef(null);
