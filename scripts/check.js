@@ -685,6 +685,68 @@ const ITEMS = [
         }
       }
 
+      // 12t 원본 정리 로그는 옮기기 "전에" 먼저 적음 (L3) → 옮기는 도중에 꺼져도 어느 파일인지 남음
+      {
+        const c = makeCase('12t');
+        const target = c.job.items[0];
+        let seen = null; // 휴지통 함수가 불린 순간, 로그에 "예정" 줄이 이미 있는지
+        const r = await cleaner.cleanOriginals({
+          job: c.job, store: c.store, targets: [target], logger: c.logger,
+          trash: async () => {
+            const logs = listFiles(path.join(c.dir, 'logs')).filter((f) => path.basename(f).startsWith('clean_'));
+            seen = logs.length === 1 && fs.readFileSync(logs[0], 'utf8').split('\n').some((l) => l.split('\t')[1] === '예정(휴지통)' && l.split('\t')[2] === target.src);
+            throw new Error('옮기는 도중에 꺼진 것처럼');
+          },
+          driveKindOf: async () => 'fixed',
+        });
+        const text = fs.readFileSync(r.logPath, 'utf8');
+        const idx = (word) => text.split('\n').findIndex((l) => l.split('\t')[1] === word);
+        out.push(sub('12t 정리 로그는 옮기기 전에 "예정" 줄을 먼저 적음', seen === true && idx('예정(휴지통)') !== -1 && idx('예정(휴지통)') < idx('휴지통 실패 → 이동'), `휴지통 호출 때 예정 줄 ${seen ? '있음' : '없음'}`));
+      }
+
+      // 12u exiftool이 쓰다 남긴 임시 파일(*_exiftool_tmp)이 있어도 다시 처리됨 (L4)
+      {
+        const p = await pipeline(path.join(root, '12u'), env, { manual: false, run: false });
+        const it = p.job.items.find((x) => x.kind === 'copy' && x.date);
+        const ext = path.extname(it.dest);
+        const etTmp = path.join(path.dirname(it.dest), path.basename(it.dest, ext) + '.__tmp__' + ext + '_exiftool_tmp');
+        fs.mkdirSync(path.dirname(etTmp), { recursive: true });
+        fs.writeFileSync(etTmp, 'LEFTOVER');
+        let r = null;
+        let err = '';
+        try {
+          r = await processor.processItem(it, env.ctx);
+        } catch (e) {
+          err = e.message;
+        }
+        out.push(sub('12u exiftool 임시 파일이 남아 있어도 처리됨', !!r && r.status === 'done' && fs.existsSync(r.finalPath) && !fs.existsSync(etTmp), err || `${r.status}, 임시 파일 남음: ${fs.existsSync(etTmp)}`));
+      }
+
+      // 12v 작업 보관이 반쯤 실패해도(계획은 옮겨지고 진행 기록만 남음) 다음 작업 때 진행 기록을 지우지 않고 done\ 에 보관 (L5)
+      {
+        const dir = path.join(root, '12v', 'jobs');
+        const store = new JobStore(dir);
+        const job = store.create({ items: [{ i: 0, status: 'todo' }] });
+        store.mark(job, 0, { status: 'done', finalPath: 'x' });
+        const text = fs.readFileSync(store.progPath, 'utf8');
+        fs.unlinkSync(store.planPath); // 계획은 보관됐는데 진행 기록 보관에 실패한 것처럼
+        store.create({ items: [] });
+        const kept = listFiles(path.join(dir, 'done')).filter((f) => /_orphan\.progress\.log$/.test(f));
+        const same = kept.length === 1 && fs.readFileSync(kept[0], 'utf8') === text;
+        out.push(sub('12v 남은 진행 기록은 지우지 않고 done\\에 보관', same && !fs.existsSync(store.progPath), `보관 ${kept.length}개, 내용 같음: ${same}`));
+        // 보통 보관: 계획과 진행 기록이 같은 이름으로 done\ 에 감, 같은 1초 안에 두 번 보관해도 덮어쓰지 않음
+        const store2 = new JobStore(path.join(root, '12v-close', 'jobs'));
+        const j2 = store2.create({ items: [{ i: 0, status: 'todo' }] });
+        store2.mark(j2, 0, { status: 'done' });
+        store2.close('done');
+        store2.create({ items: [{ i: 0, status: 'todo' }] });
+        store2.mark(j2, 0, { status: 'fail' });
+        store2.close('done');
+        const names = listFiles(path.join(root, '12v-close', 'jobs', 'done')).map((f) => path.basename(f)).sort();
+        const pairs = names.filter((n) => n.endsWith('.json')).length === 2 && names.filter((n) => n.endsWith('.progress.log')).length === 2;
+        out.push(sub('12v 보관 두 번 → 계획 2개, 진행 기록 2개 (덮어쓰지 않음)', pairs && !store2.exists() && !fs.existsSync(store2.progPath), names.join(', ')));
+      }
+
       // 12f 드라이브 종류를 모름 → 이동 (휴지통 안 씀)
       if (!cleaner || !cleaner.cleanOriginals) {
         out.push(missing('12f 드라이브 종류 모름 → 이동'));
