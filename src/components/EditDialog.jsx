@@ -117,17 +117,31 @@ export default function EditDialog({ mode, ids, source, prefer, startAt, onPinCh
     );
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ---------- Esc로 닫기, Tab이 창 밖으로 나가지 않게 ----------
+  // ---------- Esc로 닫기, Tab이 창 밖으로 나가지 않게, 닫으면 초점을 원래 자리로 ----------
+  const escState = useRef({ applying, onClose });
+  escState.current = { applying, onClose };
   useEffect(() => {
+    const opener = document.activeElement; // 창을 열기 전에 초점이 있던 곳
     const first = dialogRef.current && dialogRef.current.querySelector('input:not(:disabled)');
     (first || dialogRef.current).focus();
-  }, []);
-  const onKeyDown = (e) => {
-    if (e.key === 'Escape') {
+    // Esc는 문서 전체에서 받아요: 배경을 눌러 초점이 창 밖으로 나가도 닫히게
+    const onEsc = (e) => {
+      if (e.key !== 'Escape') return;
       e.stopPropagation();
-      if (!applying) onClose();
-      return;
-    }
+      if (!escState.current.applying) escState.current.onClose();
+    };
+    document.addEventListener('keydown', onEsc, true);
+    return () => {
+      document.removeEventListener('keydown', onEsc, true);
+      // 열기 전 자리가 아직 화면에 있으면 거기로 돌려놓아요 (메뉴처럼 사라졌으면 그대로 둬요)
+      if (opener && opener !== document.body && opener.isConnected && typeof opener.focus === 'function') opener.focus();
+    };
+  }, []);
+  // 배경을 눌러도 초점이 창 안에 남게 해요
+  const keepFocus = (e) => {
+    if (e.target === e.currentTarget) e.preventDefault();
+  };
+  const onKeyDown = (e) => {
     if (e.key !== 'Tab') return;
     // 지도 칸과 핀(tabindex), 확대 버튼(링크)도 Tab으로 갈 수 있어서 같이 세요
     const items = [...dialogRef.current.querySelectorAll('input:not(:disabled), button:not(:disabled), a[href], [tabindex="0"]')];
@@ -187,7 +201,7 @@ export default function EditDialog({ mode, ids, source, prefer, startAt, onPinCh
   const total = counts ? counts.changed + counts.same : 0;
 
   return (
-    <div className="dialog-backdrop">
+    <div className="dialog-backdrop" onMouseDown={keepFocus}>
       <div ref={dialogRef} className={`dialog${map ? ' map-dialog' : ''}`} role="dialog" aria-modal="true" aria-labelledby="edit-title" tabIndex={-1} onKeyDown={onKeyDown}>
         <h2 id="edit-title" className="dialog-title">{copy ? '붙여넣기' : map ? '지도에서 위치 고르기' : '날짜 직접 넣기'}</h2>
 
