@@ -297,6 +297,8 @@ const ITEMS = [
         const gone = (await makePlan({ source: src8, backupRoot: bk8, includeSub: true }, env.et, () => {}, { priorResults: prior })).items[0];
         out.push(sub('8a 원본 수정 시각이 다르거나 이전 결과 파일이 없으면 건너뛰지 않음 (새로 변환)',
           changed.status === 'todo' && gone.status === 'todo', `${changed.status} / ${gone.status}`));
+        const cached = store8.priorResults(priorKey);
+        out.push(sub('8a 보관 작업이 그대로면 다시 읽지 않고 지난 결과를 씀', cached === store8.priorResults(priorKey) && cached.size === 1));
       }
 
       // 8b 사용자 결정 (2026-11-04, 열린 질문 5): 변환된 중복은 애플 ID, 촬영 날짜, 가로×세로가 모두 같을 때만 원본 정리 대상
@@ -309,14 +311,16 @@ const ITEMS = [
         const keep = path.join(root8, 'kept.jpg');
         fs.writeFileSync(src, 'heic bytes');
         fs.writeFileSync(keep, 'jpg bytes, different size');
-        const base = { ContentIdentifier: 'ABC', DateTimeOriginal: '2026:01:02 03:04:05', ImageWidth: 4032, ImageHeight: 3024 };
+        const base = { ContentIdentifier: 'ABC', DateTimeOriginal: '2026:01:02 03:04:05', ImageWidth: 4032, ImageHeight: 3024, SubSecTimeOriginal: '123', ModifyDate: '2026:01:02 03:04:05' };
         const reader = (a, b) => async () => new Map([[keyOf(src), { ...base, ...a }], [keyOf(keep), { ...base, ...b }]]);
         const ok = (a = {}, b = {}) => cleaner.convertedDupOk({ src }, keep, reader(a, b));
-        out.push(sub('8b 애플 ID, 촬영 날짜, 가로×세로가 같으면 같은 촬영 (세로로 돌린 것도), 하나라도 다르거나 모르면 아님',
+        out.push(sub('8b 애플 ID, 촬영 날짜, 가로×세로가 같으면 같은 촬영 (세로로 돌린 것도). 하나라도 다르거나 모르면, ImageUniqueID만 같으면, 0.001초나 수정 시각이 다르면 아님',
           (await ok()) && (await ok({}, { ImageWidth: 3024, ImageHeight: 4032 }))
             && !(await ok({}, { ContentIdentifier: 'XYZ' })) && !(await ok({}, { ContentIdentifier: undefined }))
             && !(await ok({}, { DateTimeOriginal: '2026:01:02 03:04:06' })) && !(await ok({}, { ImageWidth: 4000 }))
             && !(await ok({}, { ImageWidth: undefined }))
+            && !(await ok({ ContentIdentifier: undefined, ImageUniqueID: 'SAME' }, { ContentIdentifier: undefined, ImageUniqueID: 'SAME' }))
+            && !(await ok({}, { SubSecTimeOriginal: '456' })) && !(await ok({}, { ModifyDate: '2026:05:05 00:00:00' }))
             && !(await cleaner.convertedDupOk({ src }, keep, async () => { throw new Error('exiftool 없음'); }))));
         const item = (over) => ({ i: 0, src, status: 'dup', converted: true, dupOf: keep, ...over });
         const jobOf = (it) => ({ items: [it] });

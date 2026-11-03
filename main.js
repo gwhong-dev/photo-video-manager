@@ -17,7 +17,7 @@ const { makePlan, priorKey, readMetaWithKeys, META_TAGS, isVideoPath, NO_DATE_DI
 // 원본 정리 직전에 변환된 중복을 확인할 정보 (애플 ID, 촬영 날짜, 가로×세로) → Map<keyOf(경로), 정보>
 const cleanReadMeta = (paths) => {
   if (!et) throw new Error('exiftool 없음');
-  return readMetaWithKeys(et, paths.map((p) => ({ path: p, isVideo: isVideoPath(p) })), [...META_TAGS, 'ImageWidth', 'ImageHeight']);
+  return readMetaWithKeys(et, paths.map((p) => ({ path: p, isVideo: isVideoPath(p) })), [...META_TAGS, 'ImageWidth', 'ImageHeight', 'ModifyDate']);
 };
 const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
