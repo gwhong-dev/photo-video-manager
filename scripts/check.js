@@ -893,6 +893,8 @@ const ITEMS = [
   ...require('./check-location-suggest').items,
   // 33번부터는 지도에서 위치 고르기 점검 (scripts/check-map-pick.js)
   ...require('./check-map-pick').items,
+  // 36번부터는 비슷한 사진 점검 (scripts/check-similar.js)
+  ...require('./check-similar').items,
 ];
 
 // ---------- 점검 임시 폴더 정리 ----------
