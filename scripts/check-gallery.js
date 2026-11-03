@@ -229,6 +229,24 @@ const items = [
         out.push(sub('영상 탭 파일 목록 값', v.length === 1 && v[0].name === 'v.mp4' && v[0].mediaType === 'video' && v[0].durationSec === 3.5 && v[0].thumbState === 'none', JSON.stringify(v)));
       });
 
+      // 14b2 사용자 결정 (2026-11-04): 라이브 포토(같은 이름의 5초 이하 영상, 찍은 시각 3초 안)는 사진 칸에 "라이브" 표시
+      await withDb(env, 'live-badge', (db) => {
+        db.upsertFiles([
+          row({ path: 'R1/live.jpg', name: 'live.jpg' }),
+          row({ path: 'R1/live.mp4', name: 'live.mp4', mediaType: 'video', durationSec: 2.8 }),
+          row({ path: 'R1/long.jpg', name: 'long.jpg' }),
+          row({ path: 'R1/long.mov', name: 'long.mov', mediaType: 'video', durationSec: 300 }),
+          row({ path: 'R1/late.jpg', name: 'late.jpg' }),
+          row({ path: 'R1/late.mp4', name: 'late.mp4', mediaType: 'video', durationSec: 2, takenAt: '2026-10-25T15:00:00' }),
+          row({ path: 'R1/plain.jpg', name: 'plain.jpg' }),
+          row({ path: 'R1/plain.jpg.dir/plain.mp4', name: 'plain.mp4', mediaType: 'video', durationSec: 2 }),
+        ]);
+        const live = Object.fromEntries(db.listFiles('R1', '2026-10-25', ALL).map((f) => [f.name, f.live]));
+        out.push(sub('14b2 라이브 표시: 짧고 같은 때 찍은 같은 이름 영상이 있는 사진만 (긴 영상, 시각이 먼 영상, 다른 폴더는 아님, 영상 칸은 표시 안 함)',
+          live['live.jpg'] === true && live['long.jpg'] === false && live['late.jpg'] === false && live['plain.jpg'] === false && live['live.mp4'] === false,
+          JSON.stringify(live)));
+      });
+
       // 14c 날짜 없음은 정렬과 관계없이 맨 끝
       await withDb(env, 'nodate', (db) => {
         db.upsertFiles([

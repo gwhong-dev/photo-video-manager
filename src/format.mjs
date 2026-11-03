@@ -53,6 +53,15 @@ export function applyLabel(count, kind) {
   return countOk(count) && KIND_NAME[kind] ? `${formatCount(count)}장에 ${KIND_NAME[kind]} 넣기` : '';
 }
 
+// 많은 장에 한 번에 넣을 때 (2026-11-04 사용자 결정: 100장 이상이면 체크를 한 번 더 받아요)
+export const MANY_PHOTOS = 100;
+export function needsManyCheck(count) {
+  return countOk(count) && count >= MANY_PHOTOS;
+}
+export function manyCheckText(count) {
+  return needsManyCheck(count) ? `${formatCount(count)}장에 한 번에 넣는 것이 맞아요` : '';
+}
+
 // 되돌리기 버튼: "124장 위치 되돌리기"
 export function undoLabel(count, kind) {
   return countOk(count) && KIND_NAME[kind] ? `${formatCount(count)}장 ${KIND_NAME[kind]} 되돌리기` : '';
