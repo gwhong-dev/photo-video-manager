@@ -111,8 +111,12 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
   const groups = data.groups;
   const progress = progressText(data.progress);
   if (!groups.length) {
+    // 모두 남기기로 숨긴 묶음만 있으면 다시 보기 버튼을 보여 줘요
+    const again = data.hiddenKept > 0
+      ? <button type="button" disabled={busy} onClick={() => run(async () => { await api.clearSimilarKeeps(); await load(); })}>모두 남기기로 한 묶음 {formatCount(data.hiddenKept)}개 다시 보기</button>
+      : null;
     return (
-      <EmptyState title={progress ? '비슷한 사진을 찾는 중이에요' : '비슷한 사진이 없어요'}>
+      <EmptyState title={progress ? '비슷한 사진을 찾는 중이에요' : '비슷한 사진이 없어요'} action={again}>
         {progress || '3초 안에 이어서 찍었거나 모양이 거의 같은 사진이 없어요.'}
       </EmptyState>
     );
@@ -123,6 +127,18 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
     if (r.refused) onNotice('묶음마다 한 장은 남겨요. 다른 사진을 먼저 남김으로 바꿔 주세요.');
     else setOverrides(r.overrides);
   };
+  // 모두 남기기: 화면 표시를 바로 바꾸고, 다음 실행에도 기억해요 (저장을 못 해도 이번 화면에서는 남김)
+  const keepGroup = (g) => {
+    setOverrides((o) => keepAll(g, o));
+    api.keepAllSimilar(g.ids)
+      .then((r) => { if (!r.saved) onNotice('모두 남기기를 기억하지 못했어요. 다음 실행에 다시 보일 수 있어요.'); })
+      .catch((e) => onNotice(errorText(e)));
+  };
+  const showKept = () => run(async () => {
+    const r = await api.clearSimilarKeeps();
+    if (!r.saved) onNotice('숨긴 묶음 목록을 비우지 못했어요.');
+    await load();
+  });
   const ids = discardIds(groups, overrides);
   const review = () => run(async () => {
     const info = await api.previewDiscard(ids);
@@ -140,6 +156,11 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
       <div className="similar-top">
         <span>묶음 {formatCount(groups.length)}개, 버릴 사진 {formatCount(ids.length)}장</span>
         {progress && <span>{progress}</span>}
+        {data.hiddenKept > 0 && (
+          <button type="button" className="link-button" disabled={busy} onClick={showKept}>
+            모두 남기기로 한 묶음 {formatCount(data.hiddenKept)}개 다시 보기
+          </button>
+        )}
       </div>
       <div className="similar-body">
         {groups.slice(0, shown).map((g) => (
@@ -147,7 +168,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
             <div className="similar-head">
               <h3 className="panel-heading">{g.takenAt ? formatTakenAt(g.takenAt) : '날짜 없음'}</h3>
               <span className="similar-count">{formatCount(g.ids.length)}장</span>
-              <button type="button" className="link-button" disabled={busy || g.ids.every((id) => markOf(g, id, overrides) === 'keep')} onClick={() => setOverrides((o) => keepAll(g, o))}>
+              <button type="button" className="link-button" disabled={busy || g.ids.every((id) => markOf(g, id, overrides) === 'keep')} onClick={() => keepGroup(g)}>
                 이 묶음은 모두 남기기
               </button>
             </div>

@@ -98,11 +98,48 @@ const items = [
         // 순서: 최근 묶음부터, 날짜 없는 묶음은 맨 뒤. 묶음 안은 찍은 순서
         const order = S.buildGroups([
           r(1, null, '00ff00ff00ff00ff'), r(2, null, '00ff00ff00ff00fe'),
-          r(3, '2020-01-01T00:00:00', null), r(4, '2020-01-01T00:00:02', null),
-          r(5, '2026-01-01T00:00:01', null), r(6, '2026-01-01T00:00:00', null),
+          r(3, '2020-01-01T00:00:00', H1), r(4, '2020-01-01T00:00:02', mid),
+          r(5, '2026-01-01T00:00:01', '3333333355555555'), r(6, '2026-01-01T00:00:00', '3333333355555555'),
         ]).map((g) => g.ids.join(','));
         out.push(sub('36c 순서: 최근 묶음부터, 날짜 없는 묶음은 맨 뒤, 묶음 안은 찍은 순서', JSON.stringify(order) === JSON.stringify(['6,5', '3,4', '1,2']), JSON.stringify(order)));
         out.push(sub('36c 한 장짜리와 잘못된 지문은 묶음이 아님', S.buildGroups([r(1, '2026-01-01T00:00:00', 'zz'), r(2, '2027-01-01T00:00:00', 'zz')]).length === 0));
+      }
+
+      // 36i 사용자 결정 (2026-11-04): 남길 사진과 직접 비교해서 끝없이 이어지지 않음, 지문 없는 사진은 가장 가까운 한 장에만 붙고 처음엔 남김
+      {
+        // 1초마다 한 칸씩 바뀌는 연속 촬영 40장: 바로 앞 사진과는 늘 거리 1이지만, 첫 장과는 점점 멀어져요
+        const bits = (k) => {
+          // 앞 k칸을 뒤집은 지문 (1이 32개 근처를 유지하려고 0f0f... 바탕에서 뒤집어요)
+          let hi = 0x0f0f0f0f;
+          let lo = 0x33333333;
+          for (let b = 0; b < k; b++) {
+            if (b < 32) hi ^= (1 << (31 - b)) >>> 0;
+            else lo ^= (1 << (63 - b)) >>> 0;
+          }
+          return (hi >>> 0).toString(16).padStart(8, '0') + (lo >>> 0).toString(16).padStart(8, '0');
+        };
+        const at = (sec) => new Date(Date.UTC(2026, 0, 1, 0, 0, sec)).toISOString().slice(0, 19);
+        const drift = [];
+        for (let k = 0; k < 40; k++) drift.push({ id: k + 1, name: `${k + 1}.jpg`, takenAt: at(k), width: 10, height: 10, size: 1, dhash: bits(k) });
+        const dg = S.buildGroups(drift);
+        const biggest = Math.max(...dg.map((g) => g.ids.length));
+        out.push(sub('36i 장면이 조금씩 바뀌는 40초 연속 촬영은 한 묶음으로 끝없이 이어지지 않음 (남길 사진과 거리 24 넘으면 새 묶음)',
+          dg.length >= 2 && biggest <= 25 && dg.every((g) => g.ids.every((id) => S.distance(drift[id - 1].dhash, drift[g.keepId - 1].dhash) <= 24)),
+          `묶음 ${dg.length}개, 가장 큰 묶음 ${biggest}장`));
+        // 지문 없는 사진: 3초 안의 서로 다른 두 장면 사이에 끼어도 두 장면을 잇지 않고, 가까운 한 쪽에만 붙음
+        const A = '0f0f0f0f33333333';
+        const C = 'f0f0f0f0cccccccc';
+        const rr = (id, sec, h) => ({ id, name: `${id}.jpg`, takenAt: at(sec), width: 10, height: 10, size: 1, dhash: h });
+        const bridge = S.buildGroups([rr(1, 0, A), rr(2, 1, A), rr(3, 2, null), rr(4, 4, C), rr(5, 5, C)]);
+        const bridgeIds = JSON.stringify(bridge.map((g) => g.ids).sort());
+        out.push(sub('36i 지문 없는 사진은 두 장면을 잇지 않고 가장 가까운 지문 있는 사진 한 장에만 붙음',
+          bridgeIds === JSON.stringify([[1, 2, 3], [4, 5]]), bridgeIds));
+        const lone = S.buildGroups([rr(1, 0, null), rr(2, 1, null), rr(3, 2, null)]);
+        out.push(sub('36i 지문 없는 사진끼리는 묶지 않음', lone.length === 0, JSON.stringify(lone)));
+        // 처음엔 남김: 지문 없는 사진은 softIds, 남길 사진은 지문 있는 사진 중에서 (지문 없는 사진이 더 커도)
+        const soft = S.buildGroups([rr(1, 0, A), { ...rr(2, 1, null), width: 4000, height: 3000 }]);
+        out.push(sub('36i 지문 없이 시간만으로 묶인 사진은 softIds (처음엔 남김), 남길 사진은 지문 있는 사진',
+          soft.length === 1 && soft[0].keepId === 1 && JSON.stringify(soft[0].softIds) === '[2]', JSON.stringify(soft)));
       }
 
       // 36d 속도: 6만 장(연속 촬영 일부 섞음)도 몇 초 안에 묶음
@@ -341,6 +378,13 @@ const items = [
         }
         const pruned = V.pruneOverrides([g], new Map([[1, 'keep'], [99, 'keep']]));
         out.push(sub('37a 다시 받은 목록에 없는 사진의 기록은 지움', pruned.size === 1 && pruned.get(1) === 'keep'));
+        // 사용자 결정 (2026-11-04): 지문 없이 시간만으로 들어온 사진(softIds)과 전에 "모두 남기기"한 사진(keptIds)은 처음부터 남김
+        const gs = { ids: [1, 2, 3, 4], keepId: 1, softIds: [2], keptIds: [3] };
+        const pinnedS = V.pinMarks([gs], new Map());
+        out.push(sub('37a 지문 없는 사진과 모두 남기기로 기억한 사진은 처음부터 남김, 나머지만 버림',
+          [1, 2, 3, 4].map((id) => V.markOf(gs, id, new Map())).join() === 'keep,keep,keep,discard'
+            && JSON.stringify(V.discardIds([gs], pinnedS)) === '[4]',
+          JSON.stringify([...pinnedS])));
       }
 
       // 37b 문구: 버튼은 결과를 말해요
@@ -355,6 +399,11 @@ const items = [
           && V.resultText({ trashed: 2, moved: 1, fail: 1, logName: 'x.log' }) === '휴지통으로 2장, _정리완료원본 폴더로 1장 옮겼어요. 1장은 옮기지 못했어요 (로그 x.log).'
           && V.progressText({ total: 10, done: 3 }).startsWith('사진 지문 만드는 중 3 / 10장') && V.progressText({ total: 10, done: 10 }) === '',
         V.resultText({ trashed: 2, moved: 1, fail: 1, logName: 'x.log' })));
+      out.push(sub('37b 라이브 포토 짝 영상: 확인 창과 결과 문구에 개수',
+        V.previewLines({ count: 2, groups: 1, trash: 2, move: 0, pairs: 1 }).includes('라이브 포토의 짝 영상 1개도 사진과 같은 곳으로 옮겨요')
+          && V.resultText({ trashed: 2, pairs: 1, pairFail: 1, logName: 'x.log' }).includes('짝 영상 1개도 같이 옮겼어요')
+          && V.resultText({ trashed: 2, pairs: 1, pairFail: 1, logName: 'x.log' }).includes('짝 영상 1개는 옮기지 못했어요'),
+        V.resultText({ trashed: 2, pairs: 1, pairFail: 1, logName: 'x.log' })));
       out.push(sub('37b 휴지통 용량 경고는 확인 창에 "주의:"로',
         V.previewLines({ count: 1, groups: 1, trash: 1, move: 0, warnings: ['C:\ 드라이브: 넘어요'] }).at(-1) === '주의: C:\ 드라이브: 넘어요'));
 
@@ -380,6 +429,33 @@ const items = [
         out.push(sub('37c 묶음을 전부 버리려 하면 거절', err([id('a.jpg'), id('b.jpg')]) === '묶음마다 적어도 한 장은 남겨 주세요'));
         out.push(sub('37c 묶음에 없는 사진, 같은 번호 두 번, 빈 목록, 이상한 번호는 거절',
           !!err([id('c.jpg')]) && !!err([id('b.jpg'), id('b.jpg')]) && !!err([]) && !!err(['x']) && !!err(null)));
+        // 라이브 포토 짝 영상: 같은 폴더, 같은 이름의 MP4
+        const liveRow = (p, over = {}) => row({ root: 'R1', path: p, name: path.basename(p), mediaType: 'video', takenDay: '2026-02-01', takenAt: '2026-02-01T10:00:01', durationSec: 2.5, ...over });
+        db.upsertFiles([liveRow('R1/b.mp4'), liveRow('R1/b.jpg.mp4')]);
+        const withPair = D.checkDiscard(db, 'R1', [id('b.jpg')]);
+        out.push(sub('37c 버리는 사진의 같은 이름 짧은 MP4를 짝 영상으로 같이 (이름이 b.jpg.mp4인 것은 아님)',
+          withPair.files[0].pair && withPair.files[0].pair.path === 'R1/b.mp4', JSON.stringify(withPair.files[0].pair)));
+        // 검증 지적: 같은 이름의 긴 일반 영상(다른 폰)이나 시각이 먼 영상은 짝이 아님
+        db.upsertFiles([liveRow('R1/b.mp4', { durationSec: 300 })]);
+        const longVideo = D.checkDiscard(db, 'R1', [id('b.jpg')]).files[0].pair;
+        db.upsertFiles([liveRow('R1/b.mp4', { takenAt: '2026-02-01T11:00:00' })]);
+        const farVideo = D.checkDiscard(db, 'R1', [id('b.jpg')]).files[0].pair;
+        db.upsertFiles([liveRow('R1/b.mp4', { durationSec: null })]);
+        const noLen = D.checkDiscard(db, 'R1', [id('b.jpg')]).files[0].pair;
+        out.push(sub('37c 같은 이름이어도 5초 넘는 영상, 찍은 시각이 3초 넘게 다른 영상, 길이를 모르는 영상은 짝 영상이 아님',
+          longVideo === null && farVideo === null && noLen === null, JSON.stringify([longVideo, farVideo, noLen])));
+        const fakeDb = (list) => ({ sameStem: () => list });
+        const T = '2026-01-01T00:00:00';
+        const me = { id: 1, path: 'R1/x.jpg', takenAt: T };
+        const vid = { id: 2, path: 'R1/x.MOV', mediaType: 'video', size: 5, mtimeMs: 1, takenAt: T, durationSec: 3 };
+        const heic = { id: 3, path: 'R1/x.heic', mediaType: 'photo', takenAt: T };
+        out.push(sub('37c 짝 영상: 같은 이름 사진이 남아 있으면 안 옮김, 둘 다 버리면 번호 작은 사진에만, 영상이 둘이면 안 옮김',
+          D.pairOf(fakeDb([me, vid]), 'R1', me, new Set([1])).path === 'R1/x.MOV'
+            && D.pairOf(fakeDb([me, vid, heic]), 'R1', me, new Set([1])) === null
+            && D.pairOf(fakeDb([me, vid, heic]), 'R1', me, new Set([1, 3])).path === 'R1/x.MOV'
+            && JSON.stringify(D.pairOf(fakeDb([me, vid, heic]), 'R1', me, new Set([1, 3])).siblings) === '["R1/x.heic"]'
+            && D.pairOf(fakeDb([me, vid, heic]), 'R1', heic, new Set([1, 3])) === null
+            && D.pairOf(fakeDb([me, vid, { ...vid, id: 4, path: 'R1/x.mp4' }]), 'R1', me, new Set([1])) === null));
         db.setMissing(['R1/a.jpg'], 1); // 남길 사진이 사라지면 b도 묶음이 아니라 거절
         out.push(sub('37c 그 사이 남길 사진이 사라졌으면 거절 (목록이 바뀜)', !!err([id('b.jpg')])));
       });
@@ -465,6 +541,7 @@ const items = [
 
         // 37f 검증 지적: 그 묶음에서 남길 사진이 그 사이 없어지거나 바뀌었으면 버릴 사진을 옮기지 않음
         const disk = (p) => ({ path: p, size: stOf(p).size, mtimeMs: stOf(p).mtimeMs });
+        const noFsPair = () => { throw new Error('점검'); };
         const keepOk = disk(put(path.join('hdd', 'keep-ok.jpg')));
         const keepGone = disk(put(path.join('hdd', 'keep-gone.jpg')));
         const keepEdit = disk(put(path.join('hdd', 'keep-edit.jpg')));
@@ -476,6 +553,35 @@ const items = [
           r4.trashed === 1 && r4.fail === 2 && r4.done.length === 1 && r4.done[0] === kList[0].path && fs.existsSync(kList[1].path) && fs.existsSync(kList[2].path)
             && fs.readFileSync(r4.logPath, 'utf8').includes('남길 사진이 백업 폴더에 없거나 바뀌어서'),
           JSON.stringify(r4)));
+        // 37g 라이브 포토 짝 영상: 사진을 옮긴 뒤 같은 곳으로, 짝 영상이 바뀌었으면 짝 영상만 실패, 사진을 못 옮기면 짝 영상도 그대로
+        const pPhoto = disk(put(path.join('usb', 'live.jpg')));
+        const pVideo = disk(put(path.join('usb', 'live.mp4')));
+        const qPhoto = disk(put(path.join('hdd', 'live2.jpg')));
+        const qVideo = disk(put(path.join('hdd', 'live2.mp4')));
+        const sPhoto = disk(put(path.join('hdd', 'live3.jpg')));
+        const sVideo = disk(put(path.join('hdd', 'live3.mp4')));
+        fs.appendFileSync(qVideo.path, ' edited'); // 짝 영상을 그 사이 고침
+        fs.appendFileSync(sPhoto.path, ' edited'); // 사진을 그 사이 고침 → 사진도 짝 영상도 안 옮김
+        const pList = [
+          { id: 30, name: 'live.jpg', ...pPhoto, pair: pVideo },
+          { id: 31, name: 'live2.jpg', ...qPhoto, pair: qVideo },
+          { id: 32, name: 'live3.jpg', ...sPhoto, pair: sVideo },
+        ];
+        // 검증 지적: 같은 이름 사진 중 한 장이 실패하면 짝 영상도 그대로 (짝 영상은 맨 끝에, 같은 이름 사진이 모두 옮겨졌을 때만)
+        const tPhoto = disk(put(path.join('hdd', 'live4.jpg')));
+        const tHeic = disk(put(path.join('hdd', 'live4.heic')));
+        const tVideo = disk(put(path.join('hdd', 'live4.mp4')));
+        fs.appendFileSync(tHeic.path, ' edited'); // 같은 이름 사진이 그 사이 바뀜 → 실패
+        pList.push({ id: 33, name: 'live4.jpg', ...tPhoto, pair: { ...tVideo, siblings: [tHeic.path] } }, { id: 34, name: 'live4.heic', ...tHeic, mtimeMs: tHeic.mtimeMs - 1 });
+        const pInfo = await D.discardInfo(pList, { driveKindOf, recycleOf: async () => null, statfs: noFsPair });
+        const r5 = await D.discardFiles({ root, files: pList, trash, driveKindOf, recycleOf: async () => null, logger: createLogger(logDir) });
+        out.push(sub('37g 짝 영상은 사진과 같은 곳으로 (USB는 _정리완료원본), 바뀐 짝 영상은 그대로 두고 따로 셈, 사진이나 같은 이름 사진을 못 옮기면 짝 영상도 그대로',
+          pInfo.pairs === 4 && pInfo.count === 5 && r5.pairs === 1 && r5.pairFail === 2 && r5.fail === 2
+            && fs.existsSync(tVideo.path) && fs.existsSync(tHeic.path) && !fs.existsSync(tPhoto.path)
+            && moved(path.join('usb', 'live.mp4')) && moved(path.join('usb', 'live.jpg'))
+            && fs.existsSync(qVideo.path) && !fs.existsSync(qPhoto.path) && fs.existsSync(sPhoto.path) && fs.existsSync(sVideo.path)
+            && r5.done.includes(pVideo.path) && !r5.done.includes(qVideo.path),
+          JSON.stringify(r5)));
         // 휴지통 용량 경고 (설정 크기, 모르면 드라이브의 5%)
         const noFs = () => { throw new Error('점검'); };
         const wList = [{ path: kList[1].path, size: 100 }, { path: kList[2].path, size: 100 }];
@@ -523,6 +629,37 @@ const items = [
       out.push(sub('38b 확인 창: 1장을 옮긴다는 글과 결과를 말하는 버튼', text.includes('묶음 1개에서 1장을 옮겨요') && /1장 (휴지통으로|정리완료원본 폴더로) 옮기기/.test(text) && text.includes('그만두기'), `화면 글자: ${text.slice(-300).replace(/\s+/g, ' ')}`));
       out.push(sub('38c 사진 파일은 그대로 (확인 창까지만)', fs.existsSync(big) && fs.existsSync(small)));
       out.push(sub('38d 화면 오류 없음, 정상 종료', r.errors.length === 0 && r.exitCode === 0, `${r.errors.join(' / ')} 종료 코드 ${r.exitCode}`));
+
+      // 38e 사용자 결정 (2026-11-04): "이 묶음은 모두 남기기"를 다음 실행에도 기억 → 그 묶음은 숨기고 다시 보기 버튼
+      const r2 = await launchCheck(APP, {
+        port: 9340,
+        env: { PVM_USER_DATA: ud },
+        until: '백업 폴더 다시 읽기',
+        untilMs: 30000,
+        clickText: '비슷한 사진',
+        clickUntil: '확인하기',
+        thenClickText: '이 묶음은 모두 남기기',
+        thenClickUntil: '버릴 사진이 없어요',
+      });
+      let keeps = null;
+      try {
+        keeps = JSON.parse(fs.readFileSync(path.join(ud, 'similar-keeps.json'), 'utf8')).paths;
+      } catch (e) { /* 아래에서 실패로 보여요 */ }
+      out.push(sub('38e 모두 남기기를 누르면 두 장의 경로를 similar-keeps.json에 적음',
+        r2.errors.length === 0 && Array.isArray(keeps) && keeps.length === 2 && keeps.includes(big) && keeps.includes(small),
+        `${JSON.stringify(keeps)} ${r2.errors.join(' / ')}`));
+      const r3 = await launchCheck(APP, {
+        port: 9341,
+        env: { PVM_USER_DATA: ud },
+        until: '백업 폴더 다시 읽기',
+        untilMs: 30000,
+        clickText: '비슷한 사진',
+        clickUntil: '다시 보기',
+      });
+      const text3 = String(r3.text);
+      out.push(sub('38e 다시 켜면 그 묶음은 숨기고 "모두 남기기로 한 묶음 1개 다시 보기" 버튼, 사진 파일은 그대로',
+        r3.errors.length === 0 && text3.includes('모두 남기기로 한 묶음 1개 다시 보기') && fs.existsSync(big) && fs.existsSync(small),
+        `화면 글자: ${text3.slice(-300).replace(/\s+/g, ' ')}`));
       return out;
     },
   },
