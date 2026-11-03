@@ -477,6 +477,7 @@ app.whenReady().then(async () => {
       mapFetch: (...a) => net.fetch(...a),
       openExternal: (u) => shell.openExternal(u),
       appVersion: app.getVersion(),
+      trash: (p) => shell.trashItem(p), // 비슷한 사진 버리기 (휴지통이 없는 드라이브는 _정리완료원본으로 이동)
     });
   } catch (e) {
     // 갤러리를 못 켜도 가져오기는 쓸 수 있어야 해요

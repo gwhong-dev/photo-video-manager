@@ -234,6 +234,173 @@ const items = [
       return out;
     },
   },
+  {
+    no: 37,
+    name: '비슷한 사진 표시 계산과 버리기',
+    async run(env) {
+      const out = [];
+      const { pathToFileURL } = require('url');
+      const V = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'similar-view.mjs')).href);
+      const D = require('../lib/similar-discard');
+      const base = path.join(env.tmp, 'similar-discard');
+      fs.mkdirSync(base, { recursive: true });
+
+      // 37a 표시: 처음엔 keepId만 남김, 바꾸기, 마지막 남김은 못 버림, 모두 남기기, 버릴 번호, 사라진 사진의 기록 지우기
+      {
+        const g = { ids: [1, 2, 3], keepId: 2 };
+        const g2 = { ids: [7, 8], keepId: 8 };
+        let o = new Map();
+        const first = [1, 2, 3].map((id) => V.markOf(g, id, o)).join();
+        const t1 = V.toggleMark(g, 1, o); // 1 버림 → 남김
+        o = t1.overrides;
+        const t2 = V.toggleMark(g, 2, o); // 2 남김 → 버림 (1이 남아 있어 됨)
+        o = t2.overrides;
+        const t3 = V.toggleMark(g, 1, o); // 1이 마지막 남김 → 거절
+        out.push(sub('37a 처음엔 가장 큰 사진만 남김, 바꿀 수 있고, 마지막 남김은 버림으로 못 바꿈',
+          first === 'discard,keep,discard' && !t1.refused && !t2.refused && t3.refused && V.markOf(g, 1, t3.overrides) === 'keep',
+          JSON.stringify([first, [...o]])));
+        const back = V.toggleMark(g, 2, V.toggleMark(g, 2, new Map()).overrides);
+        out.push(sub('37a 처음 상태로 돌아가면 기록이 남지 않음', back.overrides.size === 0));
+        const all = V.keepAll(g, new Map());
+        out.push(sub('37a 이 묶음은 모두 남기기', [1, 2, 3].every((id) => V.markOf(g, id, all) === 'keep')));
+        out.push(sub('37a 버릴 번호: 묶음마다 남김 빼고, 전부 버림인 묶음은 뺌',
+          JSON.stringify(V.discardIds([g, g2], new Map())) === JSON.stringify([1, 3, 7])
+            && JSON.stringify(V.discardIds([g2], new Map([[8, 'discard']]))) === '[]'));
+        const pruned = V.pruneOverrides([g], new Map([[1, 'keep'], [99, 'keep']]));
+        out.push(sub('37a 다시 받은 목록에 없는 사진의 기록은 지움', pruned.size === 1 && pruned.get(1) === 'keep'));
+      }
+
+      // 37b 문구: 버튼은 결과를 말해요
+      out.push(sub('37b 버튼 문구',
+        V.reviewLabel(3) === '버릴 사진 3장 확인하기' && V.reviewLabel(0) === '버릴 사진이 없어요'
+          && V.discardLabel({ count: 3, trash: 3, move: 0 }) === '3장 휴지통으로 옮기기'
+          && V.discardLabel({ count: 2, trash: 0, move: 2 }) === '2장 정리완료원본 폴더로 옮기기'
+          && V.discardLabel({ count: 1200, trash: 200, move: 1000 }) === '1,200장 옮기기',
+        V.discardLabel({ count: 1200, trash: 200, move: 1000 })));
+      out.push(sub('37b 확인 창과 결과 문구',
+        V.previewLines({ count: 3, groups: 2, trash: 1, move: 2 }).length === 3
+          && V.resultText({ trashed: 2, moved: 1, fail: 1, logName: 'x.log' }) === '휴지통으로 2장, _정리완료원본 폴더로 1장 옮겼어요. 1장은 옮기지 못했어요 (로그 x.log).'
+          && V.progressText({ total: 10, done: 3 }).startsWith('사진 지문 만드는 중 3 / 10장') && V.progressText({ total: 10, done: 10 }) === '',
+        V.resultText({ trashed: 2, moved: 1, fail: 1, logName: 'x.log' })));
+
+      // 37c 버리기 확인(checkDiscard): 지금 DB로 묶음을 다시 만들어서 확인
+      await withDb(env, 'similar-check', async (db) => {
+        const H = '0f0f0f0f33333333';
+        const N = '0f0f0f0f33333330';
+        const F = 'f0f0f0f0cccccccc';
+        db.upsertFiles([
+          row({ root: 'R1', path: 'R1/a.jpg', name: 'a.jpg', takenDay: '2026-01-01', takenAt: '2026-01-01T10:00:00' }),
+          row({ root: 'R1', path: 'R1/b.jpg', name: 'b.jpg', takenDay: '2026-02-01', takenAt: '2026-02-01T10:00:00' }),
+          row({ root: 'R1', path: 'R1/c.jpg', name: 'c.jpg', takenDay: '2026-03-01', takenAt: '2026-03-01T10:00:00' }),
+          row({ root: 'R2', path: 'R2/z.jpg', name: 'z.jpg' }),
+        ]);
+        for (const f of db.hashJobs('R1', 10)) db.setHash(f.path, f.size, f.mtimeMs, f.name === 'c.jpg' ? F : (f.name === 'a.jpg' ? H : N));
+        const id = (n) => db.similarRows('R1').find((r) => r.name === n).id;
+        const err = (ids) => { try { D.checkDiscard(db, 'R1', ids); return null; } catch (e) { return e.message; } };
+        const ok = D.checkDiscard(db, 'R1', [id('b.jpg')]);
+        out.push(sub('37c 묶음의 한 장은 버릴 수 있음 (경로와 크기를 돌려줌)', ok.files.length === 1 && ok.files[0].path === 'R1/b.jpg' && ok.groups === 1, JSON.stringify(ok)));
+        out.push(sub('37c 묶음을 전부 버리려 하면 거절', err([id('a.jpg'), id('b.jpg')]) === '묶음마다 적어도 한 장은 남겨 주세요'));
+        out.push(sub('37c 묶음에 없는 사진, 같은 번호 두 번, 빈 목록, 이상한 번호는 거절',
+          !!err([id('c.jpg')]) && !!err([id('b.jpg'), id('b.jpg')]) && !!err([]) && !!err(['x']) && !!err(null)));
+        db.setMissing(['R1/a.jpg'], 1); // 남길 사진이 사라지면 b도 묶음이 아니라 거절
+        out.push(sub('37c 그 사이 남길 사진이 사라졌으면 거절 (목록이 바뀜)', !!err([id('b.jpg')])));
+      });
+
+      // 37d 옮기기(discardFiles): 하드디스크는 휴지통, USB는 _정리완료원본, "바로 제거"면 이동, 휴지통 실패면 이동, 실패는 남김
+      {
+        const root = path.join(base, 'root');
+        const put = (rel) => {
+          const p = path.join(root, rel);
+          fs.mkdirSync(path.dirname(p), { recursive: true });
+          fs.writeFileSync(p, rel);
+          return p;
+        };
+        const files = [
+          put(path.join('hdd', '1.jpg')),
+          put(path.join('usb', '2026', '2.jpg')),
+          put(path.join('nuke', '3.jpg')),
+          put(path.join('hdd', 'trashfail.jpg')),
+          put(path.join('hdd', 'trashgone.jpg')),
+        ];
+        // 이미 같은 이름이 _정리완료원본에 있으면 _1
+        put(path.join('_정리완료원본', 'usb', '2026', '2.jpg'));
+        const outside = path.join(base, 'outside.jpg');
+        fs.writeFileSync(outside, 'x');
+        const bin = [];
+        const trash = async (p) => {
+          if (p.endsWith('trashfail.jpg')) throw new Error('휴지통 실패');
+          if (p.endsWith('trashgone.jpg')) { fs.rmSync(p); throw new Error('알 수 없음'); }
+          bin.push(p);
+          fs.rmSync(p); // 점검에서는 휴지통 대신 지워요 (임시 폴더의 복사본)
+        };
+        const driveKindOf = async (p) => (p.includes(`${path.sep}usb${path.sep}`) ? 'removable' : 'fixed');
+        const recycleOf = async (p) => (p.includes(`${path.sep}nuke${path.sep}`) ? { nuke: true } : null);
+        const { createLogger } = require('../lib/logger');
+        const logDir = path.join(base, 'logs');
+        const list = [...files, outside].map((p, i) => ({ id: i + 1, path: p, name: path.basename(p), size: 10 }));
+        const info = await D.discardInfo(list, { driveKindOf, recycleOf });
+        out.push(sub('37d 미리보기: 휴지통 4장(하드디스크), 이동 2장(USB, 바로 제거)', info.count === 6 && info.trash === 4 && info.move === 2 && info.bytes === 60, JSON.stringify(info)));
+        const progress = [];
+        const r = await D.discardFiles({ root, files: list, trash, driveKindOf, recycleOf, logger: createLogger(logDir), onProgress: (p) => progress.push(p) });
+        const moved = (rel) => fs.existsSync(path.join(root, '_정리완료원본', rel));
+        out.push(sub(
+          '37d 하드디스크는 휴지통, USB와 바로 제거는 _정리완료원본(이름 겹치면 _1), 휴지통 실패는 이동',
+          r.trashed === 1 && bin.length === 1 && bin[0] === files[0]
+            && moved(path.join('usb', '2026', '2_1.jpg')) && moved(path.join('nuke', '3.jpg')) && moved(path.join('hdd', 'trashfail.jpg'))
+            && r.moved === 3,
+          JSON.stringify(r),
+        ));
+        out.push(sub(
+          '37d 휴지통이 실패했는데 파일이 없어졌으면 실패, 백업 폴더 밖 사진은 안 옮김, 옮긴 것만 done',
+          r.fail === 2 && fs.existsSync(outside) && r.done.length === 4 && !r.done.includes(outside) && !r.done.includes(files[4]),
+          JSON.stringify(r.done.map((p) => path.basename(p))),
+        ));
+        const logText = fs.readFileSync(r.logPath, 'utf8');
+        const lines = logText.split(/\r?\n/);
+        const planIdx = lines.findIndex((l) => l.includes('예정(휴지통)') && l.includes('1.jpg'));
+        const doneIdx = lines.findIndex((l) => /\t휴지통\t/.test(l) && l.includes('1.jpg'));
+        out.push(sub('37d 로그: 예정 줄이 결과 줄보다 먼저, 끝 줄에 합계', planIdx >= 0 && doneIdx > planIdx && logText.includes('# 끝 / 휴지통 1, 이동 3, 실패 2') && progress.length > 0, logText.slice(-200)));
+        out.push(sub('37d 원래 _정리완료원본에 있던 파일은 그대로', fs.readFileSync(path.join(root, '_정리완료원본', 'usb', '2026', '2.jpg'), 'utf8') === path.join('_정리완료원본', 'usb', '2026', '2.jpg')));
+      }
+      return out;
+    },
+  },
+  {
+    no: 38,
+    name: '비슷한 사진 화면 열기 (진짜 앱)',
+    async run(env) {
+      // 점검용 그림 두 장(같은 그림, 필터만 다름)을 백업 폴더로 정한 임시 userData로 앱을 띄우고,
+      //   "비슷한 사진" → "버릴 사진 1장 확인하기"까지만 눌러요. 옮기기는 누르지 않아요 (진짜 휴지통을 건드리지 않음)
+      const out = [];
+      const APP = path.join(__dirname, '..');
+      const { launchCheck } = require('./launch-check');
+      const copyRoot = path.join(env.tmp, 'launch-similar-root');
+      const big = path.join(copyRoot, 'same-big.jpg');
+      const small = path.join(copyRoot, 'same-small.jpg');
+      await makeImage(big, { seed: 5, w: 800, h: 600 });
+      await require('sharp')(big).resize(400, 300).modulate({ brightness: 1.1 }).jpeg({ quality: 70 }).toFile(small);
+      await makeImage(path.join(copyRoot, 'other.jpg'), { seed: 13 });
+      const ud = path.join(env.tmp, 'launch-similar-ud');
+      fs.mkdirSync(ud, { recursive: true });
+      fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: copyRoot }), 'utf8');
+      const r = await launchCheck(APP, {
+        port: 9339,
+        env: { PVM_USER_DATA: ud },
+        until: '백업 폴더 다시 읽기', // 갤러리 상태를 받은 뒤 (메뉴가 켜진 뒤)
+        untilMs: 30000,
+        clickText: '비슷한 사진',
+        clickUntil: '확인하기',
+        thenClickText: '버릴 사진 1장 확인하기',
+        thenClickUntil: '그만두기',
+      });
+      const text = String(r.text);
+      out.push(sub('38a 묶음이 보이고 남김과 버림 표시, 아래 버튼', r.clicked === true && text.includes('묶음 1개') && text.includes('남김') && text.includes('버림') && text.includes('이 묶음은 모두 남기기'), `화면 글자: ${text.slice(0, 400).replace(/\s+/g, ' ')}`));
+      out.push(sub('38b 확인 창: 1장을 옮긴다는 글과 결과를 말하는 버튼', text.includes('묶음 1개에서 1장을 옮겨요') && /1장 (휴지통으로|정리완료원본 폴더로) 옮기기/.test(text) && text.includes('그만두기'), `화면 글자: ${text.slice(-300).replace(/\s+/g, ' ')}`));
+      out.push(sub('38c 사진 파일은 그대로 (확인 창까지만)', fs.existsSync(big) && fs.existsSync(small)));
+      out.push(sub('38d 화면 오류 없음, 정상 종료', r.errors.length === 0 && r.exitCode === 0, `${r.errors.join(' / ')} 종료 코드 ${r.exitCode}`));
+      return out;
+    },
+  },
 ];
 
 module.exports = { items, makeImage };

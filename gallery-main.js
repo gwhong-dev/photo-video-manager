@@ -14,7 +14,7 @@
 //
 // 모양: registerScheme(protocol)  — app.whenReady 전에 한 번 (pvm:// 를 안전한 주소로 등록)
 //       setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir,
-//                      loadScreen, getJobPending, isPlanning, mapFetch, openExternal, appVersion })
+//                      loadScreen, getJobPending, isPlanning, mapFetch, openExternal, appVersion, trash, makeDriveKindOf })
 //         → { onWindowReady(), onBatchDone(), onRootChanged(), onToolsChanged(), close() }
 //   loadScreen(name): 'import' | 'gallery' 화면으로 창을 바꿔요 (main.js가 해요)
 //   getJobPending(): 이어할 가져오기 작업이 있는지
@@ -22,6 +22,9 @@
 //   mapFetch(url, init): 지도용 인터넷 요청 (main.js 가 net.fetch 를 넘겨요). 없으면 지도를 쓸 때만 실패해요
 //   openExternal(url): 기본 브라우저로 열기 (main.js 가 shell.openExternal 을 넘겨요)
 //   appVersion: 앱 버전 글자 (지도 서버에 보내는 앱 이름표에 들어가요)
+//   trash(경로): 휴지통으로 보내기 (main.js 가 shell.trashItem 을 넘겨요). 없으면 비슷한 사진 버리기는 이동만 해요
+//   makeDriveKindOf(): 드라이브 종류 판단기 만들기 (기본 lib/platform.js). 버리기 때마다 새로 만들어요
+//   비슷한 사진: lib/similar.js (지문, 묶기), lib/similar-discard.js (버리기 확인과 옮기기). 버리기만 사진 파일을 옮겨요 (휴지통 또는 _정리완료원본)
 
 const fs = require('fs');
 const crypto = require('crypto');
@@ -37,6 +40,9 @@ const { createJournal, recover } = require('./lib/manual-journal');
 const { buildSuggestions } = require('./lib/location-suggest');
 const { createSkips } = require('./lib/suggest-skips');
 const { createMapNet } = require('./lib/map-net');
+const { buildGroups, createHasher } = require('./lib/similar');
+const { checkDiscard, discardInfo, discardFiles } = require('./lib/similar-discard');
+const { createDriveKindOf } = require('./lib/platform');
 
 const SCHEME = 'pvm';
 const TABS = ['all', 'photo', 'video', 'screenshot'];
@@ -90,7 +96,7 @@ function checkIds(ids) {
 // 화면에는 정해진 문장과 오류 코드(EISDIR, EACCES 같은 짧은 영문 대문자)만 보여요
 const codeNote = (e) => (e && typeof e.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(e.code) ? ` (${e.code})` : '');
 
-function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning, mapFetch, openExternal, appVersion }) {
+function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning, mapFetch, openExternal, appVersion, trash, makeDriveKindOf = createDriveKindOf }) {
   const base = typeof userDir === 'function' ? userDir() : userDir;
   // 백업 폴더 경로. 끝의 \ 나 / 가 달라도 같은 폴더로 보게 path.resolve 로 한 번만 다듬어요 (대소문자는 그대로 둬요).
   //   DB의 root 열쇠가 되니 모든 곳이 이 함수 하나를 써요
@@ -506,6 +512,71 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
 
   // ---------- 장소 검색과 지도 출처 ----------
   //   검색어 검사와 실패 문장은 map-net 이 정해요. 거절 문장을 그대로 화면에 넘겨요 (검색어는 로그에 안 남아요)
+  // ---------- 비슷한 사진 (단계 4) ----------
+  //   지문은 화면을 처음 열 때부터 만들어요 (썸네일에서 계산). 만드는 동안 진행을 gallery:similar-progress 로 알려요
+  //   파일 경로는 화면에 주지 않아요. 버리기는 미리보기(similar-preview)를 보고 사용자가 누를 때만 (similar-discard)
+  const hasher = db && thumbs ? createHasher({ db, thumbs }) : null;
+  let hashing = false;
+  let discarding = false;
+  const similarProgress = (root) => ({ ...db.hashProgress(root), hashing });
+  function startHashing(root) {
+    if (!hasher || hashing) return;
+    const p = db.hashProgress(root);
+    if (p.done >= p.total) return;
+    hashing = true;
+    send('gallery:similar-progress', similarProgress(root));
+    hasher.run(root, () => send('gallery:similar-progress', similarProgress(root)))
+      .catch((e) => errorLog('비슷한 사진 지문 만들기', e))
+      .finally(() => {
+        hashing = false;
+        try {
+          send('gallery:similar-progress', similarProgress(root));
+        } catch (e) { /* 끄는 중 */ }
+      });
+  }
+
+  // 묶음 목록 → { progress: { total, done, hashing }, groups: [{ ids, keepId, takenAt, files: [{ id, name, width, height, size, takenAt }] }] }
+  ipcMain.handle('gallery:similar-list', () => {
+    const root = editReady();
+    startHashing(root);
+    const rows = db.similarRows(root);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const groups = buildGroups(rows).map((g) => ({
+      ...g,
+      files: g.ids.map((id) => {
+        const r = byId.get(id);
+        return { id: r.id, name: r.name, width: r.width, height: r.height, size: r.size, takenAt: r.takenAt };
+      }),
+    }));
+    return { progress: similarProgress(root), groups };
+  });
+
+  // 버리기 미리보기: 몇 장이 휴지통으로, 몇 장이 _정리완료원본으로 가는지 (아무것도 옮기지 않아요)
+  ipcMain.handle('gallery:similar-preview', async (e, ids) => {
+    const root = editReady();
+    const { files, groups } = checkDiscard(db, root, ids);
+    const info = await discardInfo(files, { driveKindOf: makeDriveKindOf() });
+    return { ...info, groups, canTrash: typeof trash === 'function' };
+  });
+
+  // 버리기 실행. 끝나면 옮긴 사진을 "사라짐"으로 적고 화면에 목록이 바뀌었다고 알려요
+  ipcMain.handle('gallery:similar-discard', async (e, ids) => {
+    const root = editReady();
+    if (discarding) throw new Error('이미 옮기는 중이에요');
+    if (library && library.isScanning()) throw new Error('백업 폴더를 읽는 중이에요. 끝난 뒤 다시 눌러 주세요');
+    const { files } = checkDiscard(db, root, ids);
+    discarding = true;
+    try {
+      const noTrash = async () => { throw new Error('휴지통을 쓸 수 없어요'); };
+      const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: makeDriveKindOf(), logger });
+      if (r.done.length) db.setMissing(r.done, 1);
+      send('gallery:library-changed');
+      return { trashed: r.trashed, moved: r.moved, fail: r.fail, logName: path.basename(r.logPath || '') };
+    } finally {
+      discarding = false;
+    }
+  });
+
   ipcMain.handle('gallery:search-place', (e, query) => mapNet.search(query));
 
   // 지도 출처 링크: 화면은 주소를 보내지 않고, 고정 주소 하나만 기본 브라우저로 열어요
@@ -580,6 +651,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     // 프로그램을 끌 때: 진행 중인 FFmpeg를 기다리지 않고 멈추라고만 하고 DB를 닫아요
     close() {
       try {
+        if (hasher) hasher.stop().catch(() => {});
         if (thumbs) thumbs.stop().catch(() => {});
       } catch (e) { /* 끄는 중이라 무시 */ }
       try {

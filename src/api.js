@@ -31,6 +31,11 @@ export const api = {
   // 지도에서 위치 고르기
   searchPlace: (query) => gallery().searchPlace(query),
   openMapCredit: () => gallery().openMapCredit(),
+  // 비슷한 사진
+  listSimilar: () => gallery().listSimilar(),
+  previewDiscard: (ids) => gallery().previewDiscard(ids),
+  discardSimilar: (ids) => gallery().discardSimilar(ids),
+  onSimilarProgress: (cb) => gallery().onSimilarProgress(cb),
   rescan: () => gallery().rescan(),
   openScreen: (name) => gallery().openScreen(name),
   // 구독을 끊는 함수를 돌려줘요 (React에서 정리할 때 써요)

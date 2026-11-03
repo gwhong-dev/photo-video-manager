@@ -1,7 +1,7 @@
 // 파일 위치: src/components/Sidebar.jsx
 // 역할: 왼쪽 메뉴와 "앨범에서 가져온 태그" 목록
-//   메뉴: 가져오기, 갤러리, 정보 없는 사진 (지금 있는 화면 셋). 나머지는 다음 단계에서 만들어서 흐리게 꺼 둬요
-//   갤러리와 정보 없는 사진은 같은 창 안에서 바뀌는 화면이에요 (onScreen)
+//   메뉴: 가져오기, 갤러리, 정보 없는 사진, 비슷한 사진 (지금 있는 화면 넷). 나머지는 다음 단계에서 만들어서 흐리게 꺼 둬요
+//   갤러리, 정보 없는 사진, 비슷한 사진은 같은 창 안에서 바뀌는 화면이에요 (onScreen)
 //   태그를 누르면 그 태그만 보고, 다시 누르면 풀려요
 
 import React from 'react';
@@ -36,7 +36,7 @@ export default function Sidebar({ state, screen, filter, onOpenImport, onScreen,
         <MenuRow icon={<ImportIcon />} label="가져오기" note={s.jobPending ? '이어할 작업 있음' : ''} onClick={onOpenImport} />
         <MenuRow icon={<GalleryIcon />} label="갤러리" count={showCounts ? s.total : undefined} active={screen === 'gallery'} onClick={() => onScreen('gallery')} />
         <MenuRow icon={<WarnIcon />} label="정보 없는 사진" count={showCounts ? s.noInfo : undefined} countClass="warn" active={screen === 'missing'} onClick={() => onScreen('missing')} />
-        <MenuRow icon={<SimilarIcon />} label="비슷한 사진" disabled />
+        <MenuRow icon={<SimilarIcon />} label="비슷한 사진" active={screen === 'similar'} onClick={() => onScreen('similar')} disabled={!showCounts} />
         <MenuRow icon={<TagIcon />} label="태그" count={showCounts ? s.tagCount : undefined} disabled />
         <MenuRow icon={<MapIcon />} label="지도" disabled />
         <MenuRow icon={<CleanIcon />} label="정리" disabled />
