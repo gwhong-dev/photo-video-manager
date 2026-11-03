@@ -341,7 +341,8 @@ export default function App() {
           USB나 외장 드라이브를 연결한 뒤 눌러 주세요. 아직 읽어 둔 사진이 없어요.
         </EmptyState>
       );
-    } else if (scanning) {
+    } else if (scanning || !state.tools) {
+      // tools가 null이면 아직 도구(exiftool 등)를 찾는 중이에요. 찾고 나면 바로 읽기가 시작되니 같은 안내를 보여 줘요
       center = <EmptyState title="사진을 찾는 중이에요">찾는 대로 여기에 날짜별로 모여요.</EmptyState>;
     } else if (state.tools && !state.tools.exiftool) {
       center = <EmptyState title="아직 읽어 둔 사진이 없어요" action={importButton}>exiftool을 찾으면 백업 폴더의 사진을 읽어 와요.</EmptyState>;
