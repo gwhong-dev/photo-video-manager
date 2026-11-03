@@ -712,6 +712,17 @@ const ITEMS = [
         const etTmp = path.join(path.dirname(it.dest), path.basename(it.dest, ext) + '.__tmp__' + ext + '_exiftool_tmp');
         fs.mkdirSync(path.dirname(etTmp), { recursive: true });
         fs.writeFileSync(etTmp, 'LEFTOVER');
+        // 먼저 재현: 남은 임시 파일은 진짜 태그 쓰기(파일을 다시 쓰는 것)를 막음 (-FileModifyDate는 파일을 다시 쓰지 않아 안 막힘)
+        const victim = etTmp.slice(0, -'_exiftool_tmp'.length);
+        fs.copyFileSync(it.src, victim);
+        let blocked = '';
+        try {
+          await env.et.write(['-overwrite_original', '-Comment=pvm-check', victim]);
+        } catch (e) {
+          blocked = e.message;
+        }
+        fs.unlinkSync(victim);
+        out.push(sub('12u 남은 exiftool 임시 파일은 진짜 태그 쓰기를 막음 (재현)', /already exists|Temporary file/i.test(blocked), blocked || '막히지 않음'));
         let r = null;
         let err = '';
         try {
@@ -743,8 +754,20 @@ const ITEMS = [
         store2.mark(j2, 0, { status: 'fail' });
         store2.close('done');
         const names = listFiles(path.join(root, '12v-close', 'jobs', 'done')).map((f) => path.basename(f)).sort();
-        const pairs = names.filter((n) => n.endsWith('.json')).length === 2 && names.filter((n) => n.endsWith('.progress.log')).length === 2;
-        out.push(sub('12v 보관 두 번 → 계획 2개, 진행 기록 2개 (덮어쓰지 않음)', pairs && !store2.exists() && !fs.existsSync(store2.progPath), names.join(', ')));
+        const stems = (end) => names.filter((n) => n.endsWith(end)).map((n) => n.slice(0, -end.length)).sort();
+        const pairs = stems('.json').length === 2 && stems('.json').join(',') === stems('.progress.log').join(','); // 계획과 진행 기록이 같은 이름 짝
+        out.push(sub('12v 보관 두 번 → 계획 2개, 진행 기록 2개가 같은 이름 짝 (덮어쓰지 않음)', pairs && !store2.exists() && !fs.existsSync(store2.progPath), names.join(', ')));
+        // 앞 보관에 진행 기록이 없었고 같은 1초 안에 또 보관해도 짝이 맞음 (검증 지적)
+        const store3 = new JobStore(path.join(root, '12v-pair', 'jobs'));
+        store3.create({ items: [] });
+        store3.close('done'); // 진행 기록 없음
+        const j3 = store3.create({ items: [{ i: 0, status: 'todo' }] });
+        store3.mark(j3, 0, { status: 'done' });
+        store3.close('done');
+        const names3 = listFiles(path.join(root, '12v-pair', 'jobs', 'done')).map((f) => path.basename(f));
+        const log3 = names3.find((n) => n.endsWith('.progress.log')) || '';
+        const pairOk = names3.length === 3 && names3.includes(log3.replace(/\.progress\.log$/, '.json'));
+        out.push(sub('12v 앞 보관에 진행 기록이 없어도 다음 보관의 계획·진행 기록 이름이 짝', pairOk, names3.join(', ')));
       }
 
       // 12f 드라이브 종류를 모름 → 이동 (휴지통 안 씀)
