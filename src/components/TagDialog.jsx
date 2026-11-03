@@ -166,6 +166,7 @@ export default function TagDialog({ mode, ids, onClose, onApplied }) {
           ) : (
             !knownError && <p className="dialog-sub">고른 사진에 내가 붙인 태그가 없어요. 앨범에서 가져온 태그는 뗄 수 없어요.</p>
           )}
+          {!adding && known.length > 0 && <p className="dialog-sub">앨범에서 가져온 같은 이름의 태그는 떼지 않고 그대로 남아요.</p>}
           {knownError && <p className="dialog-error" role="alert">{knownError}</p>}
         </div>
 

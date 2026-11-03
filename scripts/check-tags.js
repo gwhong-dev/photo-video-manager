@@ -175,7 +175,7 @@ const items = [
             && JSON.stringify(aBack) === '["여행"]' && undoLog.includes('태그 되돌리기'),
             JSON.stringify([choices, r, aAfter, undo, aBack])));
 
-          // 40g 같은 사진에 날짜를 넣은 묶음이 있어도 태그 묶음과 서로 덮지 않음 (같은 되돌리기 줄 순서)
+          // 40g 날짜 넣기 뒤의 태그 묶음이 마지막 묶음 (되돌리기 순서 하나. 섞인 되돌리기는 40m)
           const v = await call('gallery:apply-edit', [ids.a], { source: 'direct', date: '2020-01-02', time: '12:00:00' });
           const t = await call('gallery:tag-apply', [ids.a], { op: 'add', name: '가족' });
           const st2 = await call('gallery:get-state');
@@ -183,20 +183,84 @@ const items = [
         });
 
         await scene('40h', async () => {
-          // 40h DB가 새로 만들어져도 기록 파일에서 태그와 날짜가 모두 되살아남
+          // 40h DB가 새로 만들어져도 기록 파일에서 태그와 날짜가 모두 되살아남 (실제 순서: 빈 DB로 켜서 복구 → 그다음 폴더 읽기)
           for (const g of fakes.splice(0)) g.close();
           const dbFile = path.join(P.ud, 'library.db');
           for (const ext of ['', '-wal', '-shm']) {
             if (fs.existsSync(dbFile + ext)) fs.rmSync(dbFile + ext); // 점검 임시 폴더 안의 복사본 DB
           }
-          withDb((db) => db.upsertFiles(fileRows()));
-          call = makeFake();
+          call = makeFake(); // 파일 줄이 없는 DB에서 복구
+          withDb((db) => db.upsertFiles(fileRows())); // 그다음 읽기 → file_tags 에 manual 로 들어가야 해요
           const a = withDb((db) => ({ tags: db.getManualTags(path.join(P.root, 'a.jpg')), b: db.getManualTags(path.join(P.root, 'b.jpg')), manual: db.getManual(path.join(P.root, 'a.jpg')) }));
+          const aFile = await call('gallery:get-file', withDb((db) => idOf(db, 'a.jpg')));
           const startLog = logsOf('gallery-start');
-          out.push(sub('40h DB를 새로 만들어도 기록 파일에서 태그(a: 가족, 여행 / b: 여행)와 날짜가 되살아나고 건너뛴 줄 없음',
+          out.push(sub('40h DB를 새로 만들어도 복구 뒤 읽기에서 태그(a: 가족, 여행 / b: 여행)가 목록 표까지 되살아나고 날짜도 그대로, 건너뛴 줄 없음',
             JSON.stringify(a.tags) === '["가족","여행"]' && JSON.stringify(a.b) === '["여행"]' && a.manual && a.manual.takenAt === '2020-01-02T12:00:00'
-            && !startLog.includes('건너뜀:'),
-            JSON.stringify([a, startLog.slice(-200)])));
+            && aFile.tags.filter((t) => t.source === 'manual').map((t) => t.name).join(',') === '가족,여행' && !startLog.includes('건너뜀:'),
+            JSON.stringify([a, aFile.tags, startLog.slice(-200)])));
+
+          // 40h2 복구 때 앞의 실패한 태그 묶음은 뒤 날짜 묶음과 같은 사진이어도 넣어요 (태그와 날짜는 서로 겹침으로 안 셈)
+          const { recover } = require('../lib/manual-journal');
+          const jp = path.join(env.tmp, 'tags-family.jsonl');
+          const j = createJournal(jp);
+          const p = path.join(P.root, 'b.jpg');
+          j.append({ type: 'apply', batchId: 'T1', at: '2026-01-01T00:00:00.000Z', root: P.root, kind: 'tagAdd', items: [{ path: p, before: ['여행'], after: ['여행', '옛태그'] }] });
+          j.append({ type: 'apply', batchId: 'V1', at: '2026-01-02T00:00:00.000Z', root: P.root, kind: 'date', items: [{ path: p, before: null, after: { takenAt: '2018-01-01T00:00:00', takenOffset: '+09:00', lat: null, lng: null } }] });
+          const fam = withDb((db) => {
+            db.applyManualBatch({ id: 'V1', root: P.root, kind: 'date', createdAt: '2026-01-02T00:00:00.000Z', items: [{ path: p, before: null, after: { takenAt: '2018-01-01T00:00:00', takenOffset: '+09:00', lat: null, lng: null } }] });
+            const r = recover(db, j);
+            return { r, tags: db.getManualTags(p) };
+          });
+          out.push(sub('40h2 앞의 태그 묶음은 뒤 날짜 묶음과 같은 사진이어도 복구됨 (버리지 않음)',
+            fam.r.applied === 1 && fam.r.superseded === 0 && fam.tags.includes('옛태그'), JSON.stringify(fam)));
+        });
+
+        await scene('40k', async () => {
+          // 40k 앨범 태그와 같은 이름: c.jpg 에는 앨범 '여행'이 있어요. 붙이면 내가 붙인 장수에 들어가고 패널에 표시, 떼도 앨범 태그는 남음
+          const idsK = withDb((db) => ({ c: idOf(db, 'c.jpg') }));
+          const st0 = await call('gallery:get-state');
+          const before0 = (st0.manualTags.find((t) => t.name === '여행') || { count: 0 }).count;
+          const r = await call('gallery:tag-apply', [idsK.c], { op: 'add', name: '여행' });
+          const st1 = await call('gallery:get-state');
+          const after1 = (st1.manualTags.find((t) => t.name === '여행') || { count: 0 }).count;
+          const file = await call('gallery:get-file', idsK.c);
+          const rm = await call('gallery:tag-apply', [idsK.c], { op: 'remove', name: '여행' });
+          const still = await call('gallery:list-ids', { tag: '여행' });
+          out.push(sub('40k 앨범 태그와 같은 이름도 내가 붙인 장수에 들어가고 패널에 표시(mine), 떼도 앨범 태그로 그 필터에 남음',
+            r.count === 1 && after1 === before0 + 1 && file.tags.some((t) => t.name === '여행' && t.mine === true) && rm.count === 1 && still.includes(idsK.c),
+            JSON.stringify([before0, after1, file.tags, still])));
+
+          // 40l 옛 빌드처럼 file_tags 의 manual 줄만 지워진 상태 → 다시 켜면 되돌아옴
+          const aPath = path.join(P.root, 'a.jpg');
+          withDb((db) => db.upsertFiles(fileRows())); // 새 빌드는 다시 넣어요. 옛 빌드 흉내는 아래에서 SQL 로
+          const { DatabaseSync } = require('node:sqlite');
+          const rawDb = new DatabaseSync(path.join(P.ud, 'library.db'));
+          rawDb.exec("DELETE FROM file_tags WHERE source = 'manual'");
+          rawDb.close();
+          for (const g of fakes.splice(0)) g.close();
+          call = makeFake();
+          const aFile = await call('gallery:get-file', withDb((db) => idOf(db, 'a.jpg')));
+          const startLog = logsOf('gallery-start');
+          out.push(sub('40l 옛 빌드가 지운 manual 태그 줄을 켤 때 다시 넣음 (시작 로그에 개수)',
+            aFile.tags.filter((t) => t.source === 'manual').map((t) => t.name).sort().join(',') === withDb((db) => db.getManualTags(aPath)).join(',')
+            && aFile.tags.some((t) => t.source === 'manual') && startLog.includes('내가 붙인 태그'),
+            JSON.stringify([aFile.tags, startLog.slice(-120)])));
+
+          // 40m 날짜 묶음과 태그 묶음이 섞여 있어도 되돌리기는 마지막부터, 서로 값을 안 건드림
+          const bId = withDb((db) => idOf(db, 'b.jpg'));
+          const bPath = path.join(P.root, 'b.jpg');
+          const tagsBefore = withDb((db) => db.getManualTags(bPath));
+          const manualBefore = withDb((db) => db.getManual(bPath));
+          const v = await call('gallery:apply-edit', [bId], { source: 'direct', date: '2019-05-05', time: '10:00:00' });
+          const t = await call('gallery:tag-apply', [bId], { op: 'add', name: '공연' });
+          const u1 = await call('gallery:undo-last', t.batchId);
+          const mid = withDb((db) => ({ tags: db.getManualTags(bPath), manual: db.getManual(bPath) }));
+          const u2 = await call('gallery:undo-last', v.batchId);
+          const end = withDb((db) => ({ tags: db.getManualTags(bPath), manual: db.getManual(bPath) }));
+          out.push(sub('40m 섞인 되돌리기: 태그를 먼저 되돌려도 날짜는 그대로, 날짜를 되돌려도 태그는 그대로',
+            u1.kind === 'tagAdd' && JSON.stringify(mid.tags) === JSON.stringify(tagsBefore) && mid.manual && mid.manual.takenAt === '2019-05-05T10:00:00'
+            && u2.kind === 'date' && JSON.stringify(end.tags) === JSON.stringify(tagsBefore) && JSON.stringify(end.manual) === JSON.stringify(manualBefore),
+            JSON.stringify([u1, mid, u2, end])));
         });
 
         await scene('40i', async () => {

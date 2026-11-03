@@ -181,7 +181,7 @@ export default function DetailPanel({ selectedId, gen, count = 0, copySource = n
           <Row label="용량">{formatBytes(file.size) || <Missing />}</Row>
           <Row label="태그">
             {tags.length ? (
-              <span className="chips">{tags.map((t) => <span className={`chip${t.source === 'manual' ? ' mine' : ''}`} key={t.name} title={t.source === 'manual' ? '내가 붙인 태그' : undefined}>{t.name}</span>)}</span>
+              <span className="chips">{tags.map((t) => <span className={`chip${t.mine || t.source === 'manual' ? ' mine' : ''}`} key={t.name} title={t.mine || t.source === 'manual' ? '내가 붙인 태그' : undefined}>{t.name}</span>)}</span>
             ) : (
               <Missing />
             )}

@@ -176,6 +176,13 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     } catch (e) {
       errorLog('직접 넣은 값 복구', e);
     }
+    // 내가 붙인 태그를 목록 표(file_tags)에 다시 맞춰요 (옛 빌드로 다시 읽은 파일에서 빠졌을 수 있어요)
+    try {
+      const n = db.resyncManualTags();
+      if (n) startupLog([`내가 붙인 태그 ${n}개를 목록에 다시 넣었어요`]);
+    } catch (e) {
+      errorLog('내가 붙인 태그 다시 맞추기', e);
+    }
   }
 
   // ---------- 화면에 알리기 ----------
