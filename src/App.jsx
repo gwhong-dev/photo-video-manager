@@ -11,6 +11,8 @@
 //   화면을 바꿔도 검색어는 그대로예요 (선택은 비워져요)
 //   위치 제안 탭(suggestOpen)을 열면 격자 대신 SuggestPanel을 보여 주고, 오른쪽 패널은 읽기 전용이 돼요
 //   지도에서 마지막으로 고른 곳(lastPin)은 다음에 지도 창을 열 때의 처음 위치예요. 프로그램을 끄면 사라져요
+//   태그 (단계 5): 우클릭 메뉴나 오른쪽 패널 -> 태그 창(TagDialog) -> 붙이기·떼기 -> 같은 되돌리기 줄
+//   태그 화면(TagsView)에서 태그를 누르면 갤러리 화면으로 가서 그 태그의 사진만 보여요
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from './api.js';
@@ -23,6 +25,8 @@ import EmptyState from './components/EmptyState.jsx';
 import ScanBanner from './components/ScanBanner.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import SuggestPanel from './components/SuggestPanel.jsx';
+import TagDialog from './components/TagDialog.jsx';
+import TagsView from './components/TagsView.jsx';
 import Toolbar from './components/Toolbar.jsx';
 import UndoBar from './components/UndoBar.jsx';
 import { undoneText } from './format.mjs';
@@ -66,12 +70,12 @@ export default function App() {
   const [view, setView] = useState(null); // { key, filter, days, gen } 지금 보이는 날짜 목록
   const [daysError, setDaysError] = useState('');
   const [gen, setGen] = useState(0); // 목록이 갱신될 때마다 올라가요
-  const [screen, setScreen] = useState('gallery'); // 'gallery' | 'missing' | 'similar' (같은 창 안의 화면 전환)
+  const [screen, setScreen] = useState('gallery'); // 'gallery' | 'missing' | 'similar' | 'tags' (같은 창 안의 화면 전환)
   const [similarFocus, setSimilarFocus] = useState(null); // 비슷한 사진 화면에서 오른쪽 패널에 보여 줄 사진 번호
   const [selection, setSelection] = useState(EMPTY_SELECTION); // { ids, anchor, focus }
   const [cellMenuAt, setCellMenuAt] = useState(null); // 우클릭한 자리 { x, y }. 있으면 우클릭 메뉴를 그려요
   const [copySource, setCopySource] = useState(null); // 복사해 둔 값 { id, name, takenAt, lat, lng } (파일 경로 없음)
-  const [dialog, setDialog] = useState(null); // 미리보기 창: { mode: 'copy' | 'direct' | 'map', ids, prefer }. 열 때의 선택을 그대로 담아요
+  const [dialog, setDialog] = useState(null); // 미리보기 창: { mode: 'copy' | 'direct' | 'map' | 'tagAdd' | 'tagRemove', ids, prefer }. 열 때의 선택을 그대로 담아요
   const [lastPin, setLastPin] = useState(null); // 이번 실행에서 지도로 마지막에 넣은 곳 { lat, lng }
   const [justApplied, setJustApplied] = useState(null); // 방금 넣은 묶음 { batchId }. 넣은 직후 알림 줄을 보여 줘요
   const [undoing, setUndoing] = useState(false);
@@ -220,6 +224,15 @@ export default function App() {
     setSimilarFocus(null);
     setScreen(next);
     setFilter({ ...(next === 'missing' ? MISSING_FILTER : START_FILTER), sort: filter.sort, query: filter.query });
+  };
+
+  // 태그 화면에서 태그를 누르면: 갤러리 화면으로 가서 그 태그만 (검색어는 지워서 그 태그의 사진이 다 보이게)
+  const pickTagFromList = (tag) => {
+    setSuggestOpen(false);
+    setSimilarFocus(null);
+    setScreen('gallery');
+    setSearchText('');
+    setFilter({ ...START_FILTER, sort: filter.sort, tag });
   };
 
   // ---------- 고르기 ----------
@@ -400,6 +413,8 @@ export default function App() {
     }
   } else if (screen === 'similar') {
     center = <SimilarView gen={gen} focusId={similarFocus} onFocus={setSimilarFocus} onNotice={setNotice} />;
+  } else if (screen === 'tags') {
+    center = <TagsView gen={gen} onPick={pickTagFromList} />;
   } else if (suggestOpen) {
     center = <SuggestPanel gen={gen} focusId={suggestFocus} onFocus={setSuggestFocus} onApplied={onApplied} onNotice={setNotice} />;
   } else if (daysError && !view) {
@@ -446,6 +461,10 @@ export default function App() {
         onOpenImport={openImport}
         onScreen={goScreen}
         onPickTag={(tag) => {
+          if (screen === 'similar' || screen === 'tags') {
+            pickTagFromList(tag); // 격자가 없는 화면이면 갤러리로 가요
+            return;
+          }
           setSuggestOpen(false); // 위치 제안 탭에는 태그 목록이 없어서, 고른 태그의 사진이 보이는 격자로 돌아가요
           setField({ tag });
         }}
@@ -453,7 +472,7 @@ export default function App() {
         rescanning={rescanning}
       />
       <main className="main">
-        {showTools && screen !== 'similar' && (
+        {showTools && screen !== 'similar' && screen !== 'tags' && (
           <Toolbar
             screen={screen}
             state={state}
@@ -489,8 +508,8 @@ export default function App() {
       </main>
       {showTools && (
         <DetailPanel
-          selectedId={screen === 'similar' ? similarFocus : suggestOpen ? suggestFocus : (soleId !== null ? soleId : selection.focus)}
-          readOnly={suggestOpen || screen === 'similar'}
+          selectedId={screen === 'similar' ? similarFocus : screen === 'tags' ? null : suggestOpen ? suggestFocus : (soleId !== null ? soleId : selection.focus)}
+          readOnly={suggestOpen || screen === 'similar' || screen === 'tags'}
           gen={gen}
           count={selection.ids.size}
           copySource={copySource}
@@ -498,6 +517,8 @@ export default function App() {
           onPaste={() => openDialog('copy')}
           onDirect={() => openDialog('direct')}
           onMap={() => openDialog('map')}
+          onTagAdd={() => openDialog('tagAdd')}
+          onTagRemove={() => openDialog('tagRemove')}
         />
       )}
       {showTools && cellMenuAt && selection.ids.size > 0 && (
@@ -510,10 +531,13 @@ export default function App() {
           onPaste={() => openDialog('copy')}
           onDirect={() => openDialog('direct')}
           onMap={() => openDialog('map')}
+          onTagAdd={() => openDialog('tagAdd')}
+          onTagRemove={() => openDialog('tagRemove')}
           onClose={closeMenu}
         />
       )}
-      {dialog && <EditDialog mode={dialog.mode} ids={dialog.ids} source={copySource} prefer={dialog.prefer} startAt={lastPin} onPinChosen={setLastPin} onClose={() => setDialog(null)} onApplied={onApplied} />}
+      {dialog && (dialog.mode === 'tagAdd' || dialog.mode === 'tagRemove') && <TagDialog mode={dialog.mode} ids={dialog.ids} onClose={() => setDialog(null)} onApplied={onApplied} />}
+      {dialog && dialog.mode !== 'tagAdd' && dialog.mode !== 'tagRemove' && <EditDialog mode={dialog.mode} ids={dialog.ids} source={copySource} prefer={dialog.prefer} startAt={lastPin} onPinChosen={setLastPin} onClose={() => setDialog(null)} onApplied={onApplied} />}
     </div>
   );
 }

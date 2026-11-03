@@ -31,6 +31,10 @@ export const api = {
   // 지도에서 위치 고르기
   searchPlace: (query) => gallery().searchPlace(query),
   placeName: (id, ask) => gallery().placeName(id, ask),
+  tagList: () => gallery().tagList(),
+  selectionTags: (ids) => gallery().selectionTags(ids),
+  previewTag: (ids, edit) => gallery().previewTag(ids, edit),
+  applyTag: (ids, edit) => gallery().applyTag(ids, edit),
   openMapCredit: () => gallery().openMapCredit(),
   // 비슷한 사진
   listSimilar: () => gallery().listSimilar(),

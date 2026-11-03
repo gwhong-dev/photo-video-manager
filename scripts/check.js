@@ -970,6 +970,8 @@ const ITEMS = [
   ...require('./check-similar').items,
   // 39번은 장소 이름 점검 (scripts/check-places.js)
   ...require('./check-places').items,
+  // 40번은 내가 붙이는 태그 점검 (scripts/check-tags.js)
+  ...require('./check-tags').items,
 ];
 
 // ---------- 점검 임시 폴더 정리 ----------
