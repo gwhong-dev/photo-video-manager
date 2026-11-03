@@ -164,7 +164,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       if (r.applied || r.undone || r.skipped || r.superseded) {
         // 건너뛴 이유도 같이 남겨요 (묶음 번호, 종류, 이유). 사진 파일 경로는 안 들어가는 글만이에요
         const why = (r.errors || []).map((x) => `  건너뜀: ${x.batchId ? `묶음 ${x.batchId} ` : ''}(${x.type}) ${x.message}`);
-        startupLog([`기록 파일에서 직접 넣은 값을 복구했어요: 넣기 ${r.applied}개, 되돌리기 ${r.undone}개, 버린 옛 묶음 ${r.superseded}개, 건너뜀 ${r.skipped}개`, ...why]);
+        startupLog([`기록 파일에서 직접 넣은 값을 복구했어요: 넣기 ${r.applied}개, 되돌리기 ${r.undone}개, 버린 옛 묶음 ${r.superseded}개, 겹친 사진을 빼고 넣은 옛 묶음 ${r.partial || 0}개, 건너뜀 ${r.skipped}개`, ...why]);
       }
     } catch (e) {
       errorLog('직접 넣은 값 복구', e);
