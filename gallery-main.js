@@ -682,6 +682,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // 장소 이름: 화면은 사진 번호만 보내요 (좌표는 DB에서 읽어요. 화면이 좌표를 정하지 못해요)
   //   ask: false → 저장해 둔 이름만 (인터넷에 안 나감), true → 없으면 서버에 물어보고 저장
   //   돌려주는 값: { name } (name null = 아직 모름, '' = 이름 없는 곳). 위치가 없거나 다른 폴더 사진이면 null
+  //   같은 곳을 묻는 중에 또 누르면(다른 사진에 다녀오거나 같은 동네 사진) 새로 보내지 않고 묻는 중인 것을 같이 기다려요
+  const placeAsking = new Map(); // 줄인 좌표 → 묻는 중인 Promise
   ipcMain.handle('gallery:place-name', async (e, id, ask) => {
     if (!Number.isSafeInteger(id) || id < 1) throw new Error('파일 번호가 올바르지 않아요');
     const root = rootNow();
@@ -691,13 +693,19 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     const key = `${roundCoord(f.lat).toFixed(3)},${roundCoord(f.lng).toFixed(3)}`;
     const saved = db.getPlaceName(key);
     if (saved !== null || ask !== true) return { name: saved };
-    const name = await mapNet.reverse(f.lat, f.lng); // 실패하면 정해진 문장으로 거절돼요 (좌표는 로그에 안 남아요)
-    try {
-      db.setPlaceName(key, name, new Date().toISOString());
-    } catch (err) {
-      errorLog('장소 이름 저장', err); // 저장을 못 해도 이번에는 보여 줘요
+    if (!placeAsking.has(key)) {
+      // 실패하면 정해진 문장으로 거절돼요 (좌표는 로그에 안 남아요). 끝나면(성공이든 실패든) 목록에서 빼서 다음에 다시 누를 수 있게
+      const asking = mapNet.reverse(f.lat, f.lng).then((name) => {
+        try {
+          db.setPlaceName(key, name, new Date().toISOString());
+        } catch (err) {
+          errorLog('장소 이름 저장', err); // 저장을 못 해도 이번에는 보여 줘요
+        }
+        return name;
+      }).finally(() => placeAsking.delete(key));
+      placeAsking.set(key, asking);
     }
-    return { name };
+    return { name: await placeAsking.get(key) };
   });
 
   // 지도 출처 링크: 화면은 주소를 보내지 않고, 고정 주소 하나만 기본 브라우저로 열어요
