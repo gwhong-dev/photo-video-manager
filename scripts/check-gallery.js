@@ -1488,6 +1488,18 @@ const items = [
         const none = createThumbs({ db, thumbDir: path.join(base, 'thumbs-prune-none'), getTools: () => tools, isBusy: () => false, logger: null });
         out.push(sub('17s 썸네일 폴더가 없으면 0', (await none.pruneOrphans()) === 0));
         await none.stop();
+        // 사용자 결정 (2026-11-04): library.db를 새로 만들 때 썸네일이 이미 있으면 정리를 끄고 표시 파일을 남김 (다른 백업 폴더 썸네일을 지우지 않게)
+        const { pruneAllowed } = require('../lib/thumbs');
+        const marker = path.join(base, 'thumb-prune-off.json');
+        const emptyDir = path.join(base, 'thumbs-prune-empty');
+        const a1 = pruneAllowed({ thumbDir: dir, markerPath: marker, freshDb: false });
+        const a2 = pruneAllowed({ thumbDir: emptyDir, markerPath: marker, freshDb: true });
+        const markerBefore = fs.existsSync(marker);
+        const a3 = pruneAllowed({ thumbDir: dir, markerPath: marker, freshDb: true });
+        const a4 = pruneAllowed({ thumbDir: dir, markerPath: marker, freshDb: false });
+        out.push(sub('17s 새 DB인데 썸네일이 이미 있으면 정리를 끄고 표시 파일을 남김, 그 뒤 실행도 계속 꺼짐. 원래 DB이거나 썸네일이 없으면 정리함',
+          a1.allowed && a2.allowed && !markerBefore && !a3.allowed && a3.markedNow && fs.existsSync(marker) && !a4.allowed && !a4.markedNow,
+          JSON.stringify([a1, a2, a3, a4])));
       });
 
       // 17o 사진 폴더에는 아무것도 생기지 않음 (썸네일은 thumbs 폴더에만)

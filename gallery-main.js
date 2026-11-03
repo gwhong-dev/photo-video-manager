@@ -32,7 +32,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { openDb } = require('./lib/db');
 const { createLibrary } = require('./lib/library');
-const { createThumbs } = require('./lib/thumbs');
+const { createThumbs, pruneAllowed } = require('./lib/thumbs');
 const { handleMedia } = require('./lib/media-protocol');
 const { now } = require('./lib/logger');
 const { normalizeRequest, planEdit, toPreview, MAX_TARGETS } = require('./lib/manual-edit');
@@ -125,9 +125,13 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   let db = null;
   let dbError = '';
   let recoveredOnce = false; // getState가 한 번만 알려 줘요
+  let freshDb = false; // 이번에 library.db를 새로 만들었는지 (처음 켬, 깨져서 다시 만듦) → 옛 썸네일 정리 판단에 써요
   try {
-    const r = openDb(path.join(base, 'library.db'));
+    const dbFile = path.join(base, 'library.db');
+    const existed = fs.existsSync(dbFile);
+    const r = openDb(dbFile);
     db = r.db;
+    freshDb = !existed || r.recovered;
     if (r.recovered) {
       recoveredOnce = true;
       startupLog(['library.db가 깨져 있어서 이름을 바꿔 보관하고 새로 만들었어요 (폴더를 처음부터 다시 읽어요)']);
@@ -229,9 +233,12 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     pushScan(true);
     if (result.status === 'done' && root === rootNow() && thumbs) {
       // 켠 뒤 처음 끝까지 읽었을 때 한 번만 옛 썸네일을 정리해요 (파일이 바뀌어 이름이 달라진 썸네일)
+      //   새 DB를 만들 때 썸네일이 이미 있었으면 정리하지 않아요 (lib/thumbs.js pruneAllowed)
       if (!pruned) {
         pruned = true;
-        thumbs.pruneOrphans();
+        const p = pruneAllowed({ thumbDir: path.join(base, 'thumbs'), markerPath: path.join(base, 'thumb-prune-off.json'), freshDb, onError: errorLog });
+        if (p.allowed) thumbs.pruneOrphans();
+        if (p.markedNow) startupLog(['옛 썸네일 정리를 껐어요 (library.db를 새로 만들 때 썸네일이 이미 있었어요. 다른 백업 폴더 썸네일을 지우지 않게. thumb-prune-off.json)']);
       }
       thumbs.startBackground(root);
     }
