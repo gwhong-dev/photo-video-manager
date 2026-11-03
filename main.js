@@ -60,7 +60,16 @@ function saveSettings() {
 const TOOLS_BUSY_MSG = '가져오기 실행이나 미리보기가 끝난 뒤에 도구를 다시 찾을 수 있어요';
 const toolsBusy = () => running || planning;
 
-async function refreshTools() {
+// 찾는 중이면 같은 약속(Promise)을 돌려줘요. 켤 때 뒤에서 찾는 동안 화면이 get-state나 check-tools를 불러도 두 번 찾지 않아요
+let toolsPromise = null;
+function refreshTools() {
+  if (!toolsPromise) {
+    toolsPromise = refreshToolsNow().finally(() => { toolsPromise = null; });
+  }
+  return toolsPromise;
+}
+
+async function refreshToolsNow() {
   const found = await detectTools(settings, __dirname);
   // 찾는 동안(몇백 ms) 작업이 시작됐을 수 있어서, 바꾸기 직전에 한 번 더 확인해요
   if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG);
@@ -234,6 +243,8 @@ ipcMain.handle('pick-tool', async (e, name) => {
   if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG); // 창을 고르는 사이에 작업이 시작됐을 수 있어요
   settings[name] = r.filePaths[0];
   saveSettings();
+  // 켤 때 시작한 찾기가 아직 돌고 있으면(옛 설정으로) 끝나길 기다린 뒤 새 설정으로 다시 찾아요
+  if (toolsPromise) await toolsPromise.catch(() => {});
   return refreshTools();
 });
 
@@ -447,12 +458,6 @@ app.whenReady().then(async () => {
   } catch (e) {
     job = null;
   }
-  // 갤러리가 폴더를 읽으려면 exiftool이 필요해서 창을 열기 전에 도구부터 찾아요
-  try {
-    await refreshTools();
-  } catch (e) {
-    logger.newLog('startup', `도구 찾기 실패 ${e.message}`);
-  }
   try {
     gallery = setupGallery({
       ipcMain,
@@ -477,7 +482,20 @@ app.whenReady().then(async () => {
     gallery = null;
     console.error('갤러리 연결 실패:', e);
   }
+  // 도구(exiftool 등)는 창을 띄운 뒤 뒤에서 찾아요. 찾는 데 몇 초 걸려서(프로그램을 여러 번 실행해 봐요) 창이 늦게 뜨던 것을 없애요
+  //   찾기 전에는 tools가 null이라 갤러리는 "준비 중"으로 보이고, 찾으면 refreshTools가 gallery.onToolsChanged()로 읽기를 시작해요
+  //   가져오기 화면의 get-state와 check-tools는 같은 찾기를 기다려요 (toolsPromise)
   createWindow();
+  refreshTools().catch((e) => {
+    logger.newLog('startup', `도구 찾기 실패 ${e.message}`);
+    if (!tools) {
+      // 찾기 자체가 실패해도 "아직 모름"에 머물지 않게 빈 결과로 두고 갤러리에 알려요 (화면이 'exiftool 없음'을 보여 줘요)
+      tools = { exiftool: { ok: false, path: null, version: null }, magick: { ok: false, path: null, version: null }, ffmpeg: { ok: false, path: null, version: null }, ffprobe: { ok: false, path: null, version: null } };
+      if (gallery) {
+        try { gallery.onToolsChanged(); } catch (e2) { /* 알림 실패는 무시 */ }
+      }
+    }
+  });
 });
 
 app.on('window-all-closed', () => {

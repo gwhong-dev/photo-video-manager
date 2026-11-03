@@ -343,7 +343,10 @@ export default function App() {
       );
     } else if (scanning) {
       center = <EmptyState title="사진을 찾는 중이에요">찾는 대로 여기에 날짜별로 모여요.</EmptyState>;
-    } else if (state.tools && !state.tools.exiftool) {
+    } else if (!state.tools) {
+      // 켤 때 도구는 창을 띄운 뒤 뒤에서 찾아요. 찾기 전에는 폴더를 읽지 않으니 "사진이 없어요"로 보이지 않게
+      center = <EmptyState title="사진을 읽을 준비를 하는 중이에요">사진 정보를 읽는 프로그램(exiftool)을 찾고 있어요. 찾으면 바로 백업 폴더를 읽어요.</EmptyState>;
+    } else if (!state.tools.exiftool) {
       center = <EmptyState title="아직 읽어 둔 사진이 없어요" action={importButton}>exiftool을 찾으면 백업 폴더의 사진을 읽어 와요.</EmptyState>;
     } else {
       center = (

@@ -227,7 +227,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // ---------- 화면의 부탁 ----------
   ipcMain.handle('gallery:get-state', () => {
     const root = rootNow();
-    const t = getTools() || {};
+    const t = getTools(); // null이면 아직 도구를 찾는 중이에요 (켤 때 창을 먼저 띄우고 뒤에서 찾아요)
     const out = {
       root,
       connected: !!root && isDir(root),
@@ -241,7 +241,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       tags: [],
       scan: { ...scan },
       scanStatus: lastStatus,
-      tools: { exiftool: !!(t.exiftool && t.exiftool.ok), ffmpeg: !!(t.ffmpeg && t.ffmpeg.ok) },
+      tools: t ? { exiftool: !!(t.exiftool && t.exiftool.ok), ffmpeg: !!(t.ffmpeg && t.ffmpeg.ok) } : null,
       jobPending: !!(getJobPending && getJobPending()),
     };
     if (dbError) out.dbError = dbError;
@@ -544,9 +544,12 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   let started = false;
   return {
     // 창이 처음 열리면: 백업 폴더가 있으면 읽기 시작
+    //   도구를 아직 찾는 중(getTools가 null)이면 지금은 읽지 않아요. 'exiftool 없음'으로 끝나 화면에 잘못된 안내가 잠깐 뜨는 것을 막고,
+    //   찾기가 끝나면 onToolsChanged가 읽기를 시작해요. 도구를 먼저 찾았으면 여기서 읽고, 그때 onToolsChanged가 시작한 읽기가 돌고 있으면 library가 하나로 합쳐요
     onWindowReady() {
       if (started) return;
       started = true;
+      if (!getTools()) return;
       const root = rootNow();
       if (root) runScan(root, {}).catch((e) => errorLog('시작 읽기', e));
     },
@@ -563,7 +566,9 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     },
     // 도구(exiftool)를 새로 찾아 바뀌었으면: 옛 도구로 읽다 오류로 끝났거나 'exiftool 없음'이던 읽기를 한 번 다시 해요
     //   읽는 중이면 library가 이어서 한 번 더 읽도록 합쳐 줘요
+    //   화면도 다시 불러 도구 상태(준비 중 → 있음/없음)를 갱신하게 해요. 사진이 없는 폴더에서는 읽기가 화면을 바꾸지 않아서
     onToolsChanged() {
+      send('gallery:library-changed');
       const root = rootNow();
       if (root) runScan(root, { changed: true }).catch((e) => errorLog('도구 다시 찾은 뒤 읽기', e));
     },

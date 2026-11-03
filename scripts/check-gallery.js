@@ -1518,14 +1518,14 @@ const items = [
 
         const base = path.join(env.tmp, 'gallery-fake');
         const logger = createLogger(path.join(base, 'logs'));
-        const makeFake = (userDir, settings) => {
+        const makeFake = (userDir, settings, getTools = () => ({})) => {
           const f = { handlers: new Map(), loaded: [], flags: { running: false, planning: false }, pvm: null };
           f.g = gm.setupGallery({
             ipcMain: { handle: (ch, fn) => f.handlers.set(ch, fn) },
             protocol: { handle: (scheme, fn) => { f.pvm = fn; } },
             getWin: () => null,
             getSettings: () => settings,
-            getTools: () => ({}),
+            getTools,
             getEt: () => null,
             isRunning: () => f.flags.running,
             isPlanning: () => f.flags.planning,
@@ -1606,7 +1606,27 @@ const items = [
         await sleep(150);
         out.push(sub('도구를 새로 찾으면 scan(root, { changed: true })', scanCalls.some((c) => c.root === root && c.o && c.o.changed === true), JSON.stringify(scanCalls)));
 
-        for (const x of [f, f2, f3, f4, f5, f6, f7]) x.g.close();
+        // 켤 때 도구는 창을 띄운 뒤 뒤에서 찾아요 (getTools가 null = 아직 찾는 중). 그동안은 읽지 않고, 찾으면 onToolsChanged가 읽기를 시작해요
+        let fakeTools = null;
+        const f8 = makeFake(path.join(base, 'ud8'), { backupRoot: root }, () => fakeTools);
+        const s8 = await f8.call('gallery:get-state');
+        scanCalls.length = 0;
+        f8.g.onWindowReady();
+        await sleep(150);
+        const noScanYet = scanCalls.length === 0;
+        fakeTools = { exiftool: { ok: false }, ffmpeg: { ok: false } };
+        f8.g.onToolsChanged();
+        await sleep(150);
+        const s8b = await f8.call('gallery:get-state');
+        out.push(sub('도구를 아직 찾는 중이면 getState의 tools는 null이고 창이 열려도 읽지 않음, 찾으면 읽기 시작', s8.tools === null && noScanYet && scanCalls.some((c) => c.root === root && c.o && c.o.changed === true) && s8b.tools && s8b.tools.exiftool === false, JSON.stringify([s8.tools, noScanYet, scanCalls, s8b.tools])));
+        // 도구를 먼저 찾은 뒤 창이 열리면 바로 읽어요
+        const f9 = makeFake(path.join(base, 'ud9'), { backupRoot: root });
+        scanCalls.length = 0;
+        f9.g.onWindowReady();
+        await sleep(150);
+        out.push(sub('도구를 이미 찾았으면 창이 열릴 때 바로 scan(root)', scanCalls.some((c) => c.root === root && c.o && !c.o.changed), JSON.stringify(scanCalls)));
+
+        for (const x of [f, f2, f3, f4, f5, f6, f7, f8, f9]) x.g.close();
       }
 
       // 18e 샘플 결과 복사본을 백업 폴더로 정한 임시 userData로 띄워요 (진짜 설정과 사진은 읽지 않음).
@@ -1648,6 +1668,15 @@ const items = [
         let dialogCalls = 0;
         const spellCalls = [];
         let readyRun = null;
+        const order = []; // 창 만들기와 도구 찾기의 순서 (창을 먼저 띄우고 도구는 뒤에서 찾아야 해요)
+        const toolsMod = require('../lib/tools');
+        const origDetect = toolsMod.detectTools;
+        toolsMod.detectTools = async (...a) => {
+          order.push('찾기 시작');
+          const r = await origDetect(...a);
+          order.push('찾기 끝');
+          return r;
+        };
         const win = {
           webContents: { once() {}, send() {}, on() {}, setWindowOpenHandler() {} },
           on() {},
@@ -1664,7 +1693,7 @@ const items = [
             quit() {},
             whenReady: () => ({ then: (cb) => { readyRun = Promise.resolve().then(cb); return readyRun; } }),
           },
-          BrowserWindow: function FakeWindow() { return win; },
+          BrowserWindow: function FakeWindow() { order.push('창'); return win; },
           ipcMain: { handle: (ch, fn) => handlers.set(ch, fn) },
           dialog: { showOpenDialog: async () => { dialogCalls++; return { canceled: true, filePaths: [] }; }, showMessageBoxSync: () => 1, showMessageBox: async () => ({}) },
           shell: { trashItem: async () => {}, openPath: async () => '' },
@@ -1688,6 +1717,7 @@ const items = [
           loadError = e && e.message ? e.message : String(e);
         } finally {
           Module._load = origLoad;
+          toolsMod.detectTools = origDetect;
           if (envBefore === undefined) delete process.env.PVM_USER_DATA;
           else process.env.PVM_USER_DATA = envBefore;
           for (const l of process.listeners('uncaughtException')) if (!listenersBefore.includes(l)) process.removeListener('uncaughtException', l); // main.js가 점검용으로 붙인 종료 처리는 이 점검에 필요 없어요
@@ -1707,9 +1737,12 @@ const items = [
             savedBack.mapTileUrl === FIXED_TILE && savedBack.placeSearchUrl === FIXED_SEARCH && onDisk.mapTileUrl === FIXED_TILE && onDisk.placeSearchUrl === FIXED_SEARCH && onDisk.includeSub === true,
             JSON.stringify({ tile: onDisk.mapTileUrl, search: onDisk.placeSearchUrl, includeSub: onDisk.includeSub })));
 
-          // 아무 일도 안 할 때는 다시 찾기가 됨
+          // 아무 일도 안 할 때는 다시 찾기가 됨. 켤 때 시작한 찾기가 아직 돌고 있으면 그 결과를 같이 기다려요
+          const windowFirst = order.indexOf('창') >= 0 && (order.indexOf('찾기 끝') < 0 || order.indexOf('창') < order.indexOf('찾기 끝'));
+          const startedOnce = order.filter((x) => x === '찾기 시작').length === 1; // 켤 때 한 번 (check-tools를 부르기 전)
           const t0 = await call('check-tools');
           out.push(sub('쉬는 중에는 check-tools가 도구 정보를 돌려줌', !!t0 && !!t0.exiftool && t0.exiftool.ok === true));
+          out.push(sub('창을 먼저 만들고 도구 찾기는 뒤에서 끝남, 켤 때 찾기는 한 번', windowFirst && startedOnce && order.includes('찾기 끝'), order.join(' → ')));
 
           // 미리보기 중 (make-plan은 planning = true 를 먼저 켜고 기다려요)
           const planning = call('make-plan', { source: srcDir, backupRoot: destDir, includeSub: true });
