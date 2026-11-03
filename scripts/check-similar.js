@@ -430,18 +430,30 @@ const items = [
         out.push(sub('37c 묶음에 없는 사진, 같은 번호 두 번, 빈 목록, 이상한 번호는 거절',
           !!err([id('c.jpg')]) && !!err([id('b.jpg'), id('b.jpg')]) && !!err([]) && !!err(['x']) && !!err(null)));
         // 라이브 포토 짝 영상: 같은 폴더, 같은 이름의 MP4
-        db.upsertFiles([row({ root: 'R1', path: 'R1/b.mp4', name: 'b.mp4', mediaType: 'video' }), row({ root: 'R1', path: 'R1/b.jpg.mp4', name: 'b.jpg.mp4', mediaType: 'video' })]);
+        const liveRow = (p, over = {}) => row({ root: 'R1', path: p, name: path.basename(p), mediaType: 'video', takenDay: '2026-02-01', takenAt: '2026-02-01T10:00:01', durationSec: 2.5, ...over });
+        db.upsertFiles([liveRow('R1/b.mp4'), liveRow('R1/b.jpg.mp4')]);
         const withPair = D.checkDiscard(db, 'R1', [id('b.jpg')]);
-        out.push(sub('37c 버리는 사진의 같은 이름 MP4를 짝 영상으로 같이 (이름이 b.jpg.mp4인 것은 아님)',
+        out.push(sub('37c 버리는 사진의 같은 이름 짧은 MP4를 짝 영상으로 같이 (이름이 b.jpg.mp4인 것은 아님)',
           withPair.files[0].pair && withPair.files[0].pair.path === 'R1/b.mp4', JSON.stringify(withPair.files[0].pair)));
+        // 검증 지적: 같은 이름의 긴 일반 영상(다른 폰)이나 시각이 먼 영상은 짝이 아님
+        db.upsertFiles([liveRow('R1/b.mp4', { durationSec: 300 })]);
+        const longVideo = D.checkDiscard(db, 'R1', [id('b.jpg')]).files[0].pair;
+        db.upsertFiles([liveRow('R1/b.mp4', { takenAt: '2026-02-01T11:00:00' })]);
+        const farVideo = D.checkDiscard(db, 'R1', [id('b.jpg')]).files[0].pair;
+        db.upsertFiles([liveRow('R1/b.mp4', { durationSec: null })]);
+        const noLen = D.checkDiscard(db, 'R1', [id('b.jpg')]).files[0].pair;
+        out.push(sub('37c 같은 이름이어도 5초 넘는 영상, 찍은 시각이 3초 넘게 다른 영상, 길이를 모르는 영상은 짝 영상이 아님',
+          longVideo === null && farVideo === null && noLen === null, JSON.stringify([longVideo, farVideo, noLen])));
         const fakeDb = (list) => ({ sameStem: () => list });
-        const me = { id: 1, path: 'R1/x.jpg' };
-        const vid = { id: 2, path: 'R1/x.MOV', mediaType: 'video', size: 5, mtimeMs: 1 };
-        const heic = { id: 3, path: 'R1/x.heic', mediaType: 'photo' };
+        const T = '2026-01-01T00:00:00';
+        const me = { id: 1, path: 'R1/x.jpg', takenAt: T };
+        const vid = { id: 2, path: 'R1/x.MOV', mediaType: 'video', size: 5, mtimeMs: 1, takenAt: T, durationSec: 3 };
+        const heic = { id: 3, path: 'R1/x.heic', mediaType: 'photo', takenAt: T };
         out.push(sub('37c 짝 영상: 같은 이름 사진이 남아 있으면 안 옮김, 둘 다 버리면 번호 작은 사진에만, 영상이 둘이면 안 옮김',
           D.pairOf(fakeDb([me, vid]), 'R1', me, new Set([1])).path === 'R1/x.MOV'
             && D.pairOf(fakeDb([me, vid, heic]), 'R1', me, new Set([1])) === null
             && D.pairOf(fakeDb([me, vid, heic]), 'R1', me, new Set([1, 3])).path === 'R1/x.MOV'
+            && JSON.stringify(D.pairOf(fakeDb([me, vid, heic]), 'R1', me, new Set([1, 3])).siblings) === '["R1/x.heic"]'
             && D.pairOf(fakeDb([me, vid, heic]), 'R1', heic, new Set([1, 3])) === null
             && D.pairOf(fakeDb([me, vid, { ...vid, id: 4, path: 'R1/x.mp4' }]), 'R1', me, new Set([1])) === null));
         db.setMissing(['R1/a.jpg'], 1); // 남길 사진이 사라지면 b도 묶음이 아니라 거절
@@ -555,10 +567,17 @@ const items = [
           { id: 31, name: 'live2.jpg', ...qPhoto, pair: qVideo },
           { id: 32, name: 'live3.jpg', ...sPhoto, pair: sVideo },
         ];
+        // 검증 지적: 같은 이름 사진 중 한 장이 실패하면 짝 영상도 그대로 (짝 영상은 맨 끝에, 같은 이름 사진이 모두 옮겨졌을 때만)
+        const tPhoto = disk(put(path.join('hdd', 'live4.jpg')));
+        const tHeic = disk(put(path.join('hdd', 'live4.heic')));
+        const tVideo = disk(put(path.join('hdd', 'live4.mp4')));
+        fs.appendFileSync(tHeic.path, ' edited'); // 같은 이름 사진이 그 사이 바뀜 → 실패
+        pList.push({ id: 33, name: 'live4.jpg', ...tPhoto, pair: { ...tVideo, siblings: [tHeic.path] } }, { id: 34, name: 'live4.heic', ...tHeic, mtimeMs: tHeic.mtimeMs - 1 });
         const pInfo = await D.discardInfo(pList, { driveKindOf, recycleOf: async () => null, statfs: noFsPair });
         const r5 = await D.discardFiles({ root, files: pList, trash, driveKindOf, recycleOf: async () => null, logger: createLogger(logDir) });
-        out.push(sub('37g 짝 영상은 사진과 같은 곳으로 (USB는 _정리완료원본), 바뀐 짝 영상은 그대로 두고 따로 셈, 사진을 못 옮기면 짝 영상도 그대로',
-          pInfo.pairs === 3 && pInfo.count === 3 && r5.pairs === 1 && r5.pairFail === 1 && r5.fail === 1
+        out.push(sub('37g 짝 영상은 사진과 같은 곳으로 (USB는 _정리완료원본), 바뀐 짝 영상은 그대로 두고 따로 셈, 사진이나 같은 이름 사진을 못 옮기면 짝 영상도 그대로',
+          pInfo.pairs === 4 && pInfo.count === 5 && r5.pairs === 1 && r5.pairFail === 2 && r5.fail === 2
+            && fs.existsSync(tVideo.path) && fs.existsSync(tHeic.path) && !fs.existsSync(tPhoto.path)
             && moved(path.join('usb', 'live.mp4')) && moved(path.join('usb', 'live.jpg'))
             && fs.existsSync(qVideo.path) && !fs.existsSync(qPhoto.path) && fs.existsSync(sPhoto.path) && fs.existsSync(sVideo.path)
             && r5.done.includes(pVideo.path) && !r5.done.includes(qVideo.path),
