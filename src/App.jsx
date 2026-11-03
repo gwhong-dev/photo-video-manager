@@ -18,6 +18,7 @@ import ContextMenu from './components/ContextMenu.jsx';
 import DayGrid from './components/DayGrid.jsx';
 import DetailPanel from './components/DetailPanel.jsx';
 import EditDialog from './components/EditDialog.jsx';
+import SimilarView from './components/SimilarView.jsx';
 import EmptyState from './components/EmptyState.jsx';
 import ScanBanner from './components/ScanBanner.jsx';
 import Sidebar from './components/Sidebar.jsx';
@@ -65,7 +66,8 @@ export default function App() {
   const [view, setView] = useState(null); // { key, filter, days, gen } 지금 보이는 날짜 목록
   const [daysError, setDaysError] = useState('');
   const [gen, setGen] = useState(0); // 목록이 갱신될 때마다 올라가요
-  const [screen, setScreen] = useState('gallery'); // 'gallery' | 'missing' (같은 창 안의 화면 전환)
+  const [screen, setScreen] = useState('gallery'); // 'gallery' | 'missing' | 'similar' (같은 창 안의 화면 전환)
+  const [similarFocus, setSimilarFocus] = useState(null); // 비슷한 사진 화면에서 오른쪽 패널에 보여 줄 사진 번호
   const [selection, setSelection] = useState(EMPTY_SELECTION); // { ids, anchor, focus }
   const [cellMenuAt, setCellMenuAt] = useState(null); // 우클릭한 자리 { x, y }. 있으면 우클릭 메뉴를 그려요
   const [copySource, setCopySource] = useState(null); // 복사해 둔 값 { id, name, takenAt, lat, lng } (파일 경로 없음)
@@ -215,6 +217,7 @@ export default function App() {
   const goScreen = (next) => {
     if (next === screen) return;
     setSuggestOpen(false);
+    setSimilarFocus(null);
     setScreen(next);
     setFilter({ ...(next === 'missing' ? MISSING_FILTER : START_FILTER), sort: filter.sort, query: filter.query });
   };
@@ -395,6 +398,8 @@ export default function App() {
         </EmptyState>
       );
     }
+  } else if (screen === 'similar') {
+    center = <SimilarView gen={gen} focusId={similarFocus} onFocus={setSimilarFocus} onNotice={setNotice} />;
   } else if (suggestOpen) {
     center = <SuggestPanel gen={gen} focusId={suggestFocus} onFocus={setSuggestFocus} onApplied={onApplied} onNotice={setNotice} />;
   } else if (daysError && !view) {
@@ -448,7 +453,7 @@ export default function App() {
         rescanning={rescanning}
       />
       <main className="main">
-        {showTools && (
+        {showTools && screen !== 'similar' && (
           <Toolbar
             screen={screen}
             state={state}
@@ -484,8 +489,8 @@ export default function App() {
       </main>
       {showTools && (
         <DetailPanel
-          selectedId={suggestOpen ? suggestFocus : (soleId !== null ? soleId : selection.focus)}
-          readOnly={suggestOpen}
+          selectedId={screen === 'similar' ? similarFocus : suggestOpen ? suggestFocus : (soleId !== null ? soleId : selection.focus)}
+          readOnly={suggestOpen || screen === 'similar'}
           gen={gen}
           count={selection.ids.size}
           copySource={copySource}
