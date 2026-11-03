@@ -229,6 +229,43 @@ const items = [
         await hasher.stop();
         const after = await hasher.run('R1');
         out.push(sub('36f 멈춘 뒤에는 아무것도 안 함', after.made === 0 && after.failed === 0));
+        // 검증 지적: 썸네일 다시 만들기를 해도 "지문 없음"이 영구로 남았음
+        db.resetFailedThumbs('R1');
+        out.push(sub('36f 실패한 썸네일 다시 만들기를 하면 지문 없음 기록도 지워져 다시 할 일로',
+          db.hashJobs('R1', 10).map((f) => f.name).sort().join() === 'broken.jpg,unplugged.jpg'));
+      });
+
+      // 36g 검증 지적: 할 일 조회가 사진 수의 제곱으로 느려졌음 → 번호 순서로 앞으로만, 그림 읽기 실패는 없음으로 적지 않음
+      await withDb(env, 'similar-hasher-scale', async (db) => {
+        const N = 3000;
+        const many = [];
+        for (let i = 1; i <= N; i++) many.push(row({ root: 'R1', path: `R1/${i}.jpg`, name: `${i}.jpg` }));
+        db.upsertFiles(many);
+        const realJobs = db.hashJobs.bind(db);
+        let fetched = 0;
+        db.hashJobs = (root, limit, afterId) => {
+          const r = realJobs(root, limit, afterId);
+          fetched += r.length;
+          return r;
+        };
+        const thumbs = {
+          async request(id) {
+            return id % 10 === 0 ? null : `t${id}`; // 열 장에 한 장은 원본을 못 읽음 (다음 회차에 다시)
+          },
+        };
+        const grayOf = async (t) => {
+          if (t === 't7') throw new Error('잠김'); // 썸네일이 잠깐 잠김
+          return Buffer.alloc(72, Number(t.slice(1)) % 251);
+        };
+        const t0 = Date.now();
+        const r = await S.createHasher({ db, thumbs, grayOf }).run('R1');
+        const ms = Date.now() - t0;
+        db.hashJobs = realJobs;
+        const left = db.hashJobs('R1', N).map((f) => f.id);
+        out.push(sub('36g 3천 장: 할 일 조회는 사진 수만큼만 읽음, 못 얻은 것과 그림 읽기 실패는 비워 둠 (다음에 다시)',
+          fetched === N && r.made === N - 300 - 1 && r.skipped === 301 && r.failed === 0 && left.length === 301 && left.includes(7),
+          `${ms}ms, 읽은 줄 ${fetched}, ${JSON.stringify(r)}`));
+        out.push(sub('36g 이 번호 다음부터 할 일 (afterId)', db.hashJobs('R1', 2, 7).map((f) => f.id).join() === '10,20'));
       });
 
       return out;
