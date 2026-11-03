@@ -1,5 +1,6 @@
 // 파일 위치: src/components/DetailPanel.jsx
 // 역할: 오른쪽 패널. 고른 사진의 큰 미리보기, 파일 이름, 찍은 시각과 어디서 읽었는지, 위치와 어디서 읽었는지, 기기, 크기, 용량, 태그
+//   위치가 있으면 장소 이름: 저장해 둔 이름은 바로, 없으면 "장소 이름 보기" 버튼 (누를 때만 좌표 하나가 OpenStreetMap 서버로 나가요)
 //   없는 값은 경고 노랑 "정보 없음". 아무것도 안 골랐으면 안내 문구
 //   여러 장을 고르면 "N장 선택함"과 우클릭 메뉴와 같은 버튼들 (우클릭을 모르는 사람을 위해). 한 장일 때도 사진 정보 아래에 같은 버튼들
 //   복사해 둔 값이 있으면 어느 사진의 값인지와 날짜, 위치를 작게 보여 줘요
@@ -54,6 +55,44 @@ function CopyNote({ source }) {
         <Row label="위치">{coords || <Missing />}</Row>
       </dl>
     </section>
+  );
+}
+
+// 장소 이름: 저장해 둔 것은 바로 읽고(인터넷 안 나감), 버튼을 누르면 서버에 물어봐요
+//   state: { key, name, busy, error }. name null = 아직 모름, '' = 이름 없는 곳
+function PlaceName({ file }) {
+  const key = `${file.id}:${file.lat},${file.lng}`;
+  const [st, setSt] = useState({ key: null, name: null, busy: false, error: '' });
+  useEffect(() => {
+    let stale = false;
+    setSt({ key, name: null, busy: false, error: '' });
+    api.placeName(file.id, false).then(
+      (r) => { if (!stale) setSt((s) => (s.key === key && s.name === null ? { ...s, name: r ? r.name : null } : s)); },
+      () => {}, // 저장해 둔 이름을 못 읽으면 버튼만 보여요
+    );
+    return () => { stale = true; };
+  }, [key, file.id]);
+  if (st.key !== key) return null;
+  if (st.name) return <div className="detail-sub place-name">{st.name}</div>;
+  if (st.name === '') return <div className="detail-sub place-name">이름이 없는 곳이에요</div>;
+  const ask = () => {
+    setSt((s) => ({ ...s, busy: true, error: '' }));
+    api.placeName(file.id, true).then(
+      (r) => setSt((s) => (s.key === key ? { ...s, busy: false, name: r ? r.name : null } : s)),
+      (e) => setSt((s) => (s.key === key ? { ...s, busy: false, error: errorText(e) } : s)),
+    );
+  };
+  return (
+    <div className="place-ask">
+      <button type="button" className="link-button" onClick={ask} disabled={st.busy}>
+        {st.busy ? '장소 이름 찾는 중' : '장소 이름 보기'}
+      </button>
+      {st.error ? (
+        <div className="detail-sub" role="alert">{st.error}</div>
+      ) : (
+        <div className="detail-sub">누르면 이 위치 하나를 OpenStreetMap 서버로 보내요</div>
+      )}
+    </div>
   );
 }
 
@@ -130,7 +169,10 @@ export default function DetailPanel({ selectedId, gen, count = 0, copySource = n
         {file.readError && <p className="detail-sub">파일 정보를 다 읽지 못했어요</p>}
         <dl className="detail-list">
           <Row label="찍은 시각" sub={taken && SOURCE_TEXT[file.takenAtSource]}>{taken || <Missing />}</Row>
-          <Row label="위치" sub={coords && LOCATION_SOURCE_TEXT[file.locationSource]}>{coords || <Missing />}</Row>
+          <Row label="위치" sub={coords && LOCATION_SOURCE_TEXT[file.locationSource]}>
+            {coords || <Missing />}
+            {coords && <PlaceName file={file} />}
+          </Row>
           <Row label="기기">{file.model || <Missing />}</Row>
           <Row label="크기">{size || <Missing />}</Row>
           {file.mediaType === 'video' && <Row label="길이">{formatDuration(file.durationSec) || <Missing />}</Row>}

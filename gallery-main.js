@@ -9,6 +9,7 @@
 // ⚠️ Electron이 필요한 것은 모두 main.js에서 받아요 (net만 pvm:// 파일 응답 때 그때그때 불러와서, 일반 Node에서도 이 파일을 불러올 수 있어요)
 // ⚠️ 인터넷에 나가는 예외는 지도 하나예요: 지도 그림(pvm://tile)과 장소 검색(gallery:search-place)을 lib/map-net.js 가 대신 받아 와요.
 //    나가는 것은 지도 번호, 검색어, 앱 이름표뿐이에요 (사진, 파일 이름, 경로, 좌표 목록은 안 나가요). 창을 열거나 목록을 읽을 때는 나가지 않아요
+//    장소 이름(gallery:place-name)은 사용자가 "장소 이름 보기"를 누른 사진 한 장의 좌표만, 소수점 3자리로 줄여 보내요. 받은 이름은 DB에 두고 다시 보내지 않아요
 //    지도 출처 링크는 gallery:open-map-credit 이 고정 주소 하나만 기본 브라우저로 열어요
 //    (docs/superpowers/specs/2026-11-02-map-pick-design.md 4, 5절)
 //
@@ -39,7 +40,7 @@ const { normalizeRequest, planEdit, toPreview, MAX_TARGETS } = require('./lib/ma
 const { createJournal, recover } = require('./lib/manual-journal');
 const { buildSuggestions } = require('./lib/location-suggest');
 const { createSkips } = require('./lib/suggest-skips');
-const { createMapNet } = require('./lib/map-net');
+const { createMapNet, roundCoord } = require('./lib/map-net');
 const { buildGroups, createHasher } = require('./lib/similar');
 const { checkDiscard, discardInfo, discardFiles } = require('./lib/similar-discard');
 const { createDriveKindOf } = require('./lib/platform');
@@ -622,6 +623,27 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   });
 
   ipcMain.handle('gallery:search-place', (e, query) => mapNet.search(query));
+
+  // 장소 이름: 화면은 사진 번호만 보내요 (좌표는 DB에서 읽어요. 화면이 좌표를 정하지 못해요)
+  //   ask: false → 저장해 둔 이름만 (인터넷에 안 나감), true → 없으면 서버에 물어보고 저장
+  //   돌려주는 값: { name } (name null = 아직 모름, '' = 이름 없는 곳). 위치가 없거나 다른 폴더 사진이면 null
+  ipcMain.handle('gallery:place-name', async (e, id, ask) => {
+    if (!Number.isSafeInteger(id) || id < 1) throw new Error('파일 번호가 올바르지 않아요');
+    const root = rootNow();
+    if (!db || !root) return null;
+    const f = db.getFile(id);
+    if (!f || f.missing || f.root !== root || f.lat === null || f.lng === null) return null;
+    const key = `${roundCoord(f.lat).toFixed(3)},${roundCoord(f.lng).toFixed(3)}`;
+    const saved = db.getPlaceName(key);
+    if (saved !== null || ask !== true) return { name: saved };
+    const name = await mapNet.reverse(f.lat, f.lng); // 실패하면 정해진 문장으로 거절돼요 (좌표는 로그에 안 남아요)
+    try {
+      db.setPlaceName(key, name, new Date().toISOString());
+    } catch (err) {
+      errorLog('장소 이름 저장', err); // 저장을 못 해도 이번에는 보여 줘요
+    }
+    return { name };
+  });
 
   // 지도 출처 링크: 화면은 주소를 보내지 않고, 고정 주소 하나만 기본 브라우저로 열어요
   ipcMain.handle('gallery:open-map-credit', async () => {
