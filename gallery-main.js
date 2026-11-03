@@ -227,7 +227,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // ---------- 화면의 부탁 ----------
   ipcMain.handle('gallery:get-state', () => {
     const root = rootNow();
-    const t = getTools() || {};
+    const t = getTools(); // 아직 찾는 중이면 null → 화면에는 tools: null (도구 "없음" 안내를 잘못 띄우지 않게)
     const out = {
       root,
       connected: !!root && isDir(root),
@@ -241,7 +241,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       tags: [],
       scan: { ...scan },
       scanStatus: lastStatus,
-      tools: { exiftool: !!(t.exiftool && t.exiftool.ok), ffmpeg: !!(t.ffmpeg && t.ffmpeg.ok) },
+      tools: t ? { exiftool: !!(t.exiftool && t.exiftool.ok), ffmpeg: !!(t.ffmpeg && t.ffmpeg.ok) } : null,
       jobPending: !!(getJobPending && getJobPending()),
     };
     if (dbError) out.dbError = dbError;
@@ -543,10 +543,12 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // ---------- main.js가 부르는 것들 ----------
   let started = false;
   return {
-    // 창이 처음 열리면: 백업 폴더가 있으면 읽기 시작
+    // 창이 처음 열리고 도구를 찾았으면: 백업 폴더가 있으면 읽기 시작
+    //   창은 도구를 찾기 전에 먼저 떠요. 그래서 화면이 도구 정보(tools)를 다시 읽도록 한 번 알려요
     onWindowReady() {
       if (started) return;
       started = true;
+      send('gallery:library-changed');
       const root = rootNow();
       if (root) runScan(root, {}).catch((e) => errorLog('시작 읽기', e));
     },

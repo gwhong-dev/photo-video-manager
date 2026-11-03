@@ -26,6 +26,7 @@ const { setupGallery, registerScheme } = require('./gallery-main');
 let win = null;
 let settings = null;   // 저장된 설정 (폴더 경로, 도구 위치 등)
 let tools = null;      // 찾은 도구들
+let toolsReady = null; // 켤 때 처음 도구 찾기 (창을 먼저 띄우고 뒤에서 찾아요. 끝나면 tools가 채워져요)
 let et = null;         // 계속 켜 둔 exiftool
 let store = null;      // 작업 목록 저장소
 let job = null;        // 지금 작업 (이어하기용)
@@ -60,7 +61,8 @@ function saveSettings() {
 const TOOLS_BUSY_MSG = '가져오기 실행이나 미리보기가 끝난 뒤에 도구를 다시 찾을 수 있어요';
 const toolsBusy = () => running || planning;
 
-async function refreshTools() {
+//   notify: false = 갤러리에 알리지 않아요 (켤 때 처음 찾기. 갤러리는 창이 열린 뒤 toolsReady를 기다렸다가 스스로 읽기 시작해요)
+async function refreshTools({ notify = true } = {}) {
   const found = await detectTools(settings, __dirname);
   // 찾는 동안(몇백 ms) 작업이 시작됐을 수 있어서, 바꾸기 직전에 한 번 더 확인해요
   if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG);
@@ -71,7 +73,7 @@ async function refreshTools() {
   if (old) old.close();
   et = tools.exiftool.ok ? new ExifTool(tools.exiftool.path) : null;
   // 갤러리 읽기는 옛 exiftool이 닫히면 오류로 끝나거나(읽는 중), 'exiftool 없음'으로 끝났을 수 있어서 한 번 다시 읽어요
-  if (gallery) {
+  if (gallery && notify) {
     try {
       gallery.onToolsChanged();
     } catch (err) {
@@ -148,8 +150,9 @@ function createWindow() {
     try { logger.newLog('window-guard', `${kind} 막음: ${String(url).slice(0, 200)}`); } catch (e) { /* 로그를 못 써도 막기는 그대로예요 */ }
   });
   showStartScreen();
-  // 창이 처음 다 열리면 갤러리가 백업 폴더 읽기를 시작해요
-  win.webContents.once('did-finish-load', () => {
+  // 창이 처음 다 열리고 도구도 다 찾았으면 갤러리가 백업 폴더 읽기를 시작해요 (읽으려면 exiftool이 필요해요)
+  win.webContents.once('did-finish-load', async () => {
+    if (toolsReady) await toolsReady;
     if (gallery) gallery.onWindowReady();
   });
 
@@ -212,6 +215,7 @@ const send = (ch, data) => {
 
 // 처음 켤 때 상태
 ipcMain.handle('get-state', async () => {
+  if (toolsReady) await toolsReady; // 처음 찾기가 아직이면 끝날 때까지 기다려요 (찾는 중에 "없음"으로 보이지 않게)
   if (!tools) await refreshTools();
   return { settings, tools, job: jobInfo() };
 });
@@ -219,12 +223,14 @@ ipcMain.handle('get-state', async () => {
 // 도구 다시 찾기
 ipcMain.handle('check-tools', async () => {
   if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG);
+  if (toolsReady) await toolsReady; // 처음 찾기와 겹치지 않게
   return refreshTools();
 });
 
 // 도구 위치 직접 고르기 (exe 파일 선택)
 ipcMain.handle('pick-tool', async (e, name) => {
   if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG);
+  if (toolsReady) await toolsReady; // 처음 찾기가 끝난 뒤에 (취소하면 지금 도구 정보를 돌려주려고)
   const r = await dialog.showOpenDialog(win, {
     title: `${name} 실행 파일 선택`,
     properties: ['openFile'],
@@ -447,12 +453,12 @@ app.whenReady().then(async () => {
   } catch (e) {
     job = null;
   }
-  // 갤러리가 폴더를 읽으려면 exiftool이 필요해서 창을 열기 전에 도구부터 찾아요
-  try {
-    await refreshTools();
-  } catch (e) {
+  // 도구 찾기는 기다리지 않고 시작만 해요. 창이 먼저 뜨고, 도구(exiftool 등 4개 실행)는 뒤에서 찾아요
+  //   찾는 동안 화면의 get-state(가져오기)와 갤러리 읽기 시작은 toolsReady를 기다려요. 실패해도 앱은 켜져요 (tools는 null 그대로)
+  toolsReady = refreshTools({ notify: false }).catch((e) => {
     logger.newLog('startup', `도구 찾기 실패 ${e.message}`);
-  }
+    return null;
+  });
   try {
     gallery = setupGallery({
       ipcMain,

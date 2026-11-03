@@ -1648,8 +1648,11 @@ const items = [
         let dialogCalls = 0;
         const spellCalls = [];
         let readyRun = null;
+        let winCount = 0; // 창을 몇 번 만들었는지 (창이 도구 찾기보다 먼저 만들어지는지 보려고)
+        const onceHandlers = new Map(); // 창의 once 핸들러 (did-finish-load를 점검에서 직접 불러요)
+        const sentChannels = []; // 창으로 보낸 알림 채널
         const win = {
-          webContents: { once() {}, send() {}, on() {}, setWindowOpenHandler() {} },
+          webContents: { once: (ev, fn) => onceHandlers.set(ev, fn), send: (ch) => sentChannels.push(ch), on() {}, setWindowOpenHandler() {} },
           on() {},
           loadFile: async () => {},
           isDestroyed: () => false,
@@ -1664,7 +1667,7 @@ const items = [
             quit() {},
             whenReady: () => ({ then: (cb) => { readyRun = Promise.resolve().then(cb); return readyRun; } }),
           },
-          BrowserWindow: function FakeWindow() { return win; },
+          BrowserWindow: function FakeWindow() { winCount++; return win; },
           ipcMain: { handle: (ch, fn) => handlers.set(ch, fn) },
           dialog: { showOpenDialog: async () => { dialogCalls++; return { canceled: true, filePaths: [] }; }, showMessageBoxSync: () => 1, showMessageBox: async () => ({}) },
           shell: { trashItem: async () => {}, openPath: async () => '' },
@@ -1680,10 +1683,13 @@ const items = [
         };
         process.env.PVM_USER_DATA = ud;
         let loadError = '';
+        let atReady = null; // whenReady가 끝난 직후의 모습 (창 개수, 갤러리 상태)
         try {
           delete require.cache[mainPath];
           require(mainPath);
-          await readyRun; // 도구 찾기, 갤러리 연결까지
+          await readyRun; // 갤러리 연결과 창 만들기까지 (도구 찾기는 뒤에서 계속돼요)
+          // 창이 뜨기 전에 도구 찾기를 기다리지 않는지: 이 시점에 창은 있고, 도구는 아직 null이어야 해요
+          atReady = { winCount, state: handlers.has('gallery:get-state') ? await handlers.get('gallery:get-state')({}) : null };
         } catch (e) {
           loadError = e && e.message ? e.message : String(e);
         } finally {
@@ -1699,6 +1705,22 @@ const items = [
           const call = (ch, ...args) => handlers.get(ch)({}, ...args);
           const errOf = (pr) => pr.then(() => null, (e) => (e && e.message ? e.message : String(e)));
           const korean = (m) => typeof m === 'string' && /[가-힣]/.test(m) && m.includes('끝난 뒤');
+
+          // 창이 먼저 뜨고 도구는 뒤에서 찾아요 (갤러리 남은 일 "창이 뜨기 전 도구 탐지 대기")
+          out.push(sub('창은 도구를 찾기 전에 만들어짐 (whenReady 직후 창 1개, 갤러리 상태의 tools는 null)', !!atReady && atReady.winCount === 1 && !!atReady.state && atReady.state.tools === null, JSON.stringify({ winCount: atReady && atReady.winCount, tools: atReady && atReady.state && atReady.state.tools })));
+          // 창이 다 열리면(did-finish-load) 도구 찾기를 기다렸다가 갤러리가 읽기를 시작해요
+          const finishLoad = onceHandlers.get('did-finish-load');
+          const loaded = finishLoad ? finishLoad() : Promise.resolve();
+          const s0 = await call('get-state'); // 가져오기 화면의 첫 상태는 도구 찾기가 끝난 뒤에 돌아와요
+          out.push(sub('get-state는 처음 도구 찾기를 기다려 도구 정보를 돌려줌', !!s0.tools && !!s0.tools.exiftool && s0.tools.exiftool.ok === true, JSON.stringify(s0.tools && s0.tools.exiftool)));
+          await loaded;
+          let gs = null;
+          for (let i = 0; i < 60; i++) { // 빈 백업 폴더라 읽기는 금방 끝나요. 최대 3초
+            gs = await call('gallery:get-state');
+            if (gs.scanStatus === 'done') break;
+            await new Promise((r) => setTimeout(r, 50));
+          }
+          out.push(sub('창이 열리면 도구를 찾은 뒤 갤러리 상태에 tools가 채워지고 읽기가 시작됨', !!gs && !!gs.tools && gs.tools.exiftool === true && gs.scanStatus === 'done' && sentChannels.includes('gallery:library-changed'), JSON.stringify({ tools: gs && gs.tools, scanStatus: gs && gs.scanStatus, sent: sentChannels.slice(0, 5) })));
 
           // 지도와 검색 서버 주소는 settings.json에서만 바꿔요. 화면이 보낸 값은 버리고 다른 칸은 저장해요 (설계서 4-3)
           const savedBack = await call('save-settings', { mapTileUrl: 'https://evil.example/{z}/{x}/{y}.png', placeSearchUrl: 'https://evil.example/search', includeSub: true });
