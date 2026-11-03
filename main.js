@@ -12,7 +12,13 @@ const fs = require('fs');
 
 const { ExifTool } = require('./lib/exiftool');
 const { detectTools } = require('./lib/tools');
-const { makePlan, NO_DATE_DIR, statusLabelOf, isIssue } = require('./lib/planner');
+const { makePlan, priorKey, readMetaWithKeys, META_TAGS, isVideoPath, NO_DATE_DIR, statusLabelOf, isIssue } = require('./lib/planner');
+
+// 원본 정리 직전에 변환된 중복을 확인할 정보 (애플 ID, 촬영 날짜, 가로×세로) → Map<keyOf(경로), 정보>
+const cleanReadMeta = (paths) => {
+  if (!et) throw new Error('exiftool 없음');
+  return readMetaWithKeys(et, paths.map((p) => ({ path: p, isVideo: isVideoPath(p) })), [...META_TAGS, 'ImageWidth', 'ImageHeight']);
+};
 const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
 const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals } = require('./lib/cleaner');
@@ -277,7 +283,16 @@ ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
 
   planning = true;
   try {
-    lastPlan = await makePlan({ source, backupRoot, includeSub }, et, (msg) => send('plan-status', msg));
+    // 이전 작업에서 변환을 끝낸 원본은 "이미 정리됨"으로 (같은 폴더를 다시 가져와도 _1 복사본이 또 생기지 않게, M4)
+    let priorResults = null;
+    try {
+      priorResults = store.priorResults(priorKey, (name, err) => {
+        try { logger.newLog('plan-prior', `이전 작업 기록 읽기 실패 ${name}: ${err.message}`); } catch (e2) { /* 로그 실패는 무시 */ }
+      });
+    } catch (err) {
+      priorResults = null; // 못 읽으면 예전처럼 (이름이 겹치면 _1)
+    }
+    lastPlan = await makePlan({ source, backupRoot, includeSub }, et, (msg) => send('plan-status', msg), { priorResults });
   } finally {
     planning = false;
   }
@@ -364,7 +379,7 @@ ipcMain.handle('trash-info', async () => {
   running = true;
   try {
     cleanDriveKindOf = createDriveKindOf();
-    const targets = job ? await cleanTargets(job, { ffprobe: tools.ffprobe.path, store, logger, onProgress: (p) => send('clean-check-progress', p) }) : [];
+    const targets = job ? await cleanTargets(job, { ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, onProgress: (p) => send('clean-check-progress', p) }) : [];
     // 확인하다 재생 불가를 찾으면 개수가 바뀌어요 → 작업 정보도 새로 보내요
     return { ...(await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf })), job: jobInfo() };
   } finally {
@@ -378,7 +393,7 @@ ipcMain.handle('trash-originals', async () => {
   // 정리하는 동안에는 "실행 중"으로 표시 → 미리보기·새 작업·작업 끝내기를 막아요 (기록이 섞이지 않게)
   running = true;
   try {
-    const targets = job ? await cleanTargets(job, { ffprobe: tools.ffprobe.path, store, logger }) : [];
+    const targets = job ? await cleanTargets(job, { ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta }) : [];
     const r = await cleanOriginals({
       job,
       store,

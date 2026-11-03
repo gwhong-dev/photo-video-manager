@@ -254,12 +254,81 @@ const ITEMS = [
       fs.copyFileSync(path.join(AUTO, 'IMG_0101.jpg'), path.join(src2, '사본_IMG_0101.jpg'));
       const plan2 = await makePlan({ source: src2, backupRoot: p.backupRoot, includeSub: true }, env.et);
       const it2 = plan2.items[0];
-      return [
+      const out = [
         sub('같은 파일 2개 → 완료 1 + 중복 1', st.join(',') === 'done,dup', st.join(',')),
         sub('이름만 다른 같은 파일 IMG_0104 / IMG_0104(1) → 완료 1 + 중복 1', st2.join(',') === 'done,dup', st2.join(',')),
         sub('백업에 이미 있는 같은 내용(다른 이름) → 중복', it2.status === 'dup' && !!it2.dupOf && fs.existsSync(it2.dupOf), `${it2.status} ${it2.note || ''}`),
         expectPath(p, 'other/IMG_0101.jpg'),
       ];
+
+      // 8a 사용자 결정 (2026-11-04, M4): 이전 작업에서 변환을 끝낸 원본(경로, 크기, 수정 시각이 같음)은 다시 미리보기해도 _1을 만들지 않고 "이미 정리됨"
+      {
+        const { priorKey } = require('../lib/planner');
+        const root8 = path.join(env.tmp, 'prior-results');
+        const src8 = path.join(root8, 'source');
+        const bk8 = path.join(root8, 'backup');
+        fs.mkdirSync(src8, { recursive: true });
+        const heic = path.join(src8, '2026-01-02_030405_NOID.heic'); // 애플 ID 없는 변환 파일 (내용은 가짜)
+        fs.writeFileSync(heic, 'fake heic');
+        const stH = fs.statSync(heic);
+        const result = path.join(bk8, '2026', '01', '02', '2026-01-02_030405_NOID.jpg');
+        fs.mkdirSync(path.dirname(result), { recursive: true });
+        fs.writeFileSync(result, 'converted before');
+        // 보관 작업 1개 (수정 시각 있음) + 옛 작업 1개 (수정 시각 없음 → 쓰지 않음)
+        const store8 = new JobStore(path.join(root8, 'jobs'));
+        const old = store8.create({ items: [{ i: 0, src: heic, size: stH.size, converted: true, status: 'todo' }] });
+        store8.mark(old, 0, { status: 'done', finalPath: path.join(bk8, 'old.jpg') });
+        store8.close('replaced');
+        const j8 = store8.create({ items: [{ i: 0, src: heic, size: stH.size, srcMtimeMs: stH.mtimeMs, converted: true, status: 'todo' }] });
+        store8.mark(j8, 0, { status: 'done', finalPath: result });
+        store8.close('replaced');
+        const prior = store8.priorResults(priorKey);
+        out.push(sub('8a 보관 작업에서 변환을 끝낸 원본 기록을 읽음 (수정 시각이 없는 옛 기록은 안 씀)',
+          prior.size === 1 && prior.get(priorKey(heic, stH.size, stH.mtimeMs)) === result, JSON.stringify([...prior])));
+        const again = (await makePlan({ source: src8, backupRoot: bk8, includeSub: true }, env.et, () => {}, { priorResults: prior })).items[0];
+        const without = (await makePlan({ source: src8, backupRoot: bk8, includeSub: true }, env.et)).items[0];
+        out.push(sub('8a 다시 미리보기: 이전 결과가 있으면 "이미 정리됨"(정리 대상 아님), 기록이 없으면 예전처럼 _1',
+          again.status === 'skip' && !again.check && again.note.includes('이전 작업에서 이미 변환함') && without.status === 'todo' && /_1\.jpg$/.test(without.name),
+          `${again.status} ${again.note} / ${without.status} ${without.name}`));
+        fs.utimesSync(heic, new Date(), new Date(Date.now() - 3600 * 1000)); // 원본이 그 사이 바뀜 (수정 시각 다름)
+        const changed = (await makePlan({ source: src8, backupRoot: bk8, includeSub: true }, env.et, () => {}, { priorResults: prior })).items[0];
+        fs.rmSync(result);
+        fs.utimesSync(heic, stH.atime, stH.mtime);
+        const gone = (await makePlan({ source: src8, backupRoot: bk8, includeSub: true }, env.et, () => {}, { priorResults: prior })).items[0];
+        out.push(sub('8a 원본 수정 시각이 다르거나 이전 결과 파일이 없으면 건너뛰지 않음 (새로 변환)',
+          changed.status === 'todo' && gone.status === 'todo', `${changed.status} / ${gone.status}`));
+      }
+
+      // 8b 사용자 결정 (2026-11-04, 열린 질문 5): 변환된 중복은 애플 ID, 촬영 날짜, 가로×세로가 모두 같을 때만 원본 정리 대상
+      {
+        const cleaner = require('../lib/cleaner');
+        const { keyOf } = require('../lib/planner');
+        const root8 = path.join(env.tmp, 'converted-dup');
+        fs.mkdirSync(root8, { recursive: true });
+        const src = path.join(root8, 'IMG_1.HEIC');
+        const keep = path.join(root8, 'kept.jpg');
+        fs.writeFileSync(src, 'heic bytes');
+        fs.writeFileSync(keep, 'jpg bytes, different size');
+        const base = { ContentIdentifier: 'ABC', DateTimeOriginal: '2026:01:02 03:04:05', ImageWidth: 4032, ImageHeight: 3024 };
+        const reader = (a, b) => async () => new Map([[keyOf(src), { ...base, ...a }], [keyOf(keep), { ...base, ...b }]]);
+        const ok = (a = {}, b = {}) => cleaner.convertedDupOk({ src }, keep, reader(a, b));
+        out.push(sub('8b 애플 ID, 촬영 날짜, 가로×세로가 같으면 같은 촬영 (세로로 돌린 것도), 하나라도 다르거나 모르면 아님',
+          (await ok()) && (await ok({}, { ImageWidth: 3024, ImageHeight: 4032 }))
+            && !(await ok({}, { ContentIdentifier: 'XYZ' })) && !(await ok({}, { ContentIdentifier: undefined }))
+            && !(await ok({}, { DateTimeOriginal: '2026:01:02 03:04:06' })) && !(await ok({}, { ImageWidth: 4000 }))
+            && !(await ok({}, { ImageWidth: undefined }))
+            && !(await cleaner.convertedDupOk({ src }, keep, async () => { throw new Error('exiftool 없음'); }))));
+        const item = (over) => ({ i: 0, src, status: 'dup', converted: true, dupOf: keep, ...over });
+        const jobOf = (it) => ({ items: [it] });
+        const quick = [item({}), item({ sameShot: true }), item({ sameShot: true, check: true })].map((it) => cleaner.cleanCandidates(jobOf(it)).length);
+        const strictNo = await cleaner.cleanTargets(jobOf(item({ sameShot: true })), {});
+        const strictYes = await cleaner.cleanTargets(jobOf(item({ sameShot: true })), { readMeta: reader({}, {}) });
+        const strictDiff = await cleaner.cleanTargets(jobOf(item({ sameShot: true })), { readMeta: reader({}, { DateTimeOriginal: '2020:01:01 00:00:00' }) });
+        out.push(sub('8b 정리 대상: 애플 ID로 같은 촬영이 된 변환 중복만 후보, 정리 직전에 정보를 다시 읽어 맞을 때만 (못 읽으면 남김)',
+          quick.join(',') === '0,1,0' && strictNo.length === 0 && strictYes.length === 1 && strictDiff.length === 0,
+          `${quick.join(',')} / ${strictNo.length} ${strictYes.length} ${strictDiff.length}`));
+      }
+      return out;
     },
   },
   {
