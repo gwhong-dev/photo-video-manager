@@ -203,6 +203,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   }
 
   // 폴더 읽기 시작. 같은 요청은 library가 합쳐 줘요. 끝까지 읽었을 때(done)만 썸네일 백그라운드를 시작해요
+  let pruned = false; // 옛 썸네일 정리를 이번 실행에서 했는지
   async function runScan(root, options) {
     if (!library) return { status: 'no-db' };
     if (!root) return { status: 'no-root' };
@@ -220,7 +221,14 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       scan.phase = '';
     }
     pushScan(true);
-    if (result.status === 'done' && root === rootNow() && thumbs) thumbs.startBackground(root);
+    if (result.status === 'done' && root === rootNow() && thumbs) {
+      // 켠 뒤 처음 끝까지 읽었을 때 한 번만 옛 썸네일을 정리해요 (파일이 바뀌어 이름이 달라진 썸네일)
+      if (!pruned) {
+        pruned = true;
+        thumbs.pruneOrphans();
+      }
+      thumbs.startBackground(root);
+    }
     return result;
   }
 

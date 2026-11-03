@@ -1442,6 +1442,54 @@ const items = [
         out.push(sub('없는 파일이 20개보다 많이 앞에 있어도 뒤의 파일까지 만들고 끝남, 없는 파일은 none', endedC && statesC.filter((s) => s === 'ready').length === 5 && statesC.filter((s) => s === 'none').length === 25, `끝남 ${endedC}, ${statesC.join(',').slice(0, 80)}`));
       });
 
+      // 17s 옛 썸네일 정리: 파일이 바뀌어 이름이 달라진 .webp만 지움. 지금 파일, 사라진 파일(missing), 다른 폴더 파일, 새로 만든 것, 패턴 밖 파일은 남김
+      await withDb(env, 'thumbs-prune', async (db) => {
+        const dir = path.join(base, 'thumbs-prune');
+        const dirP = path.join(base, 'prune-src');
+        fs.mkdirSync(dirP, { recursive: true });
+        const pa = path.join(dirP, 'a.jpg');
+        const pb = path.join(dirP, 'b.jpg');
+        fs.writeFileSync(pa, 'x');
+        fs.writeFileSync(pb, 'x');
+        db.upsertFiles([rowOf(pa, dirP), rowOf(pb, dirP), row({ root: 'OTHER', path: path.join(base, 'other', 'o.jpg'), name: 'o.jpg', size: 9, mtimeMs: 9 })]);
+        db.setMissing([pb], 1); // b는 폴더에서 사라짐 (USB를 뺀 것처럼)
+        const makerP = async ({ tmpPath }) => { fs.writeFileSync(tmpPath, 'x'); };
+        const t = createThumbs({ db, thumbDir: dir, getTools: () => tools, isBusy: () => false, logger: null, maker: makerP });
+        const fileOf = (name) => db.thumbKeys().find((k) => k.path.endsWith(name));
+        const keepA = thumbPath(dir, fileOf('a.jpg'));
+        const keepB = thumbPath(dir, fileOf('b.jpg'));
+        const keepO = thumbPath(dir, fileOf('o.jpg'));
+        const oldA = thumbPath(dir, { ...fileOf('a.jpg'), mtimeMs: 1 }); // a가 바뀌기 전 썸네일
+        const stranger = path.join(dir, 'ab', 'f'.repeat(40) + '.webp'); // 어느 파일과도 안 맞음
+        const note = path.join(dir, 'ab', '메모.txt');
+        for (const p of [keepA, keepB, keepO, oldA, stranger, note]) {
+          fs.mkdirSync(path.dirname(p), { recursive: true });
+          fs.writeFileSync(p, 'x');
+        }
+        const past = new Date(Date.now() - 60000);
+        for (const p of [keepA, keepB, keepO, oldA, stranger, note]) fs.utimesSync(p, past, past);
+        const fresh = path.join(dir, 'ac', 'e'.repeat(40) + '.webp'); // 정리를 시작한 뒤 생긴 것처럼 (지금 시각)
+        fs.mkdirSync(path.dirname(fresh), { recursive: true });
+        fs.writeFileSync(fresh, 'x');
+        fs.utimesSync(fresh, new Date(Date.now() + 60000), new Date(Date.now() + 60000));
+        const n = await t.pruneOrphans();
+        const again = await t.pruneOrphans();
+        await t.stop();
+        out.push(sub(
+          '17s 옛 썸네일 2개만 지움 (바뀌기 전 a, 맞는 파일 없음)',
+          n === 2 && !fs.existsSync(oldA) && !fs.existsSync(stranger) && again === 0,
+          `지움 ${n}, 다시 ${again}`,
+        ));
+        out.push(sub(
+          '17s 지금 파일, 사라진 파일(missing), 다른 폴더 파일, 새로 만든 것, 패턴 밖 파일은 남김',
+          [keepA, keepB, keepO, fresh, note].every((p) => fs.existsSync(p)),
+          [keepA, keepB, keepO, fresh, note].filter((p) => !fs.existsSync(p)).map((p) => path.basename(p)).join(','),
+        ));
+        const none = createThumbs({ db, thumbDir: path.join(base, 'thumbs-prune-none'), getTools: () => tools, isBusy: () => false, logger: null });
+        out.push(sub('17s 썸네일 폴더가 없으면 0', (await none.pruneOrphans()) === 0));
+        await none.stop();
+      });
+
       // 17o 사진 폴더에는 아무것도 생기지 않음 (썸네일은 thumbs 폴더에만)
       const afterList = listAll(src);
       out.push(sub('사진 폴더에 파일 안 생김 (전후 파일 목록 같음)', JSON.stringify(before) === JSON.stringify(afterList) && !path.resolve(thumbDir).startsWith(path.resolve(src) + path.sep), `${before.length}개, ${afterList.length}개`));
