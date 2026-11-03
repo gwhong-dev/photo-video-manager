@@ -39,14 +39,69 @@ export async function finishApply(left, skip, onSkipError, finish) {
 }
 
 // 목록을 새로 받은 뒤 보여 줄 것을 정해요
-//   current: { key, flipped } 지금 보던 묶음과 처음 상태에서 바꾼 사진 번호들 (없으면 null)
-//   보던 묶음이 남아 있으면 그대로 두고 사라진 번호만 지워요. 없어졌으면 첫 묶음을 처음 상태로. 묶음이 없으면 null
+//   current: { key, flipped, ids } 지금 보던 묶음, 처음 상태에서 바꾼 사진 번호들, 보이던 사진 번호들 (없으면 null. ids는 없어도 돼요)
+//   보던 묶음이 남아 있으면 그대로 두고 사라진 번호만 지워요
+//   묶음 이름표가 바뀌었어도(다시 읽기로 근거 사진이 다른 사진으로 바뀜) 보던 사진이 가장 많이 든 묶음이 있으면 거기 머물러요.
+//   그래야 사람이 끈 체크가 풀리지 않아요. 보던 사진이 든 묶음이 하나도 없으면 첫 묶음을 처음 상태로. 묶음이 없으면 null
 export function settleView(groups, current) {
   if (!groups.length) return null;
-  const same = current ? groups.find((g) => groupKey(g) === current.key) : null;
+  const same = current ? groups.find((g) => groupKey(g) === current.key) || mostOverlapping(groups, current) : null;
   if (!same) return { key: groupKey(groups[0]), flipped: new Set() };
   const ids = new Set(same.targets.map((t) => t.id));
-  return { key: current.key, flipped: new Set([...current.flipped].filter((id) => ids.has(id))) };
+  return { key: groupKey(same), flipped: new Set([...current.flipped].filter((id) => ids.has(id))) };
+}
+
+// 보던 사진(ids와 flipped)이 가장 많이 든 묶음. 하나도 겹치지 않으면 null
+function mostOverlapping(groups, current) {
+  const seen = new Set([...(current.ids || []), ...current.flipped]);
+  let best = null;
+  let bestCount = 0;
+  for (const g of groups) {
+    const count = g.targets.filter((t) => seen.has(t.id)).length;
+    if (count > bestCount) {
+      best = g;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+// 목록 응답을 받는 순서 정리. 요청마다 번호를 매기고(next), 응답이 오면 받을지 정해요(accept)
+//   받는 기준은 "마지막으로 보낸 요청인지"가 아니라 "지금 화면에 있는 것보다 새 응답인지"예요.
+//   느린 PC에서 폴더를 읽는 동안에는 응답이 오기 전에 새 요청이 또 나가요. 마지막 요청만 받으면 모든 응답이 버려져
+//   화면이 계속 "계산하는 중"에 머물러요. 늦게 온 옛 응답(더 새 응답이 이미 화면에 있음)만 버려요
+//   markApplied: 넣기가 끝난 시점. 그 뒤에 보낸 요청의 응답에만 "넣은 뒤" 보기 규칙(맨 앞 묶음)을 써요 (afterApply가 한 번만 참)
+export function createLoadOrder() {
+  let sent = 0;
+  let shown = 0;
+  let appliedAt = null;
+  return {
+    next: () => ++sent,
+    accept(ticket) {
+      if (ticket <= shown) return false;
+      shown = ticket;
+      return true;
+    },
+    markApplied: () => { appliedAt = sent; },
+    afterApply(ticket) {
+      if (appliedAt === null || ticket <= appliedAt) return false;
+      appliedAt = null;
+      return true;
+    },
+  };
+}
+
+// 목록 응답 하나를 받아 보여 줄 것을 정해요. 받지 않으면(옛 응답) null, 받으면 { view }
+//   shown: { view, group } 지금 보여 주는 것. 여기에 결과를 바로 적어요. React 상태는 재렌더 뒤에나 바뀌는데,
+//   느린 PC에서 응답 둘이 재렌더 전에 연달아 처리되면 두 번째가 첫 번째 결과를 못 보고 넣기 전 묶음을 다시 찾아 거기 머물 수 있어요
+export function receiveList(order, ticket, groups, shown) {
+  if (!order.accept(ticket)) return null;
+  const settle = order.afterApply(ticket) ? viewAfterApply : settleView;
+  const current = shown.view && { ...shown.view, ids: shown.group ? shown.group.targets.map((t) => t.id) : [] };
+  const view = settle(groups, current);
+  shown.view = view;
+  shown.group = view ? groups.find((g) => groupKey(g) === view.key) || null : null;
+  return { view };
 }
 
 // 넣기가 끝나고 목록을 새로 받은 뒤 보여 줄 것: 보던 묶음이 남아 있어도 맨 앞 묶음을 처음 상태로 보여 줘요

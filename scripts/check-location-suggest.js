@@ -601,7 +601,7 @@ const items = [
       // src의 .mjs 파일도 React가 없는 순수 계산이에요 (file:// 주소로 불러와요)
       const { pathToFileURL } = require('url');
       const load = (name) => import(pathToFileURL(path.join(__dirname, '..', 'src', name)).href);
-      const { groupKey, isRepeatClick, settleView, viewAfterApply, isChecked, checkedIds, rememberIds, checkAll, finishApply } = await load('suggest-view.mjs');
+      const { groupKey, isRepeatClick, settleView, viewAfterApply, isChecked, checkedIds, rememberIds, checkAll, finishApply, createLoadOrder, receiveList } = await load('suggest-view.mjs');
       const { gapText, suggestApplyLabel, checkAllLabel } = await load('format.mjs');
 
       // ids의 사진은 기기 정보 있음, noDeviceIds의 사진은 기기 정보 없음
@@ -622,6 +622,71 @@ const items = [
       ));
       const moved = settleView([g2], { key: key1, flipped: new Set([11]) });
       out.push(sub('31b 보던 묶음이 사라지면 첫 묶음, 체크는 새로', moved.key === groupKey(g2) && moved.flipped.size === 0));
+      // 다시 읽기로 근거 사진이 바뀌면 묶음 이름표(날:근거 번호)가 달라져요. 보던 사진이 가장 많이 든 묶음에 머물고 끈 체크를 유지해요
+      {
+        const g1b = group('2026-01-01', 7, [11, 12, 14]); // 근거가 1 → 7, 13이 빠지고 14가 생김
+        const other = group('2026-01-01', 8, [13]); // 13은 다른 묶음으로
+        const stay = settleView([g2, other, g1b], { key: key1, flipped: new Set([11, 13]), ids: [11, 12, 13] });
+        out.push(sub(
+          '31q 근거 사진이 바뀌어도 보던 사진이 많이 든 묶음에 머물고, 끈 체크 유지, 사라진 번호는 정리',
+          stay.key === groupKey(g1b) && [...stay.flipped].join(',') === '11',
+          JSON.stringify([stay.key, [...stay.flipped]]),
+        ));
+        const onlyFlipped = settleView([g2, g1b], { key: key1, flipped: new Set([12]) }); // ids 없이 flipped만으로도 찾음
+        const none = settleView([g2], { key: key1, flipped: new Set([11]), ids: [11, 12, 13] }); // 겹치는 묶음이 없으면 첫 묶음
+        out.push(sub('31r ids 없이 끈 사진만으로도 찾고, 겹치는 묶음이 없으면 첫 묶음', onlyFlipped.key === groupKey(g1b) && onlyFlipped.flipped.has(12) && none.key === groupKey(g2) && none.flipped.size === 0));
+      }
+      // 목록 응답 받기: 마지막으로 보낸 요청이 아니어도, 화면에 있는 것보다 새 응답이면 받아요 (느린 PC에서 읽는 동안 화면이 비지 않게)
+      {
+        const o = typeof createLoadOrder === 'function' ? createLoadOrder() : null;
+        let r = [];
+        if (o) {
+          const t1 = o.next(); const t2 = o.next();
+          r.push(o.accept(t1)); // 2를 보낸 뒤 1의 응답이 와도 받음 (예전엔 버려졌어요)
+          r.push(o.accept(t2)); // 그 뒤 2도 받음
+          const t3 = o.next(); const t4 = o.next();
+          r.push(o.accept(t4)); // 4가 먼저 오면 받고
+          r.push(o.accept(t3)); // 늦게 온 3은 버림
+          r.push(o.accept(t4)); // 같은 응답을 두 번은 안 받음
+        }
+        out.push(sub('31s 보낸 순서가 아니라 화면보다 새 응답인지로 받음', !!o && r.join(',') === 'true,true,true,false,false', r.join(',')));
+        const o2 = o ? createLoadOrder() : null;
+        let a = [];
+        if (o2) {
+          const before = o2.next(); // 넣기 전에 보낸 요청
+          o2.markApplied();
+          const after1 = o2.next(); const after2 = o2.next(); // 넣은 뒤 보낸 요청 둘 (gen 변경 + run의 load)
+          a.push(o2.afterApply(before)); // 넣기 전 요청의 응답은 "넣은 뒤" 규칙이 아님
+          a.push(o2.afterApply(after1)); // 넣은 뒤 첫 응답만 맨 앞 묶음으로
+          a.push(o2.afterApply(after2)); // 두 번째는 보던 묶음 유지
+          a.push(o2.afterApply(o2.next())); // 넣기 표시가 없으면 거짓
+        }
+        out.push(sub('31t 넣은 뒤 보낸 요청의 첫 응답에만 맨 앞 묶음 규칙', !!o2 && a.join(',') === 'false,true,false,false', a.join(',')));
+        const panelSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'SuggestPanel.jsx'), 'utf8');
+        out.push(sub('31u 화면이 이 순서 정리를 씀 (보낸 번호 비교 없음)', panelSrc.includes('createLoadOrder()') && panelSrc.includes('receiveList(order.current, mine, next.groups, shown.current)') && panelSrc.includes('.accept(mine)') && !panelSrc.includes('mine !== seq.current')));
+        // 넣은 뒤 응답 둘(gen 변경 + run의 load)이 재렌더 전에 연달아 처리돼도, 두 번째가 첫 번째 결과를 이어받아 맨 앞 묶음에 머물러요
+        //   (첫 번째 결과를 못 보면 넣기 전 묶음의 사진으로 섞인 묶음을 다시 찾아 거기 머물러 31m 규칙이 되돌려져요)
+        if (typeof receiveList === 'function') {
+          const o3 = createLoadOrder();
+          const mixed3 = group('2026-01-03', 3, [31, 32], [33, 34]);
+          const left3 = group('2026-01-03', 3, [], [33, 34]);
+          const next3 = group('2026-01-04', 4, [41]);
+          const shown = { view: { key: groupKey(mixed3), flipped: new Set() }, group: mixed3 };
+          o3.markApplied();
+          const tA = o3.next(); const tB = o3.next();
+          const gotA = receiveList(o3, tA, [next3, left3], shown);
+          const gotB = receiveList(o3, tB, [next3, left3], shown); // 재렌더 없이 바로 다음 응답
+          out.push(sub(
+            '31v 넣은 뒤 응답 둘이 연달아 와도 맨 앞 묶음에 머묾, 보이는 묶음도 바로 갱신',
+            !!gotA && gotA.view.key === groupKey(next3) && !!gotB && gotB.view.key === groupKey(next3) && shown.group === next3,
+            JSON.stringify([gotA && gotA.view.key, gotB && gotB.view.key, shown.group && groupKey(shown.group)]),
+          ));
+          const late = receiveList(o3, tA, [left3], shown); // 늦게 온 옛 응답은 받지 않고 보이는 것도 그대로
+          out.push(sub('31w 옛 응답은 받지 않고 보이는 것 그대로', late === null && shown.group === next3));
+        } else {
+          out.push(sub('31v receiveList 있음', false, '없음'));
+        }
+      }
       out.push(sub('31c 처음 열 때는 첫 묶음', settleView([g1, g2], null).key === key1));
       out.push(sub('31d 묶음이 없으면 null', settleView([], { key: key1, flipped: new Set() }) === null));
 
