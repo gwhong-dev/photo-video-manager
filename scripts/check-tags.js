@@ -58,8 +58,42 @@ const items = [
           JSON.stringify([add.counts, rem.counts, pv.items])));
       }
 
-      // 40c~ 가짜 setupGallery 로 저장, 다시 읽기, 되돌리기, 기록 파일 복구
+      // 40n 띄어쓰기 글자만 다른 앨범 태그 (실사용 테스트에서 "Prague 1"이 두 번 나옴): 읽을 때 맞추고, 전에 저장한 줄은 켤 때 합침
       const { openDb } = require('../lib/db');
+      {
+        const { buildRow } = require('../lib/library');
+        const NB = ' ';
+        const meta = { Subject: [`Prague${NB}1`, 'Prague 1', ` Phu${NB}${NB}Quoc `, '사진'] };
+        const r = buildRow('R', { path: 'R/a.jpg', size: 1, mtimeMs: 1, isVideo: false }, meta);
+        const names = r.tags.map((t) => t.name);
+
+        const dbFile = path.join(env.tmp, 'tags-spaces', 'library.db');
+        fs.mkdirSync(path.dirname(dbFile), { recursive: true });
+        const { db } = openDb(dbFile);
+        const mk = (name, tags) => row({ root: 'R', path: `R/${name}`, name, tags });
+        // 옛 빌드처럼 칸 글자가 다른 이름을 그대로 저장한 상태 (b는 두 이름 다, c는 내가 붙인 태그도 있음)
+        db.upsertFiles([
+          mk('a.jpg', [{ name: `Prague${NB}1`, source: 'album' }]),
+          mk('b.jpg', [{ name: 'Prague 1', source: 'album' }, { name: `Prague${NB}1`, source: 'album' }]),
+          mk('c.jpg', [{ name: 'Prague 1', source: 'album' }, { name: `Phu${NB}Quoc`, source: 'album' }]),
+        ]);
+        const merged = db.mergeSpacedTags();
+        const again = db.mergeSpacedTags();
+        const list = db.tagSummary ? db.tagSummary() : null;
+        const { DatabaseSync } = require('node:sqlite');
+        db.close();
+        const raw = new DatabaseSync(dbFile, { readOnly: true });
+        const tagNames = raw.prepare('SELECT name FROM tags ORDER BY name').all().map((t) => t.name);
+        const counts = raw.prepare('SELECT t.name AS name, COUNT(*) AS n FROM file_tags ft JOIN tags t ON t.id = ft.tag_id GROUP BY t.name ORDER BY t.name').all();
+        raw.close();
+        const cnt = (n) => (counts.find((c) => c.name === n) || { n: 0 }).n;
+        out.push(sub('40n 앨범 태그 띄어쓰기: 읽을 때 U+00A0과 겹친 칸을 보통 칸 하나로(같은 사진 안 중복은 하나), 전에 저장한 줄은 켤 때 합침(두 번째는 0개)',
+          JSON.stringify(names) === '["Prague 1","Phu Quoc","사진"]' && merged === 2 && again === 0
+          && !tagNames.some((n) => n.includes(NB)) && cnt('Prague 1') === 3 && cnt('Phu Quoc') === 1,
+          JSON.stringify([names, merged, again, tagNames, counts])));
+      }
+
+      // 40c~ 가짜 setupGallery 로 저장, 다시 읽기, 되돌리기, 기록 파일 복구
       const { createLogger } = require('../lib/logger');
       const { createJournal } = require('../lib/manual-journal');
       const gmPath = require.resolve('../gallery-main');
