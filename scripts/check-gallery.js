@@ -1839,18 +1839,23 @@ const items = [
           // 18g 전부 중복이어도 원본 정리 (실사용 테스트 10-4 ❌): 한 번 가져온 뒤 원본을 정리하지 않고 작업을 끝냄
           //     → 같은 폴더를 다시 미리보기하면 새로 처리할 파일은 0개지만, 백업에 이미 있는 원본은 정리 대상으로 알려 줘요
           {
-            const first = await call('make-plan', { source: srcDir, backupRoot: destDir, includeSub: true });
+            // 앞 단계와 폴더를 나눠요 (앞에서 백업 폴더에 파일이 생겨도 이 점검의 첫 미리보기가 1개로 시작하게)
+            const src18g = path.join(env.tmp, 'main-fake-src-18g');
+            const dest18g = path.join(env.tmp, 'main-fake-dest-18g');
+            for (const d of [src18g, dest18g]) fs.mkdirSync(d, { recursive: true });
+            fs.copyFileSync(path.join(APP, 'test', 'samples', 'auto', 'IMG_0101.jpg'), path.join(src18g, 'IMG_0101.jpg'));
+            const first = await call('make-plan', { source: src18g, backupRoot: dest18g, includeSub: true });
             await call('start-job');
             const ran = await call('run-batch', 10);
             await call('close-job', 'done'); // 원본 정리를 안 하고 끝냄
-            const again = await call('make-plan', { source: srcDir, backupRoot: destDir, includeSub: true });
+            const again = await call('make-plan', { source: src18g, backupRoot: dest18g, includeSub: true });
             const started = await call('start-job');
             const info = await call('trash-info');
             await call('close-job', 'done');
             out.push(sub('18g 전부 중복이면 새로 처리할 파일 0개라도 정리할 수 있는 원본 수를 알려 주고, 작업을 만들면 원본 정리 대상에 들어감 (원본은 그대로)',
               first.stats.todo === 1 && first.cleanable === 0 && ran.done === 1
               && again.stats.todo === 0 && again.stats.dup === 1 && again.cleanable === 1
-              && !!started && started.deletable === 1 && info.count === 1 && fs.existsSync(path.join(srcDir, 'IMG_0101.jpg')),
+              && !!started && started.deletable === 1 && info.count === 1 && fs.existsSync(path.join(src18g, 'IMG_0101.jpg')),
               JSON.stringify({ first: [first.stats.todo, first.cleanable], ran: ran.done, again: [again.stats.todo, again.stats.dup, again.cleanable], deletable: started && started.deletable, count: info.count })));
           }
         }
