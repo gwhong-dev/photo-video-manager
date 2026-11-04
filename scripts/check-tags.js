@@ -71,26 +71,37 @@ const items = [
         fs.mkdirSync(path.dirname(dbFile), { recursive: true });
         const { db } = openDb(dbFile);
         const mk = (name, tags) => row({ root: 'R', path: `R/${name}`, name, tags });
-        // 옛 빌드처럼 칸 글자가 다른 이름을 그대로 저장한 상태 (b는 두 이름 다, c는 내가 붙인 태그도 있음)
+        // 옛 빌드처럼 칸 글자가 다른 이름을 그대로 저장한 상태 (b는 두 이름 다, d는 앨범 `Prague{U+00A0}1` + 내가 붙인 `Prague 1`)
         db.upsertFiles([
           mk('a.jpg', [{ name: `Prague${NB}1`, source: 'album' }]),
           mk('b.jpg', [{ name: 'Prague 1', source: 'album' }, { name: `Prague${NB}1`, source: 'album' }]),
           mk('c.jpg', [{ name: 'Prague 1', source: 'album' }, { name: `Phu${NB}Quoc`, source: 'album' }]),
+          mk('d.jpg', [{ name: `Prague${NB}1`, source: 'album' }]),
         ]);
+        db.applyManualBatch({ id: 'N1', root: 'R', kind: 'tagAdd', createdAt: '2026-01-01T00:00:00.000Z', items: [{ path: 'R/d.jpg', before: [], after: ['Prague 1'] }] });
         const merged = db.mergeSpacedTags();
         const again = db.mergeSpacedTags();
-        const list = db.tagSummary ? db.tagSummary() : null;
         const { DatabaseSync } = require('node:sqlite');
+        const readTags = () => {
+          const raw = new DatabaseSync(dbFile, { readOnly: true });
+          const tagNames = raw.prepare('SELECT name FROM tags ORDER BY name').all().map((t) => t.name);
+          const counts = raw.prepare('SELECT t.name AS name, COUNT(*) AS n FROM file_tags ft JOIN tags t ON t.id = ft.tag_id GROUP BY t.name ORDER BY t.name').all();
+          const dRows = raw.prepare("SELECT t.name AS name, ft.source AS source FROM file_tags ft JOIN tags t ON t.id = ft.tag_id JOIN files f ON f.id = ft.file_id WHERE f.path = 'R/d.jpg'").all()
+            .map((x) => `${x.name}:${x.source}`);
+          raw.close();
+          return { tagNames, counts, dRows };
+        };
+        const afterMerge = readTags();
+        // 내가 붙인 태그를 떼도 앨범 태그는 남아야 해요
+        db.applyManualBatch({ id: 'N2', root: 'R', kind: 'tagRemove', createdAt: '2026-01-01T00:00:01.000Z', items: [{ path: 'R/d.jpg', before: ['Prague 1'], after: [] }] });
+        const afterRemove = readTags();
         db.close();
-        const raw = new DatabaseSync(dbFile, { readOnly: true });
-        const tagNames = raw.prepare('SELECT name FROM tags ORDER BY name').all().map((t) => t.name);
-        const counts = raw.prepare('SELECT t.name AS name, COUNT(*) AS n FROM file_tags ft JOIN tags t ON t.id = ft.tag_id GROUP BY t.name ORDER BY t.name').all();
-        raw.close();
-        const cnt = (n) => (counts.find((c) => c.name === n) || { n: 0 }).n;
-        out.push(sub('40n 앨범 태그 띄어쓰기: 읽을 때 U+00A0과 겹친 칸을 보통 칸 하나로(같은 사진 안 중복은 하나), 전에 저장한 줄은 켤 때 합침(두 번째는 0개)',
+        const cnt = (n) => (afterMerge.counts.find((c) => c.name === n) || { n: 0 }).n;
+        out.push(sub('40n 앨범 태그 띄어쓰기: 읽을 때 U+00A0과 겹친 칸을 보통 칸 하나로(같은 사진 안 중복은 하나), 전에 저장한 줄은 켤 때 합침(두 번째는 0개), 내 태그와 겹치면 앨범 태그로 남고 내 태그를 떼도 그대로',
           JSON.stringify(names) === '["Prague 1","Phu Quoc","사진"]' && merged === 2 && again === 0
-          && !tagNames.some((n) => n.includes(NB)) && cnt('Prague 1') === 3 && cnt('Phu Quoc') === 1,
-          JSON.stringify([names, merged, again, tagNames, counts])));
+          && !afterMerge.tagNames.some((n) => n.includes(NB)) && cnt('Prague 1') === 4 && cnt('Phu Quoc') === 1
+          && JSON.stringify(afterMerge.dRows) === '["Prague 1:album"]' && JSON.stringify(afterRemove.dRows) === '["Prague 1:album"]',
+          JSON.stringify([names, merged, again, afterMerge, afterRemove.dRows])));
       }
 
       // 40c~ 가짜 setupGallery 로 저장, 다시 읽기, 되돌리기, 기록 파일 복구
