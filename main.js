@@ -296,7 +296,15 @@ ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
   } finally {
     planning = false;
   }
-  return { stats: lastPlan.stats, ...rowsOf(lastPlan, 'all') };
+  // 백업에 이미 있어서 정리할 수 있어 보이는 원본 (새로 처리할 파일이 없어도 원본 정리는 할 수 있게, 2026-11-04 실사용 테스트 10-4)
+  //   빠른 확인이에요. 실제 정리 직전에는 지금처럼 지문과 정보까지 다시 봐요 (cleanTargets)
+  const cleanable = cleanCandidates(lastPlan);
+  return {
+    stats: lastPlan.stats,
+    cleanable: cleanable.length,
+    cleanableBytes: cleanable.reduce((a, it) => a + (it.size || 0), 0),
+    ...rowsOf(lastPlan, 'all'),
+  };
 });
 
 // 표 필터 바꾸기

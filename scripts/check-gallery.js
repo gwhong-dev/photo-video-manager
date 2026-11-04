@@ -1835,6 +1835,21 @@ const items = [
           out.push(sub('작업이 끝나면 다시 찾기가 다시 됨', t1 === null, `${t1}`));
           const t2 = await errOf(call('pick-tool', 'exiftool'));
           out.push(sub('작업이 끝나면 pick-tool도 다시 됨 (선택창을 취소하면 그대로)', t2 === null && dialogCalls === dialogBefore2 + 1, `${t2}`));
+
+          // 18g 전부 중복인 폴더도 원본 정리 (2026-11-04 실사용 테스트 10-4): 한 번 가져온 뒤 같은 폴더를 다시 미리보기하면
+          //     처리할 파일은 0개지만 정리할 수 있는 원본 수를 알려 주고, 작업을 만들어 정리 확인까지 갈 수 있어요 (휴지통은 가짜)
+          const plan1 = await call('make-plan', { source: srcDir, backupRoot: destDir, includeSub: true });
+          await call('start-job');
+          const ran = await call('run-batch', 10);
+          await call('close-job', 'done');
+          const plan2 = await call('make-plan', { source: srcDir, backupRoot: destDir, includeSub: true });
+          const started = await errOf(call('start-job'));
+          const info = await call('trash-info');
+          await call('close-job', 'done');
+          out.push(sub('18g 전부 중복인 미리보기: 처리 0개, 정리할 수 있는 원본 1개 → 작업을 만들고 정리 확인에서도 1개 (처음 미리보기는 정리할 것 0개)',
+            plan1.stats.todo === 1 && plan1.cleanable === 0 && ran.done === 1 && plan2.stats.todo === 0 && plan2.cleanable === 1 && plan2.cleanableBytes > 0
+            && started === null && info.count === 1 && fs.existsSync(path.join(srcDir, 'IMG_0101.jpg')),
+            JSON.stringify({ todo1: plan1.stats.todo, clean1: plan1.cleanable, done: ran.done, todo2: plan2.stats.todo, clean2: plan2.cleanable, started, count: info.count })));
         }
         // 종료 처리 (갤러리 DB, exiftool 끄기)
         try {

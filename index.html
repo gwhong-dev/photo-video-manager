@@ -187,6 +187,7 @@
     const state = { source: '', backupRoot: '', includeSub: true, batchSize: 2000 };
     let job = null;         // 진행 중인 작업 정보
     let planReady = false;  // 미리보기 끝났는지
+    let cleanOnly = false;  // 새로 처리할 파일은 없고 원본 정리만 할 수 있는 미리보기인지 (전부 중복인 폴더)
     let busy = false;       // 뭔가 하는 중인지
 
     // ---------- 도우미 ----------
@@ -339,7 +340,9 @@
     }
     function resetPlan() {
       planReady = false;
+      cleanOnly = false;
       $('runBtn').disabled = true;
+      $('runBtn').textContent = '✅ 실행';
     }
     // 고르는 순간 폴더 조합 확인 → 안 되면 이유를 보여주고 고른 것을 취소
     async function folderRejected(source, backupRoot) {
@@ -404,7 +407,13 @@
         renderStats(res.stats);
         $('filter').value = 'all';
         renderTable(res);
-        if (res.stats.todo === 0) {
+        if (res.stats.todo === 0 && res.cleanable > 0) {
+          // 전부 중복이어도 백업에 이미 있는 원본은 정리할 수 있어요 → 실행 버튼이 원본 정리로 바뀌어요
+          planReady = true;
+          cleanOnly = true;
+          $('runBtn').textContent = `🧹 원본 ${num(res.cleanable)}개 정리하기`;
+          setStatus(`✅ 새로 처리할 파일이 없어요 (전부 중복이에요)\n🧹 백업에 이미 있는 원본 ${num(res.cleanable)}개 (${fmtBytes(res.cleanableBytes)})를 정리할 수 있어요. 아래 버튼을 누르면 하나씩 확인한 뒤 물어볼게요`);
+        } else if (res.stats.todo === 0) {
           setStatus('✅ 새로 처리할 파일이 없어요' + (res.stats.dup ? ' (전부 중복이에요)' : ''));
         } else {
           planReady = true;
@@ -420,6 +429,18 @@
     // ---------- 실행 ----------
     $('runBtn').onclick = async () => {
       if (!planReady) return;
+      // 원본 정리만 할 때: 작업을 만들고 바로 원본 정리 확인으로 (변환·복사할 파일이 없어서 실행 확인 창은 건너뛰어요)
+      if (cleanOnly) {
+        try {
+          setJob(await api.startJob());
+          resetPlan();
+          await askTrash();
+          await maybeFinish();
+        } catch (e) {
+          setStatus('❌ ' + cleanErr(e));
+        }
+        return;
+      }
       const n = batchSize();
       const ok = confirm(
         `미리보기대로 실행할까요?\n\n` +
