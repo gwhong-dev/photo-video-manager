@@ -176,6 +176,13 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     } catch (e) {
       errorLog('직접 넣은 값 복구', e);
     }
+    // 띄어쓰기 글자만 다른 앨범 태그를 하나로 합쳐요 (전에 읽어 둔 태그 줄)
+    try {
+      const n = db.mergeSpacedTags();
+      if (n) startupLog([`띄어쓰기만 다른 태그 ${n}개를 합쳤어요`]);
+    } catch (e) {
+      errorLog('띄어쓰기만 다른 태그 합치기', e);
+    }
     // 내가 붙인 태그를 목록 표(file_tags)에 다시 맞춰요 (옛 빌드로 다시 읽은 파일에서 빠졌을 수 있어요)
     try {
       const n = db.resyncManualTags();
