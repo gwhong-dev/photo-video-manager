@@ -296,7 +296,10 @@ ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
   } finally {
     planning = false;
   }
-  return { stats: lastPlan.stats, ...rowsOf(lastPlan, 'all') };
+  // 새로 처리할 파일이 없어도(전부 중복) 백업에 이미 있는 원본은 정리할 수 있게 개수를 같이 보내요 (실사용 테스트 10-4)
+  //   정리 직전에는 지금처럼 cleanTargets 로 지문까지 다시 확인해요
+  const cleanable = lastPlan.stats.todo === 0 ? cleanCandidates(lastPlan).length : 0;
+  return { stats: lastPlan.stats, cleanable, ...rowsOf(lastPlan, 'all') };
 });
 
 // 표 필터 바꾸기
