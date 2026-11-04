@@ -62,19 +62,37 @@ export function manyCheckText(count) {
   return needsManyCheck(count) ? `${formatCount(count)}장에 한 번에 넣는 것이 맞아요` : '';
 }
 
-// 되돌리기 버튼: "124장 위치 되돌리기"
+// 태그 묶음 (단계 5): tagAdd 붙이기, tagRemove 떼기
+const TAG_UNDO = { tagAdd: '태그 붙이기', tagRemove: '태그 떼기' };
+const TAG_APPLIED = { tagAdd: '장에 태그를 붙였어요', tagRemove: '장에서 태그를 뗐어요' };
+
+// 되돌리기 버튼: "124장 위치 되돌리기", "12장 태그 붙이기 되돌리기"
 export function undoLabel(count, kind) {
-  return countOk(count) && KIND_NAME[kind] ? `${formatCount(count)}장 ${KIND_NAME[kind]} 되돌리기` : '';
+  if (!countOk(count)) return '';
+  if (TAG_UNDO[kind]) return `${formatCount(count)}장 ${TAG_UNDO[kind]} 되돌리기`;
+  return KIND_NAME[kind] ? `${formatCount(count)}장 ${KIND_NAME[kind]} 되돌리기` : '';
 }
 
-// 값을 넣은 직후 알림 줄의 글: "124장에 위치를 넣었어요"
+// 값을 넣은 직후 알림 줄의 글: "124장에 위치를 넣었어요", "12장에 태그를 붙였어요"
 export function appliedText(count, kind) {
-  return countOk(count) && KIND_OBJECT[kind] ? `${formatCount(count)}장에 ${KIND_OBJECT[kind]} 넣었어요` : '';
+  if (!countOk(count)) return '';
+  if (TAG_APPLIED[kind]) return `${formatCount(count)}${TAG_APPLIED[kind]}`;
+  return KIND_OBJECT[kind] ? `${formatCount(count)}장에 ${KIND_OBJECT[kind]} 넣었어요` : '';
 }
 
-// 되돌린 직후 알림 줄의 글: "4장 위치를 되돌렸어요"
+// 되돌린 직후 알림 줄의 글: "4장 위치를 되돌렸어요", "12장 태그 붙이기를 되돌렸어요"
 export function undoneText(count, kind) {
-  return countOk(count) && KIND_OBJECT[kind] ? `${formatCount(count)}장 ${KIND_OBJECT[kind]} 되돌렸어요` : '';
+  if (!countOk(count)) return '';
+  if (TAG_UNDO[kind]) return `${formatCount(count)}장 ${TAG_UNDO[kind]}를 되돌렸어요`;
+  return KIND_OBJECT[kind] ? `${formatCount(count)}장 ${KIND_OBJECT[kind]} 되돌렸어요` : '';
+}
+
+// 태그 창의 실행 버튼: "12장에 '여행' 태그 붙이기", "5장에서 '여행' 태그 떼기". 0장이면 빈 글자
+export function tagApplyLabel(count, kind, name) {
+  if (!countOk(count) || !name) return '';
+  if (kind === 'tagAdd') return `${formatCount(count)}장에 '${name}' 태그 붙이기`;
+  if (kind === 'tagRemove') return `${formatCount(count)}장에서 '${name}' 태그 떼기`;
+  return '';
 }
 
 // ---------- 위치 제안 ----------

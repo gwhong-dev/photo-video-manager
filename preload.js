@@ -61,6 +61,10 @@ contextBridge.exposeInMainWorld('api', {
     // 지도에서 위치 고르기: 장소 검색 결과 [{ name, lat, lng }], 지도 출처 링크 열기 (주소는 main이 정해요)
     searchPlace: (query) => ipcRenderer.invoke('gallery:search-place', query),
     placeName: (id, ask) => ipcRenderer.invoke('gallery:place-name', id, ask),
+    tagList: () => ipcRenderer.invoke('gallery:tag-list'),
+    selectionTags: (ids) => ipcRenderer.invoke('gallery:selection-tags', ids),
+    previewTag: (ids, edit) => ipcRenderer.invoke('gallery:tag-preview', ids, edit),
+    applyTag: (ids, edit) => ipcRenderer.invoke('gallery:tag-apply', ids, edit),
     openMapCredit: () => ipcRenderer.invoke('gallery:open-map-credit'),
     // 비슷한 사진: 묶음 목록, 버리기 미리보기, 버리기 (id로만)
     listSimilar: () => ipcRenderer.invoke('gallery:similar-list'),

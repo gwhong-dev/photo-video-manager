@@ -26,6 +26,7 @@
 //   trash(경로): 휴지통으로 보내기 (main.js 가 shell.trashItem 을 넘겨요). 없으면 비슷한 사진 버리기는 이동만 해요
 //   makeDriveKindOf(): 드라이브 종류 판단기 만들기 (기본 lib/platform.js). 버리기 때마다 새로 만들어요
 //   비슷한 사진: lib/similar.js (지문, 묶기), lib/similar-discard.js (버리기 확인과 옮기기). 버리기만 사진 파일을 옮겨요 (휴지통 또는 _정리완료원본)
+//   내가 붙이는 태그: lib/manual-tags.js (규칙). 값 넣기와 같은 순서(기록 파일 → DB → 로그)로 저장하고 같은 되돌리기 줄로 되돌려요. 사진 파일에는 안 써요
 
 const fs = require('fs');
 const crypto = require('crypto');
@@ -44,6 +45,7 @@ const { createMapNet, roundCoord } = require('./lib/map-net');
 const { buildGroups, createHasher } = require('./lib/similar');
 const { checkDiscard, discardInfo, discardFiles } = require('./lib/similar-discard');
 const { createDriveKindOf } = require('./lib/platform');
+const { isTagKind, normalizeTagEdit, planTagEdit, toTagPreview } = require('./lib/manual-tags');
 
 const SCHEME = 'pvm';
 const TABS = ['all', 'photo', 'video', 'screenshot'];
@@ -173,6 +175,13 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       }
     } catch (e) {
       errorLog('직접 넣은 값 복구', e);
+    }
+    // 내가 붙인 태그를 목록 표(file_tags)에 다시 맞춰요 (옛 빌드로 다시 읽은 파일에서 빠졌을 수 있어요)
+    try {
+      const n = db.resyncManualTags();
+      if (n) startupLog([`내가 붙인 태그 ${n}개를 목록에 다시 넣었어요`]);
+    } catch (e) {
+      errorLog('내가 붙인 태그 다시 맞추기', e);
     }
   }
 
@@ -400,6 +409,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
 
   const locText = (v) => (!v || v.lat === null || v.lat === undefined ? '없음' : `${v.lat},${v.lng}`);
   const dateText = (v) => (v && v.takenAt ? v.takenAt : '없음');
+  const tagText = (v) => (Array.isArray(v) && v.length ? v.join(', ') : '없음');
 
   // 복사할 기준 사진의 값 요약 (파일 경로 없음). 없거나 사라졌거나 다른 폴더 것이면 null
   ipcMain.handle('gallery:get-copy-source', (e, id) => {
@@ -513,9 +523,61 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     }
     saveOrVoid('undo', last.id, '되돌리기', () => db.undoBatch(last.id, at));
     // 되돌리기 로그: 파일별로 "되돌리기 전(넣었던 값) → 되돌린 뒤(그 전 값, 직접 넣은 값이 없었으면 없음)"
-    finishEdit('직접 넣은 값 되돌리기', last.id, last.kind, last.count, () => db.batchItems(last.id).map((it) =>
-      `${it.path}\t직접 넣은 날짜 ${dateText(it.after)} → ${dateText(it.before)}\t직접 넣은 위치 ${locText(it.after)} → ${locText(it.before)}`));
+    if (isTagKind(last.kind)) {
+      finishEdit('태그 되돌리기', last.id, last.kind, last.count, () => db.batchItems(last.id).map((it) =>
+        `${it.path}\t태그 ${tagText(it.after)} → ${tagText(it.before)}`));
+    } else {
+      finishEdit('직접 넣은 값 되돌리기', last.id, last.kind, last.count, () => db.batchItems(last.id).map((it) =>
+        `${it.path}\t직접 넣은 날짜 ${dateText(it.after)} → ${dateText(it.before)}\t직접 넣은 위치 ${locText(it.after)} → ${locText(it.before)}`));
+    }
     return { kind: last.kind, count: last.count };
+  });
+
+  // ---------- 내가 붙이는 태그 (단계 5) ----------
+  //   순서는 값 넣기와 같아요: 검사 → 다시 계산 → 기록 파일에 먼저 적기 → DB 저장 → (저장이 실패하면 void) → 로그 → 화면 알림
+  //   화면은 사진 번호와 태그 이름만 보내요. 미리보기는 믿지 않고 넣을 때 다시 계산해요
+
+  // 태그 목록: 내가 붙인 태그와 앨범 태그 (장수 많은 순)
+  ipcMain.handle('gallery:tag-list', () => {
+    const root = rootNow();
+    if (!db || !root) return { manual: [], album: [] };
+    const s = db.summary(root);
+    return { manual: s.manualTags, album: s.tags };
+  });
+
+  // 고른 사진들에 내가 붙인 태그와 장수 (떼기 창에서 고를 목록)
+  ipcMain.handle('gallery:selection-tags', (e, ids) => {
+    const root = editReady();
+    return db.manualTagsOf(checkIds(ids), root);
+  });
+
+  const computeTagPlan = (root, ids, edit) => planTagEdit(db.getFilesByIds(checkIds(ids)), normalizeTagEdit(edit), (p) => db.getManualTags(p), root);
+
+  // 미리보기: 아무것도 저장하지 않아요
+  ipcMain.handle('gallery:tag-preview', (e, ids, edit) => {
+    const root = editReady();
+    return toTagPreview(computeTagPlan(root, ids, edit));
+  });
+
+  // 붙이기·떼기: 바뀌는 사진만 저장해요. 바꿀 것이 없으면 아무것도 쓰지 않고 count 0
+  ipcMain.handle('gallery:tag-apply', (e, ids, edit) => {
+    const root = editReady();
+    const plan = computeTagPlan(root, ids, edit);
+    const changed = plan.items.filter((it) => it.status === 'changed');
+    if (!changed.length) return { batchId: null, kind: plan.kind, count: 0 };
+    const batchId = crypto.randomUUID();
+    const at = new Date().toISOString();
+    const items = changed.map((it) => ({ path: it.path, before: it.before, after: it.after }));
+    try {
+      journal.append({ type: 'apply', batchId, at, root, kind: plan.kind, via: 'tag', sourcePath: null, items });
+    } catch (err) {
+      errorLog('태그 기록 파일 쓰기', err);
+      throw new Error(`기록 파일에 쓰지 못해서 태그를 바꾸지 않았어요${codeNote(err)}. 자세한 내용은 로그 폴더의 오류 로그에 있어요.`);
+    }
+    saveOrVoid('apply', batchId, '태그', () => db.applyManualBatch({ id: batchId, root, kind: plan.kind, createdAt: at, items }));
+    finishEdit(plan.kind === 'tagAdd' ? '태그 붙이기' : '태그 떼기', batchId, plan.kind, changed.length,
+      () => changed.map((it) => `${it.path}\t태그 ${tagText(it.before)} → ${tagText(it.after)}`), `\n태그 ${plan.name}`);
+    return { batchId, kind: plan.kind, count: changed.length };
   });
 
   // ---------- 장소 검색과 지도 출처 ----------

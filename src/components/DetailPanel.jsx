@@ -30,7 +30,7 @@ function Row({ label, children, sub }) {
 }
 
 // 값 넣기 버튼들: 우클릭 메뉴와 같은 일을 해요. count = 고른 장수
-function Actions({ count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap }) {
+function Actions({ count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove }) {
   const n = formatCount(count);
   return (
     <div className="panel-actions">
@@ -38,6 +38,8 @@ function Actions({ count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap }) 
       {hasCopy && <button type="button" onClick={onPaste}>{n}장에 붙여넣기</button>}
       <button type="button" onClick={onDirect}>{n}장에 날짜 직접 넣기</button>
       <button type="button" onClick={onMap}>{n}장 위치 지도에서 고르기</button>
+      <button type="button" onClick={onTagAdd}>{n}장에 태그 붙이기</button>
+      <button type="button" onClick={onTagRemove}>{n}장에서 태그 떼기</button>
     </div>
   );
 }
@@ -132,12 +134,12 @@ function Preview({ file }) {
 }
 
 // selectedId = 자세히 보여 줄 사진, count = 고른 장수, copySource = 복사해 둔 값 (없으면 null)
-// onCopy / onPaste / onDirect / onMap = 버튼을 눌렀을 때 (우클릭 메뉴와 같은 일)
+// onCopy / onPaste / onDirect / onMap / onTagAdd / onTagRemove = 버튼을 눌렀을 때 (우클릭 메뉴와 같은 일)
 // readOnly = 사진 정보만 보여 줘요 (위치 제안 화면). 값 넣기 버튼과 복사한 값 칸을 그리지 않아요
-export default function DetailPanel({ selectedId, gen, count = 0, copySource = null, onCopy, onPaste, onDirect, onMap, readOnly = false }) {
+export default function DetailPanel({ selectedId, gen, count = 0, copySource = null, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, readOnly = false }) {
   const { file, error } = useFileInfo(selectedId, gen);
   const actions = readOnly ? null : (
-    <Actions count={count} canCopy={count === 1} hasCopy={!!copySource} onCopy={onCopy} onPaste={onPaste} onDirect={onDirect} onMap={onMap} />
+    <Actions count={count} canCopy={count === 1} hasCopy={!!copySource} onCopy={onCopy} onPaste={onPaste} onDirect={onDirect} onMap={onMap} onTagAdd={onTagAdd} onTagRemove={onTagRemove} />
   );
 
   let body;
@@ -145,7 +147,7 @@ export default function DetailPanel({ selectedId, gen, count = 0, copySource = n
     body = (
       <>
         <h2 className="detail-name">{formatCount(count)}장 선택함</h2>
-        <p className="panel-hint">고른 사진에 같은 날짜나 위치를 한 번에 넣을 수 있어요. 넣기 전에 바뀌는 내용을 먼저 보여 드려요.</p>
+        <p className="panel-hint">고른 사진에 같은 날짜, 위치, 태그를 한 번에 넣을 수 있어요. 넣기 전에 바뀌는 내용을 먼저 보여 드려요.</p>
         {actions}
       </>
     );
@@ -179,7 +181,7 @@ export default function DetailPanel({ selectedId, gen, count = 0, copySource = n
           <Row label="용량">{formatBytes(file.size) || <Missing />}</Row>
           <Row label="태그">
             {tags.length ? (
-              <span className="chips">{tags.map((t) => <span className="chip" key={t.name}>{t.name}</span>)}</span>
+              <span className="chips">{tags.map((t) => <span className={`chip${t.mine || t.source === 'manual' ? ' mine' : ''}`} key={t.name} title={t.mine || t.source === 'manual' ? '내가 붙인 태그' : undefined}>{t.name}</span>)}</span>
             ) : (
               <Missing />
             )}
