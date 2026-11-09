@@ -74,3 +74,4 @@
 | 2026-11-09 | claude/peaceful-pasteur-g78fp0 | 이 커밋 | 문서만 변경, 점검 없음 | 사용자 지적 | CLAUDE.md 7절: 카드 도구가 시간 초과로 실패해도 복붙용 코드블록으로 대신하지 않고, 한 번 다시 부름 |
 | 2026-11-09 | fix/map-place-names | 이 커밋 | npm run check (44f 추가) | origin/fix/map-place-names | 10절 나머지를 Claude가 이 PC에서 확인 (10-2 · 10-3 ③ · 10-4 다시 · 10-7 자동 · 10-10 ✅). 10-9 ❌ 지도 이름 · 나라가 평균 자리라 대전 · 슬로바키아 · 클리시 → 가장 많이 찍은 2km 칸으로 묻고 나라는 확대 7 묶음 |
 | 2026-11-09 | claude/peaceful-pasteur-g78fp0 | 이 커밋 | 클라우드(xvfb): 17 · 30 통과, 전체 실패는 Linux 탓만 | 10-6 PC 확인 (Claude, 사용자 PC) | 10-6 ✅ 기록. ⚠️ 원본 드라이브가 빠지면 큰 미리보기가 "미리보기 없음" → `thumbs.preview`가 원본을 못 읽으면 만들어 둔 썸네일을 보냄 (위치 제안 · 갤러리 패널 둘 다, 점검 17h 추가). ⚠️ 일부만 넣고 되돌리면 뺀 사진이 건너뜀으로 남는 것은 설계대로라 사용자 질문으로 |
+| 2026-11-09 | claude/peaceful-pasteur-g78fp0 | 이 커밋 | 문서만 변경, 점검 없음 | 사용자 요청 | CLAUDE.md 3-1: 메인 세션 하나 + 병렬 작업만 갈래 세션(create_session), 끝나면 메인이 확인하고 archive_session |
