@@ -5,20 +5,67 @@
 //   위쪽: 장소 검색, 연도 탭 / 아래 왼쪽: 해외에서 찍은 사진 나라 칩 / 아래 오른쪽: 장소가 없는 사진 → 정보 없는 사진 화면
 //   핀 이름 (6-2): 화면에 보이는 큰 핀 몇 개와 많이 찍은 곳, 해외 나라만 main 에 물어봐요 (시 · 군 단위, 받은 이름은 DB에 저장)
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api, errorText } from '../api.js';
 import { QuietTileLayer } from '../leaflet-quiet.js';
 import { nearLng } from '../map-view.mjs';
 import {
-  byYear, cityKey, clusterPoints, COUNTRY_ZOOM, countText, countryChips, NAMED_PINS, nearestCluster,
-  pinSize, summarize, toPoints, topPlaces, yearsOf,
+  byYear, cityKey, clusterPoints, COUNTRY_ZOOM, countText, countryChips, MAX_PINS, NAMED_PINS,
+  pinSize, summarize, toPoints, topPlaces, viewRanges, yearsOf,
 } from '../places-view.mjs';
 
 const KOREA = { center: [36.5, 127.8], zoom: 7 }; // 위치가 있는 사진이 없을 때 처음 위치
 const FIT_MAX_ZOOM = 12; // 처음에 사진들이 다 보이게 맞출 때 너무 가까이 가지 않게
-const GOTO_ZOOM = 11; // 많이 찍은 곳을 눌렀을 때
+const GOTO_MAX_ZOOM = 13; // 많이 찍은 곳을 눌렀을 때 그 사진들이 다 보이게 맞추되 너무 가까이 가지 않게
+const RELOAD_GAP_MS = 5000; // 백업 폴더를 읽는 동안 위치 목록을 다시 받는 최소 간격 (#55 검증: 0.5초마다 6만 줄을 받던 것)
+const AUTO_MAX = 80; // 이번 실행에서 저절로 묻는 이름 수 상한 (#56 검증). 넘으면 저장된 이름만 써요
+
+// ---------- 핀 이름 (앱이 켜져 있는 동안 기억해요. 지도 화면을 다시 열어도 다시 묻지 않게, #56 검증) ----------
+//   이름 열쇠 → { name, country, cc } | 'waiting' | 'failed' | 'skipped'
+//   한 번에 하나씩만 물어요. 그래야 사용자가 장소를 검색하면 1~2초 안에 차례가 와요 (main 의 지도 요청은 한 줄로 서요)
+const NAMES = new Map();
+const WAITING = [];
+const LISTENERS = new Set();
+let pumping = false;
+let autoAsked = 0;
+function wantName(spot) {
+  const key = cityKey(spot.lat, spot.lng);
+  if (NAMES.has(key)) return;
+  NAMES.set(key, 'waiting');
+  WAITING.push({ ...spot, key });
+  pumpNames();
+}
+async function pumpNames() {
+  if (pumping) return;
+  const next = WAITING.shift();
+  if (!next) return;
+  pumping = true;
+  try {
+    let v = await api.mapPlace(next.lat, next.lng, false); // 저장된 이름 (인터넷 안 씀)
+    if (!v && autoAsked < AUTO_MAX) {
+      autoAsked += 1;
+      v = await api.mapPlace(next.lat, next.lng, true);
+    }
+    NAMES.set(next.key, v || (autoAsked >= AUTO_MAX ? 'skipped' : { name: '', country: '', cc: '' }));
+  } catch (e) {
+    NAMES.set(next.key, 'failed'); // 이번 실행에서는 다시 묻지 않아요
+  } finally {
+    pumping = false;
+    LISTENERS.forEach((f) => f());
+    pumpNames();
+  }
+}
+const placeAt = (spot) => {
+  const v = spot && NAMES.get(cityKey(spot.lat, spot.lng));
+  return v && typeof v === 'object' ? v : null;
+};
+const nameAt = (spot) => {
+  const p = placeAt(spot);
+  return p && p.name ? p.name : '';
+};
+const stateAt = (spot) => (spot ? NAMES.get(cityKey(spot.lat, spot.lng)) : undefined);
 const RESULT_ZOOM = 13; // 검색 결과를 눌렀을 때
 const MAX_RESULTS = 5;
 const MAP_ERROR = '지도를 불러오지 못했어요. 인터넷 연결을 확인해 주세요. 핀은 그대로 볼 수 있어요.';
@@ -40,20 +87,17 @@ function pinElement(count, name) {
 
 // viewRef = { center, zoom, year } 지도 화면을 다시 열 때 이어서 보여 줄 곳 (App이 들고 있어요)
 // picked = 고른 묶음 요약 (MapPanel과 같이 써요), onPick(요약 또는 null), onLoaded(위치가 있는 사진 수)
-// onTop(많이 찍은 곳 목록), goto = { lat, lng, seq } 패널에서 많이 찍은 곳을 누르면 그곳으로 옮기고 핀을 골라요
+// onTop(많이 찍은 곳 목록), goto = { key, seq } 패널에서 누른 많이 찍은 곳 → 그 묶음을 고르고 그곳을 보여 줘요
 export default function MapView({ gen, noLocation, picked, onPick, onLoaded, onTop, goto, onGoMissing, viewRef }) {
   const holderRef = useRef(null);
   const mapRef = useRef(null);
   const pinsRef = useRef(null); // 핀 층
   const fittedRef = useRef(!!viewRef.current.center); // 사진들이 다 보이게 맞췄는지 (처음 한 번, 연도 탭을 바꿀 때마다 다시)
-  const pendingPickRef = useRef(null); // 옮긴 뒤 고를 핀 자리 { lat, lng }
-  const namesRef = useRef(new Map()); // 이름 열쇠 → { name, country, cc } | 'asking' | 'failed'
   const [namesVer, setNamesVer] = useState(0); // 이름이 새로 오면 다시 그려요
   const [points, setPoints] = useState(null); // null = 받는 중
   const [error, setError] = useState('');
   const [year, setYear] = useState(viewRef.current.year || null);
   const [mapFailed, setMapFailed] = useState(false);
-  const [chips, setChips] = useState([]);
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState({ busy: false, results: null, error: '' });
 
@@ -61,33 +105,21 @@ export default function MapView({ gen, noLocation, picked, onPick, onLoaded, onT
   const latest = useRef(null);
   latest.current = { points, year, picked, onPick };
 
-  // ---------- 이름 ----------
-  const placeOf = (lat, lng) => {
-    const v = namesRef.current.get(cityKey(lat, lng));
-    return v && typeof v === 'object' ? v : null;
-  };
-  // 저장된 이름이 있으면 쓰고, 없으면 물어봐요 (main 이 1초에 하나씩 보내요). 실패한 곳은 이번 실행에서 다시 묻지 않아요
-  const ensureName = (lat, lng) => {
-    const key = cityKey(lat, lng);
-    if (namesRef.current.has(key)) return;
-    namesRef.current.set(key, 'asking');
-    api.mapPlace(lat, lng, false)
-      .then((saved) => saved || api.mapPlace(lat, lng, true))
-      .then(
-        (v) => namesRef.current.set(key, v || { name: '', country: '', cc: '' }),
-        () => namesRef.current.set(key, 'failed'),
-      )
-      .finally(() => setNamesVer((n) => n + 1));
-  };
-  const nameOf = (c) => {
-    const p = placeOf(c.lat, c.lng);
-    return p && p.name ? p.name : '';
-  };
+  // 이름이 새로 오면 다시 그려요 (화면이 닫히면 듣지 않아요)
+  useEffect(() => {
+    const f = () => setNamesVer((n) => n + 1);
+    LISTENERS.add(f);
+    return () => { LISTENERS.delete(f); };
+  }, []);
 
   // ---------- 위치 목록 받기 ----------
+  const lastLoadRef = useRef(0);
   useEffect(() => {
     let alive = true;
-    api.mapPoints().then(
+    let timer = null;
+    const load = () => {
+      lastLoadRef.current = Date.now();
+      api.mapPoints().then(
       (rows) => {
         if (!alive) return;
         const list = toPoints(rows);
@@ -96,8 +128,16 @@ export default function MapView({ gen, noLocation, picked, onPick, onLoaded, onT
         onLoaded(list.length);
       },
       (e) => { if (alive) setError(errorText(e)); },
-    );
-    return () => { alive = false; };
+      );
+    };
+    // 읽는 중에는 gen 이 자주 올라요. 마지막으로 받은 지 RELOAD_GAP_MS 안이면 남은 시간 뒤에 한 번만 받아요
+    const wait = lastLoadRef.current ? RELOAD_GAP_MS - (Date.now() - lastLoadRef.current) : 0;
+    if (wait > 0) timer = setTimeout(load, wait);
+    else load();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
   }, [gen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- 핀 그리기 ----------
@@ -109,32 +149,25 @@ export default function MapView({ gen, noLocation, picked, onPick, onLoaded, onT
     layer.clearLayers();
     if (!all || !all.length) return;
     const zoom = Math.round(map.getZoom());
-    // 화면 안(조금 넉넉히)만 묶어요. 지구 복사본을 넘겨 본 때(경도가 ±180 밖)는 전부 계산해요
+    // 화면 안(조금 넉넉히)만 묶어요. 지구 복사본을 넘겨 본 화면은 경도 구간 두 개로 나눠요 (전 세계를 묶지 않게)
     const b = map.getBounds().pad(0.3);
-    const inside = b.getWest() >= -180 && b.getEast() <= 180;
-    const bounds = inside ? { s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() } : null;
+    const bounds = viewRanges(b.getSouth(), b.getWest(), b.getNorth(), b.getEast());
     const centerLng = map.getCenter().lng;
-    const clusters = clusterPoints(byYear(all, y), zoom, { bounds });
+    // 핀이 아주 많으면 큰 묶음부터 MAX_PINS 개만 그려요 (묶음은 큰 순서예요)
+    const clusters = clusterPoints(byYear(all, y), zoom, { bounds }).slice(0, MAX_PINS);
     // 화면 안의 큰 핀 몇 개만 이름을 물어봐요
     const view = map.getBounds();
-    clusters.filter((c) => view.contains([c.lat, nearLng(c.lng, centerLng)])).slice(0, NAMED_PINS).forEach((c) => ensureName(c.lat, c.lng));
+    clusters.filter((c) => view.contains([c.lat, nearLng(c.lng, centerLng)])).slice(0, NAMED_PINS).forEach((c) => wantName(c.named));
     for (const c of clusters) {
       const size = pinSize(c.count);
       const icon = L.divIcon({
         className: `place-pin${pick && pick.key === c.key ? ' on' : ''}`,
-        html: pinElement(c.count, nameOf(c)),
+        html: pinElement(c.count, nameAt(c.named)),
         iconSize: [size, size],
       });
       const marker = L.marker([c.lat, nearLng(c.lng, centerLng)], { icon, title: `${countText(c.count)}장`, keyboard: true, riseOnHover: true });
-      marker.on('click', () => latest.current.onPick({ ...summarize(c, latest.current.year), name: nameOf(c), lat: c.lat, lng: c.lng }));
+      marker.on('click', () => latest.current.onPick({ ...summarize(c, latest.current.year), name: nameAt(c.named), named: c.named }));
       marker.addTo(layer);
-    }
-    // 많이 찍은 곳을 눌러 옮겨 온 경우: 그 자리에서 가장 가까운 핀을 골라요
-    const want = pendingPickRef.current;
-    if (want) {
-      pendingPickRef.current = null;
-      const c = nearestCluster(clusters, want.lat, want.lng);
-      if (c) latest.current.onPick({ ...summarize(c, latest.current.year), name: nameOf(c), lat: c.lat, lng: c.lng });
     }
   };
 
@@ -189,31 +222,37 @@ export default function MapView({ gen, noLocation, picked, onPick, onLoaded, onT
     draw();
   }, [points, year, picked, namesVer]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 많이 찍은 곳과 해외 나라 칩 (목록 · 연도 · 이름이 바뀔 때)
+  // 많이 찍은 곳과 해외 나라를 알아볼 묶음은 목록 · 연도가 바뀔 때만 다시 묶어요 (이름이 올 때마다 6만 장을 묶지 않게, #56 검증)
+  const shownTop = useMemo(() => (points ? topPlaces(byYear(points, year)) : []), [points, year]);
+  const wide = useMemo(() => (points ? clusterPoints(byYear(points, year), COUNTRY_ZOOM) : []), [points, year]);
   useEffect(() => {
-    if (!points) return;
-    const shown = byYear(points, year);
-    const top = topPlaces(shown);
-    top.forEach((t) => ensureName(t.lat, t.lng));
-    onTop(top.map((t) => ({ key: t.key, count: t.count, lat: t.lat, lng: t.lng, name: nameOf(t), asking: namesRef.current.get(cityKey(t.lat, t.lng)) === 'asking' })));
-    const wide = clusterPoints(shown, COUNTRY_ZOOM);
-    wide.forEach((c) => ensureName(c.lat, c.lng));
-    setChips(countryChips(wide, placeOf));
-  }, [points, year, namesVer]); // eslint-disable-line react-hooks/exhaustive-deps
+    shownTop.forEach((t) => wantName(t.named));
+    wide.forEach((c) => wantName(c.named));
+  }, [shownTop, wide]);
+  // 패널의 많이 찍은 곳 (이름이 오면 이름만 다시 붙여요)
+  useEffect(() => {
+    onTop(shownTop.map((t) => ({ key: t.key, count: t.count, name: nameAt(t.named), asking: stateAt(t.named) === 'waiting' })));
+  }, [shownTop, namesVer]); // eslint-disable-line react-hooks/exhaustive-deps
+  const chips = useMemo(() => countryChips(wide, (lat, lng) => placeAt({ lat, lng })), [wide, namesVer]);
 
   // 고른 핀의 이름이 나중에 오면 패널에도 넣어요
   useEffect(() => {
-    if (!picked || picked.name || picked.lat === undefined) return;
-    const p = placeOf(picked.lat, picked.lng);
-    if (p && p.name) onPick({ ...picked, name: p.name });
+    if (!picked || picked.name || !picked.named) return;
+    const name = nameAt(picked.named);
+    if (name) onPick({ ...picked, name });
   }, [namesVer]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 패널에서 많이 찍은 곳을 누르면 그곳으로 옮기고, 다 옮긴 뒤(moveend → draw) 가장 가까운 핀을 골라요
+  // 패널에서 많이 찍은 곳을 누르면: 그 묶음을 그대로 골라 패널과 숫자가 같게 하고, 그 사진들이 다 보이게 지도를 맞춰요
+  //   처리한 번호를 viewRef 에 적어 둬서, 갤러리에 다녀와 지도 화면이 다시 열려도 다시 옮기지 않아요 (#56 검증)
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !goto) return;
-    pendingPickRef.current = { lat: goto.lat, lng: goto.lng };
-    map.setView([goto.lat, goto.lng], GOTO_ZOOM, { animate: false });
+    if (!map || !goto || viewRef.current.gotoSeq === goto.seq) return;
+    const t = shownTop.find((x) => x.key === goto.key);
+    if (!t) return;
+    viewRef.current = { ...viewRef.current, gotoSeq: goto.seq };
+    onPick({ ...summarize(t.cluster, year), name: nameAt(t.named), named: t.named });
+    const box = L.latLngBounds(t.cluster.members.map((m) => [m.lat, m.lng]));
+    map.fitBounds(box, { padding: [48, 48], maxZoom: GOTO_MAX_ZOOM, animate: false });
   }, [goto && goto.seq]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const years = points ? yearsOf(points) : [];
