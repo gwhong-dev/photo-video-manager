@@ -183,6 +183,7 @@ function busiestCell(points, grid) {
   return best;
 }
 export function nameSpot(members) {
+  if (!members || !members.length) return null; // 빈 묶음 (#62 검증: 멈추지 않게)
   const wide = busiestCell(members, NAME_GRID);
   const fine = busiestCell(wide.members, NAME_FINE);
   const lat = Math.max(-85, Math.min(85, fine.i * NAME_FINE));

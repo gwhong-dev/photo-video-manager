@@ -77,3 +77,4 @@
 | 2026-11-09 | claude/peaceful-pasteur-g78fp0 | 이 커밋 | 문서만 변경, 점검 없음 | 사용자 요청 | CLAUDE.md 3-1: 메인 세션 하나 + 병렬 작업만 갈래 세션(create_session), 끝나면 메인이 확인하고 archive_session |
 | 2026-11-09 | fix/suggest-undo-skips | 이 커밋 | 클라우드: 30 · 31 ✅ (30c2 바꿈, 30c3 추가, 31n 문자열), 진짜 앱 · magick · 12j는 환경 탓 | origin/fix/suggest-undo-skips | 위치 제안 일부만 넣고 되돌리면 그때 체크를 끈 사진도 건너뜀에서 뺌 (suggest-skips.json에 batches). 전부터 건너뛴 사진, 묶음 건너뛰기는 그대로. 되돌리기 응답에 뺀 사진이 있을 때만 unskipped · skipsSaved |
 | 2026-11-09 | claude/peaceful-pasteur-g78fp0 | 이 커밋 | 문서만 변경, 점검 없음 | 사용자 요청 | CLAUDE.md 2절: PC 일은 PC의 Remote Control 환경에 갈래 세션으로 바로 보냄 |
+| 2026-11-09 | fix/verify-62 | 이 커밋 | 클라우드: 44 ✅ (44f 바꿈) | #62 검증 에이전트 | #62 검증 머지 유지. ⚠️ 나라 묶음 이름은 뒤 줄(LATER)에서 물어 핀 · 많이 찍은 곳이 상한 80을 먼저 씀, nameSpot([]) → null, 44f 위도 · 경도 눈금 · 나라 줄 순서 점검, 44d 주석 |
