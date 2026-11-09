@@ -494,6 +494,7 @@ app.whenReady().then(async () => {
       // 지도용 인터넷과 브라우저 열기. 갤러리는 Electron을 직접 부르지 않고 여기서 받아요
       mapFetch: (...a) => net.fetch(...a),
       openExternal: (u) => shell.openExternal(u),
+      openPath: (p) => shell.openPath(p), // 정리 화면의 _정리완료원본 폴더 열기 (gallery-main 이 정한 경로만)
       appVersion: app.getVersion(),
       trash: (p) => shell.trashItem(p), // 비슷한 사진 버리기 (휴지통이 없는 드라이브는 _정리완료원본으로 이동)
     });

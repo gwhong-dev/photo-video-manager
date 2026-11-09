@@ -29,6 +29,8 @@ import TagDialog from './components/TagDialog.jsx';
 import TagsView from './components/TagsView.jsx';
 import MapView from './components/MapView.jsx';
 import MapPanel from './components/MapPanel.jsx';
+import CleanView from './components/CleanView.jsx';
+import CleanPanel from './components/CleanPanel.jsx';
 import Toolbar from './components/Toolbar.jsx';
 import UndoBar from './components/UndoBar.jsx';
 import { undoneText } from './format.mjs';
@@ -72,7 +74,8 @@ export default function App() {
   const [view, setView] = useState(null); // { key, filter, days, gen } 지금 보이는 날짜 목록
   const [daysError, setDaysError] = useState('');
   const [gen, setGen] = useState(0); // 목록이 갱신될 때마다 올라가요
-  const [screen, setScreen] = useState('gallery'); // 'gallery' | 'missing' | 'similar' | 'tags' | 'map' (같은 창 안의 화면 전환)
+  const [screen, setScreen] = useState('gallery'); // 'gallery' | 'missing' | 'similar' | 'tags' | 'map' | 'clean' (같은 창 안의 화면 전환)
+  const [cleanPick, setCleanPick] = useState(null); // 정리 화면에서 고른 기록
   const [mapPick, setMapPick] = useState(null); // 지도에서 고른 핀의 요약 (src/places-view.mjs summarize)
   const [mapLocated, setMapLocated] = useState(null); // 위치가 있는 사진 수 (지도 패널 안내용)
   const [mapTop, setMapTop] = useState([]); // 사진을 많이 찍은 곳 (지도 패널)
@@ -431,6 +434,8 @@ export default function App() {
     center = <SimilarView gen={gen} focusId={similarFocus} onFocus={setSimilarFocus} onNotice={setNotice} />;
   } else if (screen === 'tags') {
     center = <TagsView gen={gen} onPick={pickTagFromList} />;
+  } else if (screen === 'clean') {
+    center = <CleanView gen={gen} picked={cleanPick && cleanPick.id} onPick={setCleanPick} />;
   } else if (screen === 'map') {
     center = <MapView gen={gen} noLocation={state.noLocation} picked={mapPick} onPick={setMapPick} onLoaded={setMapLocated} onTop={setMapTop} goto={mapGoto} onGoMissing={() => goScreen('missing')} viewRef={mapViewRef} />;
   } else if (suggestOpen) {
@@ -479,7 +484,7 @@ export default function App() {
         onOpenImport={openImport}
         onScreen={goScreen}
         onPickTag={(tag) => {
-          if (screen === 'similar' || screen === 'tags' || screen === 'map') {
+          if (screen === 'similar' || screen === 'tags' || screen === 'map' || screen === 'clean') {
             pickTagFromList(tag); // 격자가 없는 화면이면 갤러리로 가요
             return;
           }
@@ -490,7 +495,7 @@ export default function App() {
         rescanning={rescanning}
       />
       <main className="main">
-        {showTools && screen !== 'similar' && screen !== 'tags' && screen !== 'map' && (
+        {showTools && screen !== 'similar' && screen !== 'tags' && screen !== 'map' && screen !== 'clean' && (
           <Toolbar
             screen={screen}
             state={state}
@@ -532,7 +537,8 @@ export default function App() {
         <div className="center">{center}</div>
       </main>
       {showTools && screen === 'map' && <MapPanel picked={mapPick} located={mapLocated} top={mapTop} onShowArea={showArea} onGoto={(t) => setMapGoto((g) => ({ key: t.key, seq: (g ? g.seq : 0) + 1 }))} />}
-      {showTools && screen !== 'map' && (
+      {showTools && screen === 'clean' && <CleanPanel session={cleanPick} />}
+      {showTools && screen !== 'map' && screen !== 'clean' && (
         <DetailPanel
           selectedId={screen === 'similar' ? similarFocus : screen === 'tags' ? null : suggestOpen ? suggestFocus : (soleId !== null ? soleId : selection.focus)}
           readOnly={suggestOpen || screen === 'similar' || screen === 'tags'}

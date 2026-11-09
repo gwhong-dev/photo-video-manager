@@ -46,6 +46,7 @@ const { buildGroups, createHasher } = require('./lib/similar');
 const { checkDiscard, discardInfo, discardFiles } = require('./lib/similar-discard');
 const { createDriveKindOf } = require('./lib/platform');
 const { isTagKind, normalizeTagEdit, planTagEdit, toTagPreview } = require('./lib/manual-tags');
+const { readCleanHistory, cleanedFolders, cleanedDirOf } = require('./lib/clean-history');
 
 const SCHEME = 'pvm';
 const TABS = ['all', 'photo', 'video', 'screenshot'];
@@ -114,7 +115,7 @@ function checkIds(ids) {
 // 화면에는 정해진 문장과 오류 코드(EISDIR, EACCES 같은 짧은 영문 대문자)만 보여요
 const codeNote = (e) => (e && typeof e.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(e.code) ? ` (${e.code})` : '');
 
-function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning, mapFetch, openExternal, appVersion, trash, makeDriveKindOf = createDriveKindOf }) {
+function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning, mapFetch, openExternal, openPath, appVersion, trash, makeDriveKindOf = createDriveKindOf }) {
   const base = typeof userDir === 'function' ? userDir() : userDir;
   // 백업 폴더 경로. 끝의 \ 나 / 가 달라도 같은 폴더로 보게 path.resolve 로 한 번만 다듬어요 (대소문자는 그대로 둬요).
   //   DB의 root 열쇠가 되니 모든 곳이 이 함수 하나를 써요
@@ -322,6 +323,30 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     if (day !== null && !(typeof day === 'string' && DAY_RE.test(day))) throw new Error('날짜 모양이 올바르지 않아요');
     const root = rootNow();
     return db && root ? db.listFiles(root, day, cleanFilter(filter)) : [];
+  });
+
+  // ---------- 정리 화면 (읽기만) ----------
+  // 정리 기록 (원본 정리 · 비슷한 사진 버리기 로그)과 _정리완료원본 폴더 크기. 파일 경로는 화면에 주지 않아요 (이름만)
+  ipcMain.handle('gallery:clean-history', () => {
+    const s = getSettings() || {};
+    return {
+      sessions: readCleanHistory(logger.dir),
+      folders: cleanedFolders({ source: s.source, backupRoot: rootNow() }),
+    };
+  });
+  // _정리완료원본 폴더 열기: 화면은 어느 쪽인지(which)만 보내고, 경로는 여기서 정해요. 없는 폴더는 열지 않아요
+  ipcMain.handle('gallery:open-cleaned', async (e, which) => {
+    if (which !== 'source' && which !== 'backup') throw new Error('열 폴더가 올바르지 않아요');
+    const s = getSettings() || {};
+    const dir = cleanedDirOf(which === 'source' ? s.source : rootNow());
+    if (!dir || !isDir(dir)) throw new Error('아직 _정리완료원본 폴더가 없어요');
+    if (!openPath) throw new Error('폴더를 열 수 없어요');
+    const err = await openPath(dir);
+    if (err) {
+      errorLog('정리 폴더 열기', err);
+      throw new Error('폴더를 열지 못했어요');
+    }
+    return true;
   });
 
   // 지도 핀용 위치 목록 (단계 6) → [[id, 위도, 경도, 찍은 날], ...]
