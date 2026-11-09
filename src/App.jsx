@@ -372,7 +372,9 @@ export default function App() {
       } else {
         // 되돌린 사진은 목록에서 빠지거나 바뀌어요. 선택이 남아 있으면 이미 목록에 없는 사진에 다음 작업이 갈 수 있어서 비워요
         setSelection(EMPTY_SELECTION);
-        setNotice(undoneText(result.count, result.kind));
+        // 그 넣기에서 체크를 꺼 건너뛴 사진을 목록 파일에서 빼지 못했으면 알려요 (이번 실행 동안은 다시 보여요)
+        const skipNote = result.skipsSaved === false ? ' 건너뛴 사진 목록은 파일에 저장하지 못해서 이번 실행 동안만 다시 보여요.' : '';
+        setNotice(undoneText(result.count, result.kind) + skipNote);
       }
       setJustApplied(null);
     } catch (e) {

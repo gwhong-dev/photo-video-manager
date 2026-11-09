@@ -3,7 +3,7 @@
 //   이 화면 자체가 미리보기예요. 사용자가 버튼을 눌렀을 때만 값이 들어가요
 //   사진을 누르면 오른쪽 패널에 크게 보이고, 모서리 체크 칸을 끄면 넣기에서 빠져요
 //   기기 정보 없는 사진은 처음에 체크가 꺼져 있어요 (설계서 12절). 넣을 때 건너뛴 사진으로 기억하는 것은
-//   사람이 직접 끈 기기 정보 있는 사진뿐이에요. 처음부터 꺼져 있던 사진은 제안에 남아서 뒤쪽 묶음으로 다시 나와요
+//   사람이 직접 끈 기기 정보 있는 사진뿐이에요. 그 넣기를 되돌리면 이때 건너뛴 사진도 다시 빠져요. 처음부터 꺼져 있던 사진은 제안에 남아서 뒤쪽 묶음으로 다시 나와요
 //   그래서 넣은 뒤에는 보던 묶음에 머물지 않고 맨 앞 묶음으로 가요
 //   목록은 gen이 바뀔 때마다 다시 받아요. 화면에 있는 것보다 새 응답은 받고, 그보다 옛 응답만 버려요 (createLoadOrder).
 //   마지막 요청의 응답만 받으면, 느린 PC에서 폴더를 읽는 동안 응답마다 새 요청이 나가서 화면이 계속 "계산하는 중"에 머물러요
@@ -100,8 +100,8 @@ export default function SuggestPanel({ gen, focusId, onFocus, onApplied, onNotic
     busyRef.current = false;
     setBusy(false);
   };
-  const skip = async (ids) => {
-    const r = await api.skipSuggestions(ids);
+  const skip = async (ids, batchId = null) => {
+    const r = await api.skipSuggestions(ids, batchId);
     if (!r.saved) onNotice(SKIP_NOT_SAVED);
   };
 
@@ -118,7 +118,8 @@ export default function SuggestPanel({ gen, focusId, onFocus, onApplied, onNotic
     const r = await api.applyEdit(checked, { source: 'copy', sourceId: group.source.id, date: false, time: false, location: true, via: 'suggest' });
     order.current.markApplied(); // 이 뒤에 받는 목록에서는 맨 앞 묶음으로
     if (r.dropped) onNotice(`그 사이 위치가 생긴 ${formatCount(r.dropped)}장은 빼고 넣었어요.`);
-    await finishApply(left, skip, (e) => onNotice(errorText(e)), () => onApplied(r));
+    // 넣기의 번호를 같이 적어 둬요. 그 넣기를 되돌리면 이때 건너뛴 사진도 다시 제안에 나와요
+    await finishApply(left, (ids) => skip(ids, r.batchId), (e) => onNotice(errorText(e)), () => onApplied(r));
   });
   const skipGroup = () => run(() => skip(group.targets.map((t) => t.id)));
   const clearSkips = () => run(async () => {

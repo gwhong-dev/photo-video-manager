@@ -56,7 +56,7 @@ contextBridge.exposeInMainWorld('api', {
     undoLast: (batchId) => ipcRenderer.invoke('gallery:undo-last', batchId),
     // 위치 제안
     listSuggestions: () => ipcRenderer.invoke('gallery:list-suggestions'),
-    skipSuggestions: (ids) => ipcRenderer.invoke('gallery:skip-suggestions', ids),
+    skipSuggestions: (ids, batchId) => ipcRenderer.invoke('gallery:skip-suggestions', ids, batchId ?? null),
     clearSuggestionSkips: () => ipcRenderer.invoke('gallery:clear-suggestion-skips'),
     // 지도에서 위치 고르기: 장소 검색 결과 [{ name, lat, lng }], 지도 출처 링크 열기 (주소는 main이 정해요)
     searchPlace: (query) => ipcRenderer.invoke('gallery:search-place', query),

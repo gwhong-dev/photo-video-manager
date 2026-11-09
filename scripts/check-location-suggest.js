@@ -465,14 +465,56 @@ const items = [
         });
 
         await scene('30c2', async () => {
+          // 일부만 넣고 체크를 끈 사진(b)은 그 넣기를 되돌리면 건너뜀에서도 빠져요 (2026-11-09 사용자 결정)
           const f = makeFake(prep('undo-skip', BASIC));
           const a = idOf(f, 'a.jpg');
           const b = idOf(f, 'b.jpg');
-          await f.call('gallery:apply-edit', [a], SUGGEST(idOf(f, 'src.jpg')));
-          await f.call('gallery:skip-suggestions', [b]);
-          await f.call('gallery:undo-last', await lastId(f));
+          const r0 = await f.call('gallery:apply-edit', [a], SUGGEST(idOf(f, 'src.jpg')));
+          await f.call('gallery:skip-suggestions', [b], r0.batchId);
+          const mid = await list(f);
+          const u = await f.call('gallery:undo-last', await lastId(f));
           const r = await list(f);
-          out.push(sub('30c 되돌려도 건너뛴 사진은 건너뛴 채로', r.photoCount === 1 && r.skippedCount === 1 && r.groups[0].targets[0].id === a, JSON.stringify([r.photoCount, r.skippedCount])));
+          const file = JSON.parse(fs.readFileSync(path.join(f.P.ud, 'suggest-skips.json'), 'utf8'));
+          out.push(sub(
+            '30c2 일부만 넣고 되돌리면 체크를 끈 사진도 다시 제안에 나옴',
+            mid.photoCount === 0 && mid.skippedCount === 1 && u.unskipped === 1 && u.skipsSaved === true
+              && r.photoCount === 2 && r.skippedCount === 0 && file.paths.length === 0 && !file.batches,
+            JSON.stringify([mid.photoCount, mid.skippedCount, u, r.photoCount, r.skippedCount, file]),
+          ));
+        });
+
+        await scene('30c3', async () => {
+          // 넣기 전부터 건너뛰어 있던 사진, "이 묶음 건너뛰기"로 건너뛴 사진은 되돌려도 그대로. 다시 켜도 되돌릴 수 있음
+          const P = prep('undo-skip-keep', {
+            ...BASIC,
+            'c.jpg': { takenAt: at('14:12') },
+          });
+          const f = makeFake(P);
+          const a = idOf(f, 'a.jpg');
+          const b = idOf(f, 'b.jpg');
+          const c = idOf(f, 'c.jpg');
+          await f.call('gallery:skip-suggestions', [b]); // 넣기 전부터 건너뜀
+          const r0 = await f.call('gallery:apply-edit', [a], SUGGEST(idOf(f, 'src.jpg')));
+          await f.call('gallery:skip-suggestions', [b, c], r0.batchId); // b는 이미 있었고 c만 새로
+          f.close();
+          const f2 = makeFake(P); // 다시 켜도 묶음 번호가 남아 있어야 해요
+          const u = await f2.call('gallery:undo-last', r0.batchId);
+          const r = await list(f2);
+          const file = JSON.parse(fs.readFileSync(path.join(P.ud, 'suggest-skips.json'), 'utf8'));
+          out.push(sub(
+            '30c3 그 넣기로 새로 건너뛴 사진만 빠짐 (전부터 건너뛴 사진은 그대로), 다시 켜도 됨',
+            u.unskipped === 1 && r.skippedCount === 1 && file.paths.length === 1 && file.paths[0] === path.join(P.root, 'b.jpg')
+              && r.groups.flatMap((g) => g.targets.map((t) => t.id)).sort().join() === [a, c].sort().join(),
+            JSON.stringify([u, r.skippedCount, file]),
+          ));
+          // "이 묶음 건너뛰기"(번호 없음) 뒤 다른 넣기를 되돌려도 그대로
+          const f3 = f2;
+          await f3.call('gallery:clear-suggestion-skips');
+          await f3.call('gallery:skip-suggestions', [b]);
+          await f3.call('gallery:apply-edit', [a], SUGGEST(idOf(f3, 'src.jpg')));
+          const u2 = await f3.call('gallery:undo-last', await lastId(f3));
+          const r2 = await list(f3);
+          out.push(sub('30c3 묶음 건너뛰기로 건너뛴 사진은 되돌려도 그대로', u2.unskipped === undefined && r2.skippedCount === 1, JSON.stringify([u2, r2.skippedCount])));
         });
 
         await scene('30d', async () => {
@@ -738,7 +780,7 @@ const items = [
         const fail = async () => { throw new Error('거절'); };
         await finishApply([31], fail, (e) => seen.push(e.message), async () => seen.push('끝'));
         const panelSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'SuggestPanel.jsx'), 'utf8');
-        out.push(sub('31n 건너뛰기 저장이 거절돼도 마무리한 뒤 오류를 알림, 화면이 이 길을 씀', seen.join(',') === '끝,거절' && panelSrc.includes('await finishApply(left, skip,'), seen.join(',')));
+        out.push(sub('31n 건너뛰기 저장이 거절돼도 마무리한 뒤 오류를 알림, 화면이 이 길을 씀', seen.join(',') === '끝,거절' && panelSrc.includes('await finishApply(left, (ids) => skip(ids, r.batchId),'), seen.join(',')));
         const quiet = [];
         await finishApply([], async () => quiet.push('저장'), () => quiet.push('오류'), async () => quiet.push('끝'));
         out.push(sub('31o 기억할 사진이 없으면 저장하지 않고 마무리', quiet.join(',') === '끝', quiet.join(',')));

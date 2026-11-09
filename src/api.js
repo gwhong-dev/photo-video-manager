@@ -26,7 +26,7 @@ export const api = {
   undoLast: (batchId) => gallery().undoLast(batchId), // 버튼에 적힌 묶음의 번호. 마지막 묶음이 바뀌었으면 main이 거절해요
   // 위치 제안
   listSuggestions: () => gallery().listSuggestions(),
-  skipSuggestions: (ids) => gallery().skipSuggestions(ids),
+  skipSuggestions: (ids, batchId) => gallery().skipSuggestions(ids, batchId), // batchId: 일부만 넣은 넣기의 번호 (되돌리면 다시 빠져요)
   clearSuggestionSkips: () => gallery().clearSuggestionSkips(),
   // 지도에서 위치 고르기
   searchPlace: (query) => gallery().searchPlace(query),

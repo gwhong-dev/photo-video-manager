@@ -556,11 +556,14 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   });
 
   // 건너뛰기: 번호를 경로로 바꿔 지금 백업 폴더의 사진만 더해요. saved = 파일에 저장했는지
-  ipcMain.handle('gallery:skip-suggestions', (e, ids) => {
+  //   batchId: 일부만 넣을 때 체크를 끈 사진이면 그 넣기의 번호. 그 묶음을 되돌리면 이번에 새로 건너뛴 사진은 다시 빠져요
+  //   ("이 묶음 건너뛰기"는 번호 없이 와서 되돌려도 그대로)
+  ipcMain.handle('gallery:skip-suggestions', (e, ids, batchId = null) => {
     const root = editReady();
     checkIds(ids);
+    if (batchId !== null && (typeof batchId !== 'string' || !batchId || batchId.length > 100)) throw new Error('작업 번호가 올바르지 않아요.');
     const paths = db.getFilesByIds(ids).filter((f) => f.root === root).map((f) => f.path);
-    return { saved: skips.add(paths) };
+    return { saved: skips.add(paths, batchId) };
   });
 
   // 건너뛴 사진 다시 보기: 목록을 비워요. 사진 파일과 값에는 영향이 없어요
@@ -586,6 +589,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       throw new Error(`기록 파일에 쓰지 못해서 되돌리지 않았어요${codeNote(err)}. 자세한 내용은 로그 폴더의 오류 로그에 있어요.`);
     }
     saveOrVoid('undo', last.id, '되돌리기', () => db.undoBatch(last.id, at));
+    // 그 넣기에서 체크를 꺼서 건너뛴 사진도 다시 제안에 나오게 빼요. 목록 파일 저장에 실패해도 되돌리기는 이미 끝났어요
+    const unskip = skips.undoBatch(last.id);
     // 되돌리기 로그: 파일별로 "되돌리기 전(넣었던 값) → 되돌린 뒤(그 전 값, 직접 넣은 값이 없었으면 없음)"
     if (isTagKind(last.kind)) {
       finishEdit('태그 되돌리기', last.id, last.kind, last.count, () => db.batchItems(last.id).map((it) =>
@@ -594,7 +599,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       finishEdit('직접 넣은 값 되돌리기', last.id, last.kind, last.count, () => db.batchItems(last.id).map((it) =>
         `${it.path}\t직접 넣은 날짜 ${dateText(it.after)} → ${dateText(it.before)}\t직접 넣은 위치 ${locText(it.after)} → ${locText(it.before)}`));
     }
-    return { kind: last.kind, count: last.count };
+    // 다시 제안에 나오게 뺀 사진이 있을 때만 그 개수와 저장 여부를 더해요
+    return { kind: last.kind, count: last.count, ...(unskip.removed ? { unskipped: unskip.removed, skipsSaved: unskip.saved } : {}) };
   });
 
   // ---------- 내가 붙이는 태그 (단계 5) ----------
