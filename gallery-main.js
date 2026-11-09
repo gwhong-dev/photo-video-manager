@@ -51,6 +51,7 @@ const SCHEME = 'pvm';
 const TABS = ['all', 'photo', 'video', 'screenshot'];
 const SORTS = ['newest', 'oldest'];
 const INFOS = ['noLocation', 'noDate', 'manual']; // 정보 없는 사진 화면의 탭
+const MAX_AREA_RECTS = 16; // 지도 묶음 하나는 칸 9개까지 (src/places-view.mjs), 넉넉히
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAP_CREDIT_URL = 'https://www.openstreetmap.org/copyright'; // 지도 출처 링크 (고정 주소. 화면이 주소를 정하지 못해요)
 const PROGRESS_GAP_MS = 100; // 읽기 진행 알림 최소 간격 (파일 찾는 동안 수천 번 보내지 않게)
@@ -80,7 +81,21 @@ function cleanFilter(f) {
     query: typeof x.query === 'string' ? x.query.slice(0, 200) : '',
     tag: typeof x.tag === 'string' && x.tag ? x.tag.slice(0, 200) : null,
     info: INFOS.includes(x.info) ? x.info : null,
+    area: cleanArea(x.area),
   };
+}
+
+// 지도에서 고른 곳: 칸 { s, w, n, e } 목록과 연도. 숫자가 아니거나 뒤집힌 칸은 버려요 (남는 칸이 없으면 필터 없음)
+//   경계는 지도 끝 칸을 위해 위도 ±91, 경도 ±181까지 받아요 (src/places-view.mjs)
+function cleanArea(a) {
+  if (!a || typeof a !== 'object' || !Array.isArray(a.rects)) return null;
+  const ok = (r) => r && typeof r === 'object'
+    && [r.s, r.w, r.n, r.e].every((v) => typeof v === 'number' && Number.isFinite(v))
+    && r.s >= -91 && r.n <= 91 && r.s < r.n && r.w >= -181 && r.e <= 181 && r.w < r.e;
+  const rects = a.rects.slice(0, MAX_AREA_RECTS).filter(ok).map((r) => ({ s: r.s, w: r.w, n: r.n, e: r.e }));
+  if (!rects.length) return null;
+  const year = Number.isInteger(a.year) && a.year >= 1800 && a.year <= 2200 ? a.year : null;
+  return { rects, year };
 }
 
 // 화면에서 온 id 배열 검사: 1 이상의 안전한 정수만, 한 번에 최대 MAX_TARGETS개
@@ -307,6 +322,12 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     if (day !== null && !(typeof day === 'string' && DAY_RE.test(day))) throw new Error('날짜 모양이 올바르지 않아요');
     const root = rootNow();
     return db && root ? db.listFiles(root, day, cleanFilter(filter)) : [];
+  });
+
+  // 지도 핀용 위치 목록 (단계 6) → [[id, 위도, 경도, 찍은 날], ...]
+  ipcMain.handle('gallery:map-points', () => {
+    const root = rootNow();
+    return db && root ? db.mapPoints(root) : [];
   });
 
   // 조건에 맞는 파일 id 전체 ("목록 전체 선택"용). 순서는 화면 목록과 같아요
@@ -804,4 +825,4 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   };
 }
 
-module.exports = { setupGallery, registerScheme };
+module.exports = { setupGallery, registerScheme, cleanFilter }; // cleanFilter: 점검 42에서 지도 영역 거르기를 봐요

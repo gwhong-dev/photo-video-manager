@@ -27,12 +27,14 @@ import Sidebar from './components/Sidebar.jsx';
 import SuggestPanel from './components/SuggestPanel.jsx';
 import TagDialog from './components/TagDialog.jsx';
 import TagsView from './components/TagsView.jsx';
+import MapView from './components/MapView.jsx';
+import MapPanel from './components/MapPanel.jsx';
 import Toolbar from './components/Toolbar.jsx';
 import UndoBar from './components/UndoBar.jsx';
 import { undoneText } from './format.mjs';
 import { EMPTY_SELECTION, filterScope, nextSelection, selectionForMenu, selectionOf, viewMatches } from './selection.mjs';
 
-const START_FILTER = { tab: 'all', sort: 'newest', query: '', tag: null };
+const START_FILTER = { tab: 'all', sort: 'newest', query: '', tag: null, area: null }; // area: 지도에서 고른 곳 { rects, year }
 const SEARCH_DELAY_MS = 200; // 입력을 멈추고 이 시간이 지나면 검색
 const REFRESH_GAP_MS = 500; // 목록 갱신 알림은 이 간격에 한 번만 받아들여요
 const MISSING_FILTER = { ...START_FILTER, info: 'noLocation' }; // 정보 없는 사진 화면을 처음 열 때
@@ -70,7 +72,10 @@ export default function App() {
   const [view, setView] = useState(null); // { key, filter, days, gen } 지금 보이는 날짜 목록
   const [daysError, setDaysError] = useState('');
   const [gen, setGen] = useState(0); // 목록이 갱신될 때마다 올라가요
-  const [screen, setScreen] = useState('gallery'); // 'gallery' | 'missing' | 'similar' | 'tags' (같은 창 안의 화면 전환)
+  const [screen, setScreen] = useState('gallery'); // 'gallery' | 'missing' | 'similar' | 'tags' | 'map' (같은 창 안의 화면 전환)
+  const [mapPick, setMapPick] = useState(null); // 지도에서 고른 핀의 요약 (src/places-view.mjs summarize)
+  const [mapLocated, setMapLocated] = useState(null); // 위치가 있는 사진 수 (지도 패널 안내용)
+  const mapViewRef = useRef({ center: null, zoom: null, year: null }); // 지도 화면을 다시 열 때 이어서 보여 줄 곳
   const [similarFocus, setSimilarFocus] = useState(null); // 비슷한 사진 화면에서 오른쪽 패널에 보여 줄 사진 번호
   const [selection, setSelection] = useState(EMPTY_SELECTION); // { ids, anchor, focus }
   const [cellMenuAt, setCellMenuAt] = useState(null); // 우클릭한 자리 { x, y }. 있으면 우클릭 메뉴를 그려요
@@ -233,6 +238,15 @@ export default function App() {
     setScreen('gallery');
     setSearchText('');
     setFilter({ ...START_FILTER, sort: filter.sort, tag });
+  };
+
+  // 지도에서 고른 곳의 사진을 갤러리에서: 그 영역(칸 목록)과 연도로 거른 갤러리 (검색어는 지워서 다 보이게)
+  const showArea = (area) => {
+    setSuggestOpen(false);
+    setSimilarFocus(null);
+    setScreen('gallery');
+    setSearchText('');
+    setFilter({ ...START_FILTER, sort: filter.sort, area });
   };
 
   // ---------- 고르기 ----------
@@ -415,6 +429,8 @@ export default function App() {
     center = <SimilarView gen={gen} focusId={similarFocus} onFocus={setSimilarFocus} onNotice={setNotice} />;
   } else if (screen === 'tags') {
     center = <TagsView gen={gen} onPick={pickTagFromList} />;
+  } else if (screen === 'map') {
+    center = <MapView gen={gen} noLocation={state.noLocation} picked={mapPick} onPick={setMapPick} onLoaded={setMapLocated} onGoMissing={() => goScreen('missing')} viewRef={mapViewRef} />;
   } else if (suggestOpen) {
     center = <SuggestPanel gen={gen} focusId={suggestFocus} onFocus={setSuggestFocus} onApplied={onApplied} onNotice={setNotice} />;
   } else if (daysError && !view) {
@@ -461,7 +477,7 @@ export default function App() {
         onOpenImport={openImport}
         onScreen={goScreen}
         onPickTag={(tag) => {
-          if (screen === 'similar' || screen === 'tags') {
+          if (screen === 'similar' || screen === 'tags' || screen === 'map') {
             pickTagFromList(tag); // 격자가 없는 화면이면 갤러리로 가요
             return;
           }
@@ -472,7 +488,7 @@ export default function App() {
         rescanning={rescanning}
       />
       <main className="main">
-        {showTools && screen !== 'similar' && screen !== 'tags' && (
+        {showTools && screen !== 'similar' && screen !== 'tags' && screen !== 'map' && (
           <Toolbar
             screen={screen}
             state={state}
@@ -494,6 +510,13 @@ export default function App() {
             selectingAll={selectingAll || !viewCurrent}
           />
         )}
+        {showTools && screen === 'gallery' && filter.area && (
+          <div className="area-bar">
+            <span>지도에서 고른 곳의 사진만 보여요{filter.area.year ? ` (${filter.area.year}년)` : ''}</span>
+            <button type="button" onClick={() => goScreen('map')}>지도로 돌아가기</button>
+            <button type="button" onClick={clearFilters}>전체 사진 보기</button>
+          </div>
+        )}
         {showTopUndo && <UndoBar batch={lastBatch} variant="top" busy={undoing} disabled={syncing} onUndo={() => undo(lastBatch.id)} />}
         <ScanBanner
           state={state}
@@ -506,7 +529,8 @@ export default function App() {
         {showAfterUndo && <UndoBar batch={lastBatch} variant="after" busy={undoing} disabled={syncing} onUndo={() => undo(lastBatch.id)} onDismiss={() => setJustApplied(null)} />}
         <div className="center">{center}</div>
       </main>
-      {showTools && (
+      {showTools && screen === 'map' && <MapPanel picked={mapPick} located={mapLocated} onShowArea={showArea} />}
+      {showTools && screen !== 'map' && (
         <DetailPanel
           selectedId={screen === 'similar' ? similarFocus : screen === 'tags' ? null : suggestOpen ? suggestFocus : (soleId !== null ? soleId : selection.focus)}
           readOnly={suggestOpen || screen === 'similar' || screen === 'tags'}
