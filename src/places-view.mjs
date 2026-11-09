@@ -91,13 +91,16 @@ export function yearsOf(points) {
 
 export const byYear = (points, year) => (year ? points.filter((p) => p.day && Number(p.day.slice(0, 4)) === year) : points);
 
-// 묶기. bounds = { s, w, n, e } 를 주면 그 안(조금 넉넉히)의 사진만 묶어요 (화면 밖은 계산하지 않게)
+const inBox = (b, p) => p.lat >= b.s && p.lat <= b.n && p.lng >= b.w && p.lng <= b.e;
+const inBounds = (bounds, p) => (Array.isArray(bounds) ? bounds.some((b) => inBox(b, p)) : inBox(bounds, p));
+
+// 묶기. bounds = { s, w, n, e } 또는 그 목록을 주면 그 안(조금 넉넉히)의 사진만 묶어요 (화면 밖은 계산하지 않게)
 //   돌려주는 묶음: { key, count, lat, lng (핀 자리 = 사진들의 평균), rects (영역), members (사진 목록) } — 큰 묶음부터
 export function clusterPoints(points, zoom, { cell = CELL, bounds = null } = {}) {
   const z = Math.max(0, Math.round(zoom));
   const cells = new Map();
   for (const p of points) {
-    if (bounds && !(p.lat >= bounds.s && p.lat <= bounds.n && p.lng >= bounds.w && p.lng <= bounds.e)) continue;
+    if (bounds && !inBounds(bounds, p)) continue;
     const { col, row } = cellOf(p.lat, p.lng, z, cell);
     const key = `${z}/${col}/${row}`;
     let c = cells.get(key);
@@ -143,11 +146,27 @@ export function clusterPoints(points, zoom, { cell = CELL, bounds = null } = {})
       count: members.length,
       lat,
       lng,
+      named: nameSpot(lat, lng), // 이름을 물을 자리 (0.1도 눈금이라 연도 · 다시 읽기가 바뀌어도 거의 그대로)
       rects: group.map((g) => cellRect(g.col, g.row, z, cell)),
       members,
     });
   }
+  // 합치면 장수가 바뀌어서 큰 묶음부터 다시 줄 세워요 (많이 찍은 곳, 이름 붙일 큰 핀이 이 순서를 써요, #56 검증)
+  out.sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
   return out;
+}
+
+// 이름을 물을 자리: 묶음의 사진 평균 좌표를 0.1도(약 10km) 눈금에 맞춘 곳.
+//   평균 좌표를 그대로 물으면 연도 탭이나 다시 읽기마다 좌표가 조금씩 달라져 새 요청이 나가요 (#56 검증: 6만 장에서 최대 681개).
+//   눈금에 맞추면 같은 동네는 같은 열쇠가 되고, 서버로 가는 좌표도 덜 자세해요 (칸 가운데를 쓰면 사진과 멀어져 이웃 도시 이름이 나와서 평균을 써요)
+export const NAME_GRID = 0.1;
+const snap = (v) => Math.round(v / NAME_GRID) * NAME_GRID;
+export function nameSpot(atLat, atLng) {
+  const lat = Math.max(-85, Math.min(85, snap(atLat)));
+  let lng = snap(atLng);
+  if (lng > 180) lng -= 360;
+  if (lng < -180) lng += 360;
+  return { lat: Number(lat.toFixed(1)), lng: Number(lng.toFixed(1)) };
 }
 
 // 오른쪽 패널에 보일 묶음 요약: 장수, 찍은 기간, 최근 사진 9장 id, 갤러리로 넘길 영역 (연도 탭이 골라져 있으면 그 해만)
@@ -194,7 +213,7 @@ export const cityKey = (lat, lng) => `${(Math.round(lat * 100) / 100).toFixed(2)
 
 // 많이 찍은 곳: TOP_ZOOM 묶음 중 큰 것부터 n개 → [{ key, count, lat, lng, cluster }]
 export function topPlaces(points, n = TOP_PLACES, zoom = TOP_ZOOM) {
-  return clusterPoints(points, zoom).slice(0, n).map((c) => ({ key: c.key, count: c.count, lat: c.lat, lng: c.lng, cluster: c }));
+  return clusterPoints(points, zoom).slice(0, n).map((c) => ({ key: c.key, count: c.count, lat: c.lat, lng: c.lng, named: c.named, cluster: c }));
 }
 
 // 해외 나라 칩: COUNTRY_ZOOM 묶음마다 이름표(나라)를 찾아 나라별로 장수를 더해요. 한국과 아직 모르는 나라는 빼요
@@ -202,7 +221,8 @@ export function topPlaces(points, n = TOP_PLACES, zoom = TOP_ZOOM) {
 export function countryChips(clusters, places) {
   const by = new Map();
   for (const c of clusters) {
-    const p = places(c.lat, c.lng);
+    const at = c.named || c;
+    const p = places(at.lat, at.lng);
     if (!p || !p.cc || p.cc === 'kr' || !p.country) continue;
     let x = by.get(p.cc);
     if (!x) {
@@ -220,16 +240,15 @@ export function countryChips(clusters, places) {
   return [...by.values()].sort((a, b) => b.count - a.count || a.country.localeCompare(b.country));
 }
 
-// 가장 가까운 묶음 (많이 찍은 곳을 눌러 그곳으로 옮긴 뒤 그 핀을 고를 때)
-export function nearestCluster(clusters, lat, lng) {
-  let best = null;
-  let bestD = Infinity;
-  for (const c of clusters) {
-    const d = (c.lat - lat) ** 2 + (c.lng - lng) ** 2;
-    if (d < bestD) {
-      bestD = d;
-      best = c;
-    }
-  }
-  return best;
+// 지도 화면의 경도 구간 → 묶을 범위 목록. 지구 복사본을 넘겨 본 화면(경도가 ±180 밖)은 두 구간으로 나눠요 (#55 검증: 전 세계를 묶지 않게)
+//   west, east 는 Leaflet 이 주는 그대로(±180 밖일 수 있음). 화면이 지구 한 바퀴보다 넓으면 null (전부)
+export function viewRanges(s, w, n, e) {
+  if (e - w >= 360) return null;
+  const wrap = (x) => ((((x + 180) % 360) + 360) % 360) - 180;
+  const a = wrap(w);
+  const b = wrap(e);
+  if (a <= b) return [{ s, w: a, n, e: b }];
+  return [{ s, w: a, n, e: 180 }, { s, w: -180, n, e: b }];
 }
+
+export const MAX_PINS = 1500; // 한 번에 그리는 핀 수 상한 (큰 묶음부터)

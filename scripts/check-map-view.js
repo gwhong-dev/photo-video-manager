@@ -144,14 +144,16 @@ const items = [
         for (let i = 0; i < 60000; i++) big.push([i + 1, 33 + r() * 5, 125 + r() * 5, '2025-01-01']);
         const bp = P.toPoints(big);
         const times = [];
-        for (const [z, bounds] of [[8, { s: 33, w: 125, n: 38.6, e: 130 }], [12, { s: 37.2, w: 126.8, n: 37.7, e: 127.3 }]]) {
+        const wrapped = P.viewRanges(30, 170, 40, 200); // 경도 ±180에 걸친 화면 → 구간 둘 (#55 검증: 전 세계를 묶던 것)
+        const wrapOk = Array.isArray(wrapped) && wrapped.length === 2 && P.viewRanges(0, -200, 10, 200) === null;
+        for (const [z, bounds] of [[8, { s: 33, w: 125, n: 38.6, e: 130 }], [12, { s: 37.2, w: 126.8, n: 37.7, e: 127.3 }], [15, wrapped]]) {
           const t0 = Date.now();
           const cs = P.clusterPoints(bp, z, { bounds });
           times.push(`${z}단계 ${Date.now() - t0}ms 핀 ${cs.length}개`);
         }
         const slow = times.some((t) => Number(t.split(' ')[1].replace('ms', '')) > 1000);
         console.log(`   ⏱ 42f 6만 장 묶기 ${times.join(', ')}`); // 통과해도 시간은 보이게
-        out.push(sub('42f 6만 장 묶기가 한 번에 1초 이하 (지도를 옮길 때마다 계산해요)', !slow, times.join(', ')));
+        out.push(sub('42f 6만 장 묶기가 한 번에 1초 이하 (지도를 옮길 때마다 계산해요), ±180에 걸친 화면은 구간 둘', !slow && wrapOk, times.join(', ')));
       }
 
       // 42g 화면 연결: 지도 메뉴가 켜지고, 지도 화면 · 패널 · 갤러리 영역 줄이 이어져 있음
@@ -217,7 +219,7 @@ const items = [
       const seen = JSON.stringify(q).slice(0, 700);
       out.push(sub('43a 지도 메뉴 → 숫자 핀 (수원 2, 바르셀로나 1), 연도 탭, 장소가 없는 사진 1장', q.pins === '1,2' && q.years === '전체 기간,2026,2019,2017' && q.missing === '장소가 없는 사진 1장', seen));
       out.push(sub('43b 핀을 누르면 패널: 2장, 찍은 기간, 사진 2장, "2장 갤러리에서 보기"', q.count === '2장' && q.range === '2019년 3월부터 2026년 10월까지' && q.thumbs === 2 && q.showButton === '2장 갤러리에서 보기', seen));
-      out.push(sub('43c 갤러리에 그 곳 사진 2장만, 영역 줄, 지도로 돌아가기', q.areaCells === 2 && (q.areaBar || '').includes('지도에서 고른 곳의 사진만 보여요') && q.backToMap === true, seen));
+      out.push(sub('43c 갤러리에 그 곳 사진 2장만, 영역 줄, 지도로 돌아가면 보던 곳 그대로 (전에 누른 많이 찍은 곳으로 다시 옮기지 않음)', q.areaCells === 2 && (q.areaBar || '').includes('지도에서 고른 곳의 사진만 보여요') && q.backToMap === true && q.pinsAfterBack === '1,2', seen));
       out.push(sub('43d 2017 탭이면 바르셀로나 핀 1개만, 장소 없는 사진 버튼은 정보 없는 사진 화면으로', q.pins2017 === '1' && q.missingScreen === true, seen));
       out.push(sub('43e 지도 그림을 못 받아도 안내가 나오고 핀은 그대로', (q.mapError || '').includes('지도를 불러오지 못했어요'), seen));
       out.push(sub('43g 이름을 못 받아도 많이 찍은 곳 목록(장수 많은 순)이 나오고, 누르면 그 핀을 골라 패널에 장수, 해외 칩은 없음, 장소 검색 칸',
@@ -363,16 +365,24 @@ const items = [
         const chips = P.countryChips(wide, place);
         const chipText = chips.map((c) => `${c.country}${c.count}`).join(',');
         const box = chips[0] && chips[0].box;
-        const near = P.nearestCluster(P.clusterPoints(pts, 9), 37.5601, 126.9801);
-        out.push(sub('44d 많이 찍은 곳 5개 (큰 곳부터), 해외 칩 (한국 · 모르는 곳 빼고 합계, 영역), 가장 가까운 핀, 이름 열쇠 2자리',
-          top === '50,30,10,7,4' && chipText === '스페인17,일본7' && box.s <= 40.42 && box.n >= 41.39 && near.count === 30 && P.cityKey(37.2667, 127.0081) === '37.27,127.01',
-          JSON.stringify([top, chipText, box, near && near.count])));
+        // 합친 뒤에도 큰 순서인지 (#56 검증: 합치기 전 칸 크기 순서라 [12, 19]가 나왔음)
+        const merged = P.toPoints([...spread(1, 37.2700, 127.0000, 12, null), ...spread(101, 37.5, 127.5, 19, null)]);
+        const order = P.clusterPoints(merged, 9).map((c) => c.count);
+        const sorted = order.every((n, i) => i === 0 || order[i - 1] >= n);
+        // 이름 자리는 0.1도 눈금이라 연도 탭을 바꿔도 같은 열쇠 (#56 검증: 연도마다 새 요청)
+        const spots = (y) => P.clusterPoints(P.byYear(pts, y), 9).map((c) => P.cityKey(c.named.lat, c.named.lng)).sort().join(' ');
+        const all = new Set(spots(null).split(' '));
+        const sameSpots = [2026, 2019, 2017].every((y) => spots(y).split(' ').every((k) => all.has(k)));
+        out.push(sub('44d 많이 찍은 곳 5개 (큰 곳부터, 합친 뒤에도), 해외 칩 (한국 · 모르는 곳 빼고 합계, 영역), 이름 자리는 연도가 바뀌어도 같은 열쇠',
+          top === '50,30,10,7,4' && chipText === '스페인17,일본7' && box.s <= 40.42 && box.n >= 41.39 && sorted && sameSpots && P.cityKey(37.2667, 127.0081) === '37.27,127.01',
+          JSON.stringify([top, chipText, box, order, sameSpots])));
       }
 
       // 44e 핀 이름은 인터넷에서 온 글이라 HTML로 넣지 않아요 (textContent)
       {
         const view = fs.readFileSync(path.join(APP, 'src', 'components', 'MapView.jsx'), 'utf8');
-        out.push(sub('44e 핀 이름은 textContent 로 넣음 (HTML 글자로 넣지 않음)', view.includes('label.textContent = name') && !/html:\s*`[^`]*\$\{name/.test(view)));
+        out.push(sub('44e 핀 이름은 textContent 로 넣음 (HTML 글자로 넣지 않음), 이름은 한 번에 하나씩 · 상한까지만 저절로 물음',
+          view.includes('label.textContent = name') && !/html:\s*`[^`]*\$\{name/.test(view) && view.includes('if (pumping) return;') && /autoAsked < AUTO_MAX/.test(view)));
       }
       return out;
     },
@@ -446,6 +456,8 @@ async function mapViewProbe() {
   if (!bar) return { ...q, stop: '영역 줄이 없어요' };
   byText('.area-bar button', '지도로 돌아가기').click();
   q.backToMap = !!(await wait(() => document.querySelector('.map-view .place-pin')));
+  await new Promise((res) => setTimeout(res, 500));
+  q.pinsAfterBack = pinTexts(); // 많이 찍은 곳을 눌렀던 것이 다시 실행되면 수원만 보여요 (#56 검증)
 
   // 2017 탭 → 바르셀로나만
   const tab = byText('.map-years button', '2017');

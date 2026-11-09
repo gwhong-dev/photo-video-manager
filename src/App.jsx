@@ -76,8 +76,8 @@ export default function App() {
   const [mapPick, setMapPick] = useState(null); // 지도에서 고른 핀의 요약 (src/places-view.mjs summarize)
   const [mapLocated, setMapLocated] = useState(null); // 위치가 있는 사진 수 (지도 패널 안내용)
   const [mapTop, setMapTop] = useState([]); // 사진을 많이 찍은 곳 (지도 패널)
-  const [mapGoto, setMapGoto] = useState(null); // 패널에서 누른 곳 { lat, lng, seq } → 지도가 그곳으로 가서 핀을 골라요
-  const mapViewRef = useRef({ center: null, zoom: null, year: null }); // 지도 화면을 다시 열 때 이어서 보여 줄 곳
+  const [mapGoto, setMapGoto] = useState(null); // 패널에서 누른 많이 찍은 곳 { key, seq } → 지도가 그 묶음을 고르고 그곳을 보여 줘요
+  const mapViewRef = useRef({ center: null, zoom: null, year: null, gotoSeq: 0 }); // 지도 화면을 다시 열 때 이어서 보여 줄 곳 (gotoSeq: 처리한 많이 찍은 곳 번호)
   const [similarFocus, setSimilarFocus] = useState(null); // 비슷한 사진 화면에서 오른쪽 패널에 보여 줄 사진 번호
   const [selection, setSelection] = useState(EMPTY_SELECTION); // { ids, anchor, focus }
   const [cellMenuAt, setCellMenuAt] = useState(null); // 우클릭한 자리 { x, y }. 있으면 우클릭 메뉴를 그려요
@@ -531,7 +531,7 @@ export default function App() {
         {showAfterUndo && <UndoBar batch={lastBatch} variant="after" busy={undoing} disabled={syncing} onUndo={() => undo(lastBatch.id)} onDismiss={() => setJustApplied(null)} />}
         <div className="center">{center}</div>
       </main>
-      {showTools && screen === 'map' && <MapPanel picked={mapPick} located={mapLocated} top={mapTop} onShowArea={showArea} onGoto={(t) => setMapGoto((g) => ({ lat: t.lat, lng: t.lng, seq: (g ? g.seq : 0) + 1 }))} />}
+      {showTools && screen === 'map' && <MapPanel picked={mapPick} located={mapLocated} top={mapTop} onShowArea={showArea} onGoto={(t) => setMapGoto((g) => ({ key: t.key, seq: (g ? g.seq : 0) + 1 }))} />}
       {showTools && screen !== 'map' && (
         <DetailPanel
           selectedId={screen === 'similar' ? similarFocus : screen === 'tags' ? null : suggestOpen ? suggestFocus : (soleId !== null ? soleId : selection.focus)}

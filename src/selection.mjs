@@ -62,10 +62,10 @@ export function selectionForMenu(sel, id) {
   return sel && sel.ids.has(id) ? sel : only(id);
 }
 
-// 선택이 "같은 사진들"인지 가르는 기준: 종류 탭, 정보 없음 탭(있으면 정보 없는 사진 화면), 검색어, 태그. 정렬은 같은 사진들이라 뺐어요
+// 선택이 "같은 사진들"인지 가르는 기준: 종류 탭, 정보 없음 탭(있으면 정보 없는 사진 화면), 검색어, 태그, 지도에서 고른 곳. 정렬은 같은 사진들이라 뺐어요
 export function filterScope(filter) {
   const f = filter || {};
-  return [f.tab || 'all', f.info || '', f.query || '', f.tag || ''].join('|');
+  return [f.tab || 'all', f.info || '', f.query || '', f.tag || '', f.area ? JSON.stringify(f.area) : ''].join('|');
 }
 
 // 필터를 바꾸면 새 목록이 올 때까지 옛 목록이 잠깐 화면에 남아요. 그 사이에는 고르기를 받지 않아요
