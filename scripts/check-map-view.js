@@ -369,7 +369,7 @@ const items = [
         const merged = P.toPoints([...spread(1, 37.2700, 127.0000, 12, null), ...spread(101, 37.5, 127.5, 19, null)]);
         const order = P.clusterPoints(merged, 9).map((c) => c.count);
         const sorted = order.every((n, i) => i === 0 || order[i - 1] >= n);
-        // 이름 자리는 0.1도 눈금이라 연도 탭을 바꿔도 같은 열쇠 (#56 검증: 연도마다 새 요청)
+        // 이름 자리는 가장 많이 찍은 2km 칸(0.02도 눈금)이라 연도 탭을 바꿔도 같은 열쇠 (#56 검증: 연도마다 새 요청)
         const spots = (y) => P.clusterPoints(P.byYear(pts, y), 9).map((c) => P.cityKey(c.named.lat, c.named.lng)).sort().join(' ');
         const all = new Set(spots(null).split(' '));
         const sameSpots = [2026, 2019, 2017].every((y) => spots(y).split(' ').every((k) => all.has(k)));
@@ -389,7 +389,12 @@ const items = [
         const one = P.clusterPoints(korea, 3)[0];
         const near = (s, lat, lng) => Math.abs(s.lat - lat) < 0.05 && Math.abs(s.lng - lng) < 0.05;
         const suwon = one && one.count === 80 && near(one.named, 37.27, 127.01);
-        const fine = one && Number.isInteger(Math.round(one.named.lat / P.NAME_FINE)) && Math.abs(one.named.lat / P.NAME_FINE - Math.round(one.named.lat / P.NAME_FINE)) < 1e-6;
+        // 위도 · 경도 둘 다 0.02도 눈금 위 (#62 검증: 위도만 보고, 늘 참인 식이 섞여 있었음)
+        const onFine = (v) => Math.abs(v / P.NAME_FINE - Math.round(v / P.NAME_FINE)) < 1e-6;
+        const fine = one && onFine(one.named.lat) && onFine(one.named.lng) && P.nameSpot([]) === null;
+        // 나라를 알아볼 묶음은 핀 · 많이 찍은 곳 뒤에 물어요 (상한 80을 먼저 다 쓰지 않게, #62 검증)
+        const mv = fs.readFileSync(path.join(APP, 'src', 'components', 'MapView.jsx'), 'utf8');
+        const later = /wantName\(c\.named, true\)/.test(mv) && /WAITING\.shift\(\) \|\| LATER\.shift\(\)/.test(mv);
         // 빈 25장 + 부다페스트 37장: 나라 칩이 오스트리아 · 헝가리로 나뉘어야 해요 (슬로바키아로 합치지 않게)
         const trip = P.toPoints([...spread(301, 48.21, 16.37, 25, '2018-01-01'), ...spread(401, 47.5, 19.04, 37, '2018-01-02')]);
         const where = (lat, lng) => {
@@ -399,9 +404,9 @@ const items = [
           return null;
         };
         const chips2 = P.countryChips(P.clusterPoints(trip, P.COUNTRY_ZOOM), where).map((c) => `${c.country}${c.count}`).join(',');
-        out.push(sub('44f 이름 자리는 묶음에서 가장 많이 찍은 곳(눈금 위), 나라 칩은 빈 · 부다페스트를 나눠 셈',
-          suwon && fine && chips2 === '헝가리37,오스트리아25',
-          JSON.stringify([one && one.count, one && one.named, chips2])));
+        out.push(sub('44f 이름 자리는 묶음에서 가장 많이 찍은 곳(위도 · 경도 눈금 위), 나라 묶음은 뒤에 물음, 나라 칩은 빈 · 부다페스트를 나눠 셈',
+          suwon && fine && later && chips2 === '헝가리37,오스트리아25',
+          JSON.stringify([one && one.count, one && one.named, chips2, later])));
       }
 
       // 44e 핀 이름은 인터넷에서 온 글이라 HTML로 넣지 않아요 (textContent)
