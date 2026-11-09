@@ -1033,6 +1033,8 @@ const ITEMS = [
   ...require('./check-places').items,
   // 40번은 내가 붙이는 태그 점검 (scripts/check-tags.js)
   ...require('./check-tags').items,
+  // 42 · 43번은 지도 화면 점검 (scripts/check-map-view.js)
+  ...require('./check-map-view').items,
 ];
 
 // ---------- 점검 임시 폴더 정리 ----------
