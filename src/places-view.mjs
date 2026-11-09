@@ -146,7 +146,7 @@ export function clusterPoints(points, zoom, { cell = CELL, bounds = null } = {})
       count: members.length,
       lat,
       lng,
-      named: nameSpot(lat, lng), // 이름을 물을 자리 (0.1도 눈금이라 연도 · 다시 읽기가 바뀌어도 거의 그대로)
+      named: nameSpot(members), // 이름을 물을 자리 (사진을 가장 많이 찍은 2km 칸. 눈금이라 연도 · 다시 읽기가 바뀌어도 거의 그대로)
       rects: group.map((g) => cellRect(g.col, g.row, z, cell)),
       members,
     });
@@ -156,17 +156,40 @@ export function clusterPoints(points, zoom, { cell = CELL, bounds = null } = {})
   return out;
 }
 
-// 이름을 물을 자리: 묶음의 사진 평균 좌표를 0.1도(약 10km) 눈금에 맞춘 곳.
-//   평균 좌표를 그대로 물으면 연도 탭이나 다시 읽기마다 좌표가 조금씩 달라져 새 요청이 나가요 (#56 검증: 6만 장에서 최대 681개).
-//   눈금에 맞추면 같은 동네는 같은 열쇠가 되고, 서버로 가는 좌표도 덜 자세해요 (칸 가운데를 쓰면 사진과 멀어져 이웃 도시 이름이 나와서 평균을 써요)
+// 이름을 물을 자리: 묶음 안에서 사진을 가장 많이 찍은 곳
+//   (10-9 확인: 평균 좌표는 흩어진 묶음에서 사진이 없는 가운데가 돼요. 한국 전체 묶음이 "대전",
+//    빈 + 부다페스트 묶음이 슬로바키아, 파리 묶음이 "클리시"로 나왔음)
+//   1) 0.1도(약 10km) 칸 중 사진이 가장 많은 칸 → 2) 그 안의 0.02도(약 2km) 칸 중 가장 많은 칸 → 그 칸의 가운데
+//   칸 가운데는 정해진 눈금이라 연도 탭이나 다시 읽기가 바뀌어도 같은 열쇠가 돼요 (#56 검증: 평균을 그대로 물으면 요청이 계속 새로 나감)
+//   2km 칸이라 사진과 멀지 않아 이웃 도시 이름이 나오지 않고, 서버로 가는 좌표도 덜 자세해요
 export const NAME_GRID = 0.1;
-const snap = (v) => Math.round(v / NAME_GRID) * NAME_GRID;
-export function nameSpot(atLat, atLng) {
-  const lat = Math.max(-85, Math.min(85, snap(atLat)));
-  let lng = snap(atLng);
+export const NAME_FINE = 0.02;
+function busiestCell(points, grid) {
+  const cells = new Map();
+  let best = null;
+  for (const p of points) {
+    const i = Math.round(p.lat / grid);
+    const j = Math.round(p.lng / grid);
+    const key = `${i},${j}`;
+    let c = cells.get(key);
+    if (!c) {
+      c = { i, j, key, members: [] };
+      cells.set(key, c);
+    }
+    c.members.push(p);
+    // 장수가 같으면 열쇠 글자 순서로 정해서 늘 같은 칸을 골라요
+    if (!best || c.members.length > best.members.length || (c.members.length === best.members.length && c.key < best.key)) best = c;
+  }
+  return best;
+}
+export function nameSpot(members) {
+  const wide = busiestCell(members, NAME_GRID);
+  const fine = busiestCell(wide.members, NAME_FINE);
+  const lat = Math.max(-85, Math.min(85, fine.i * NAME_FINE));
+  let lng = fine.j * NAME_FINE;
   if (lng > 180) lng -= 360;
   if (lng < -180) lng += 360;
-  return { lat: Number(lat.toFixed(1)), lng: Number(lng.toFixed(1)) };
+  return { lat: Number(lat.toFixed(2)), lng: Number(lng.toFixed(2)) };
 }
 
 // 오른쪽 패널에 보일 묶음 요약: 장수, 찍은 기간, 최근 사진 9장 id, 갤러리로 넘길 영역 (연도 탭이 골라져 있으면 그 해만)
@@ -205,7 +228,7 @@ export const countText = (n) => n.toLocaleString('en-US');
 
 export const TOP_PLACES = 5; // "사진을 많이 찍은 곳" 줄 수
 export const TOP_ZOOM = 9; // 많이 찍은 곳은 이 확대 단계(시 · 군 정도)의 묶음으로 세요
-export const COUNTRY_ZOOM = 5; // 해외 나라는 이 확대 단계의 묶음 가운데 좌표로 나라를 알아봐요 (나라 경계 근처는 어림이에요)
+export const COUNTRY_ZOOM = 7; // 해외 나라는 이 확대 단계의 묶음마다 이름 자리로 나라를 알아봐요 (5는 너무 넓어 빈 + 부다페스트가 한 묶음이었음, 10-9 확인)
 export const NAMED_PINS = 5; // 화면에 보이는 핀 중 이름을 붙일 큰 핀 수
 
 // 이름 저장 열쇠 (main 의 gallery:map-place 와 같은 줄임: 소수점 2자리)
