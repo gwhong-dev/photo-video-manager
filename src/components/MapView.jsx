@@ -26,20 +26,21 @@ const AUTO_MAX = 80; // 이번 실행에서 저절로 묻는 이름 수 상한 (
 //   이름 열쇠 → { name, country, cc } | 'waiting' | 'failed' | 'skipped'
 //   한 번에 하나씩만 물어요. 그래야 사용자가 장소를 검색하면 1~2초 안에 차례가 와요 (main 의 지도 요청은 한 줄로 서요)
 const NAMES = new Map();
-const WAITING = [];
+const WAITING = []; // 핀 · 많이 찍은 곳 (먼저)
+const LATER = []; // 해외 나라를 알아볼 묶음 (뒤에. 상한 80을 먼저 다 쓰지 않게, #62 검증)
 const LISTENERS = new Set();
 let pumping = false;
 let autoAsked = 0;
-function wantName(spot) {
+function wantName(spot, later = false) {
   const key = cityKey(spot.lat, spot.lng);
   if (NAMES.has(key)) return;
   NAMES.set(key, 'waiting');
-  WAITING.push({ ...spot, key });
+  (later ? LATER : WAITING).push({ ...spot, key });
   pumpNames();
 }
 async function pumpNames() {
   if (pumping) return;
-  const next = WAITING.shift();
+  const next = WAITING.shift() || LATER.shift();
   if (!next) return;
   pumping = true;
   try {
@@ -227,7 +228,7 @@ export default function MapView({ gen, noLocation, picked, onPick, onLoaded, onT
   const wide = useMemo(() => (points ? clusterPoints(byYear(points, year), COUNTRY_ZOOM) : []), [points, year]);
   useEffect(() => {
     shownTop.forEach((t) => wantName(t.named));
-    wide.forEach((c) => wantName(c.named));
+    wide.forEach((c) => wantName(c.named, true)); // 큰 묶음부터 (clusterPoints는 큰 순서)
   }, [shownTop, wide]);
   // 패널의 많이 찍은 곳 (이름이 오면 이름만 다시 붙여요)
   useEffect(() => {

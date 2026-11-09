@@ -141,7 +141,8 @@ const items = [
           ].join('\n'));
           const [hist, again] = await Promise.all([call('gallery:clean-history'), call('gallery:clean-history')]);
           const old = hist.folders.find((f) => f.name === 'old-src') || {};
-          const gone = hist.folders.find((f) => f.name === '가져올') || {}; // 가짜 로그의 C:\Users\사용자\… 는 연결 안 됨
+          // 가짜 로그의 C:\Users\사용자\가져올 은 드라이브는 있고 폴더가 없음 → 지워진 예전 폴더라 안 보여요 (#60 검증)
+          const goneShown = hist.folders.some((f) => f.name === '가져올');
           const ok = await call('gallery:open-cleaned', 'source');
           const okOld = await call('gallery:open-cleaned', old.key);
           const bad = await errOf(call('gallery:open-cleaned', 'C:\\Windows'));
@@ -150,11 +151,11 @@ const items = [
           openFail = 'Failed to open path';
           const fail = await errOf(call('gallery:open-cleaned', 'source'));
           const histJson = JSON.stringify(hist);
-          out.push(sub('45c 연결: 기록 4개 · 폴더에 경로 없음, 겹친 요청은 같은 결과, 예전 가져올 폴더도 찾아 열고 연결 안 된 곳은 표시, 이상한 값 · 모르는 폴더 · 없는 폴더 · 열기 실패는 정해진 문장',
+          out.push(sub('45c 연결: 기록 4개 · 폴더에 경로 없음, 겹친 요청은 같은 결과, 예전 가져올 폴더도 찾아 열고 지워진 예전 폴더는 안 보임, 이상한 값 · 모르는 폴더 · 없는 폴더 · 열기 실패는 정해진 문장',
             hist.sessions.length === 4 && hist === again && !histJson.includes(root) && !histJson.includes('사용자')
             && hist.folders[0].key === 'source' && hist.folders[1].key === 'backup'
             && old.label === '예전 가져올 폴더' && old.exists && old.files === 1 && /^old-[0-9a-f]{12}$/.test(old.key || '')
-            && gone.reachable === false && gone.label === '예전 가져올 폴더'
+            && !goneShown
             && ok === true && okOld === true && opened[0] === path.join(path.resolve(src), '_정리완료원본')
             && opened[1] === path.join(oldSrc, '_정리완료원본') && opened.length === 3
             && (bad || '').includes('올바르지') && (unknown || '').includes('없어요') && (noDir || '').includes('없어요') && fail === '폴더를 열지 못했어요',
@@ -182,7 +183,8 @@ const items = [
         const wired = side.includes("onScreen('clean')") && !side.includes('label="정리" disabled') && app.includes('<CleanView') && app.includes('<CleanPanel')
           && pre.includes("'gallery:clean-history'") && pre.includes("'gallery:open-cleaned'") && view.includes('_정리완료원본 열기');
         const readOnly = !/\.(rename|rm|unlink|rmdir|writeFile|appendFile|copyFile|mkdir|cp|truncate)(Sync)?\(|trashItem/.test(lib);
-        out.push(sub('45d 읽기만 (파일 그대로, 정리 기록 코드에 옮기기 · 지우기 · 쓰기 없음), 정리 메뉴 · 화면 · 패널 · 통로 연결', still && wired && readOnly, JSON.stringify({ still, wired, readOnly })));
+        const noSync = !/\b\w+Sync\(/.test(lib); // 앱을 멈추는 기다리기 읽기 없음 (#60 검증)
+        out.push(sub('45d 읽기만 (파일 그대로, 정리 기록 코드에 옮기기 · 지우기 · 쓰기 없음, Sync 읽기 없음), 정리 메뉴 · 화면 · 패널 · 통로 연결', still && wired && readOnly && noSync, JSON.stringify({ still, wired, readOnly, noSync })));
       }
 
       // 45e 실제로 쓴 로그: cleanOriginals · discardFiles (가짜 휴지통, 가짜 드라이브)가 남긴 로그를 그대로 읽어 개수 · 이름 · 실패 이유가 맞는지
@@ -248,6 +250,8 @@ const items = [
           ['Failed to move C:\\Users\\홍 길동\\a.jpg to trash', '옮기지 못했어요'],
           ['\\\\nas\\사용자\\a.jpg 를 옮기지 못함', '옮기지 못했어요'],
           ['결과 파일을 찾지 못했어요', '결과 파일을 찾지 못했어요'],
+          ["EPERM: operation not permitted, unlink 'C:\\Users\\홍\\IMG_1 (1).jpg'", '옮기지 못했어요 (EPERM)'],
+          ["휴지통 결과를 알 수 없어요 (EBUSY: resource busy, unlink 'C:\\a (2).jpg')", '휴지통 결과를 알 수 없어요 (EBUSY)'],
         ];
         const got = cases.map(([a]) => H.safeNote(a));
         out.push(sub('45f 실패 이유: 경로 · 영문 오류 글은 화면에 안 감', got.every((g, i) => g === cases[i][1]), JSON.stringify(got)));
@@ -265,6 +269,28 @@ const items = [
           big.trash === 305 && big.more === 5 && big.files.length === 301 && big.files[0].name === 'last.jpg' && big.files[0].how === 'pending' && big.pending === 1
           && cap.capped === true && cap.files === 1 && empty.sessions.length === 0 && empty.oldBases.length === 0,
           JSON.stringify({ more: big.more, n: big.files.length, first: big.files[0], cap, empty })));
+      }
+
+      // 45h 예전 폴더 (#60 검증): 지워진 예전 폴더가 9개 먼저 있어도 뒤의 있는 폴더가 보임 (보이는 것만 MAX_OLD개까지 셈)
+      //   Windows 에서는 없는 드라이브 글자의 예전 폴더가 "연결 안 됨"으로 보이는지도 봐요
+      {
+        const live = path.join(root, 'old-live');
+        fs.mkdirSync(path.join(live, '_정리완료원본'), { recursive: true });
+        const oldBases = [];
+        for (let i = 0; i < 9; i++) oldBases.push({ kind: 'clean', base: path.join(root, `old-gone-${i}`) });
+        oldBases.push({ kind: 'clean', base: live });
+        let drive = null;
+        if (process.platform === 'win32') {
+          drive = 'QRSTUVWXYZ'.split('').map((l) => `${l}:\\`).find((d) => !fs.existsSync(d)) || null;
+          if (drive) oldBases.unshift({ kind: 'clean', base: `${drive}사진` });
+        }
+        const r = await H.cleanedFolders({ source: src, backupRoot: '', oldBases });
+        const olds = r.folders.filter((f) => f.key.startsWith('old-'));
+        const liveShown = olds.some((f) => f.name === 'old-live' && f.exists);
+        const goneShown = olds.some((f) => f.name.startsWith('old-gone-'));
+        const unplugged = !drive || olds.some((f) => f.name === '사진' && f.reachable === false);
+        out.push(sub('45h 지워진 예전 폴더는 안 보이고 상한에 안 셈, 뒤의 있는 폴더는 보임, 없는 드라이브는 연결 안 됨',
+          liveShown && !goneShown && unplugged, JSON.stringify({ olds: olds.map((f) => [f.name, f.reachable, f.exists]), drive })));
       }
       return out;
     },
