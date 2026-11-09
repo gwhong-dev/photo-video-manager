@@ -310,6 +310,47 @@ const items = [
         out.push(sub('29e 파일 모양 { paths }, 임시 파일이 안 남음', Array.isArray(data.paths) && data.paths[0] === 'x' && names.length === 1, names.join(',')));
       }
 
+      // 29f 묶음 되돌리기 (#65 검증): 두 넣기에서 같은 사진 → 나중 것 되돌리면 그대로, 앞 것 되돌리면 빠짐
+      //   넣기 뒤 번호 없이 또 건너뛰면 앞 넣기를 되돌려도 남음. 옛 파일({ paths }만)의 건너뜀은 되돌려도 그대로
+      {
+        const f = path.join(dir, 'batches.json');
+        const s = createSkips(f, { onError: silent });
+        s.add(['p'], 'B1');
+        s.add(['p', 'q'], 'B2'); // p는 이미 있어서 B2에는 q만
+        const u2 = s.undoBatch('B2');
+        const afterB2 = s.paths().has('p') && !s.paths().has('q');
+        const u1 = s.undoBatch('B1');
+        const afterB1 = !s.paths().has('p');
+        s.add(['r'], 'B3');
+        s.add(['r']); // "이 묶음 건너뛰기"로 따로 또 건너뜀
+        const u3 = createSkips(f, { onError: silent }).undoBatch('B3'); // 다시 열어서
+        const keptR = createSkips(f, { onError: silent }).paths().has('r');
+        const old = path.join(dir, 'old.json');
+        fs.writeFileSync(old, JSON.stringify({ paths: ['o'] }));
+        const so = createSkips(old, { onError: silent });
+        so.add(['n'], 'B4');
+        const u4 = so.undoBatch('B4');
+        out.push(sub(
+          '29f 나중 넣기 되돌리면 앞 넣기 건너뜀 그대로, 따로 건너뛴 사진과 옛 파일 건너뜀도 그대로',
+          u2.removed === 1 && afterB2 && u1.removed === 1 && afterB1 && u3.removed === 0 && keptR
+            && u4.removed === 1 && so.paths().has('o') && !so.paths().has('n'),
+          JSON.stringify([u2, u1, u3, keptR, u4, [...so.paths()]]),
+        ));
+      }
+
+      // 29g 묶음 기록만 깨지면 그것만 비우고 건너뛴 사진은 살림 (#65 검증)
+      {
+        const sub3 = path.join(dir, 'bad-batches');
+        fs.mkdirSync(sub3);
+        const f = path.join(sub3, 'suggest-skips.json');
+        fs.writeFileSync(f, JSON.stringify({ paths: ['x', 'y'], batches: { B: 'x' } }));
+        let errors = 0;
+        const s = createSkips(f, { onError: () => { errors++; } });
+        const names = fs.readdirSync(sub3);
+        const u = s.undoBatch('B');
+        out.push(sub('29g 묶음 기록만 깨지면 건너뛴 사진은 그대로, 파일 보관 안 함, 오류 알림', s.paths().size === 2 && errors === 1 && names.length === 1 && u.removed === 0, JSON.stringify([[...s.paths()], errors, names])));
+      }
+
       return out;
     },
   },
