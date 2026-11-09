@@ -876,6 +876,8 @@ const ITEMS = [
         let got;
         try {
           for (const n of names) fs[n] = (...a) => { reads++; return orig[n].apply(fs, a); };
+          // realpathSync.native 도 그대로 쓸 수 있게 감싸요 (빠지면 lib/paths.js 의 realPath 가 조용히 다른 길로 가요, #53 검증)
+          fs.realpathSync.native = (...a) => { reads++; return orig.realpathSync.native.apply(fs, a); };
           got = cleaner.cleanCandidates({ items }).map((it) => it.i).join(',');
         } finally {
           for (const n of names) fs[n] = orig[n];
