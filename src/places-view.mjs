@@ -181,3 +181,55 @@ export const pinSize = (count) => 28 + 6 * Math.min(4, String(count).length - 1)
 
 // 숫자 핀 글자 (1,280)
 export const countText = (n) => n.toLocaleString('en-US');
+
+// ---------- 단계 6-2: 핀 이름, 많이 찍은 곳, 해외 나라 ----------
+
+export const TOP_PLACES = 5; // "사진을 많이 찍은 곳" 줄 수
+export const TOP_ZOOM = 9; // 많이 찍은 곳은 이 확대 단계(시 · 군 정도)의 묶음으로 세요
+export const COUNTRY_ZOOM = 5; // 해외 나라는 이 확대 단계의 묶음 가운데 좌표로 나라를 알아봐요 (나라 경계 근처는 어림이에요)
+export const NAMED_PINS = 5; // 화면에 보이는 핀 중 이름을 붙일 큰 핀 수
+
+// 이름 저장 열쇠 (main 의 gallery:map-place 와 같은 줄임: 소수점 2자리)
+export const cityKey = (lat, lng) => `${(Math.round(lat * 100) / 100).toFixed(2)},${(Math.round(lng * 100) / 100).toFixed(2)}`;
+
+// 많이 찍은 곳: TOP_ZOOM 묶음 중 큰 것부터 n개 → [{ key, count, lat, lng, cluster }]
+export function topPlaces(points, n = TOP_PLACES, zoom = TOP_ZOOM) {
+  return clusterPoints(points, zoom).slice(0, n).map((c) => ({ key: c.key, count: c.count, lat: c.lat, lng: c.lng, cluster: c }));
+}
+
+// 해외 나라 칩: COUNTRY_ZOOM 묶음마다 이름표(나라)를 찾아 나라별로 장수를 더해요. 한국과 아직 모르는 나라는 빼요
+//   places(lat, lng) → { name, country, cc } 또는 null. 돌려주는 값: [{ cc, country, count, box: { s, w, n, e } }] (많은 순)
+export function countryChips(clusters, places) {
+  const by = new Map();
+  for (const c of clusters) {
+    const p = places(c.lat, c.lng);
+    if (!p || !p.cc || p.cc === 'kr' || !p.country) continue;
+    let x = by.get(p.cc);
+    if (!x) {
+      x = { cc: p.cc, country: p.country, count: 0, box: { s: 90, w: 180, n: -90, e: -180 } };
+      by.set(p.cc, x);
+    }
+    x.count += c.count;
+    for (const m of c.members) {
+      x.box.s = Math.min(x.box.s, m.lat);
+      x.box.n = Math.max(x.box.n, m.lat);
+      x.box.w = Math.min(x.box.w, m.lng);
+      x.box.e = Math.max(x.box.e, m.lng);
+    }
+  }
+  return [...by.values()].sort((a, b) => b.count - a.count || a.country.localeCompare(b.country));
+}
+
+// 가장 가까운 묶음 (많이 찍은 곳을 눌러 그곳으로 옮긴 뒤 그 핀을 고를 때)
+export function nearestCluster(clusters, lat, lng) {
+  let best = null;
+  let bestD = Infinity;
+  for (const c of clusters) {
+    const d = (c.lat - lat) ** 2 + (c.lng - lng) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = c;
+    }
+  }
+  return best;
+}
