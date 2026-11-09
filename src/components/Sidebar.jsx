@@ -58,7 +58,7 @@ export default function Sidebar({ state, screen, filter, onOpenImport, onScreen,
         <MenuRow icon={<SimilarIcon />} label="비슷한 사진" active={screen === 'similar'} onClick={() => onScreen('similar')} disabled={!showCounts} />
         <MenuRow icon={<TagIcon />} label="태그" count={showCounts ? s.tagCount : undefined} active={screen === 'tags'} onClick={() => onScreen('tags')} disabled={!showCounts} />
         <MenuRow icon={<MapIcon />} label="지도" active={screen === 'map'} onClick={() => onScreen('map')} disabled={!showCounts} />
-        <MenuRow icon={<CleanIcon />} label="정리" disabled />
+        <MenuRow icon={<CleanIcon />} label="정리" active={screen === 'clean'} onClick={() => onScreen('clean')} disabled={!showCounts} />
       </nav>
 
       {mine.length > 0 && (

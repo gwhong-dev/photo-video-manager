@@ -1037,6 +1037,8 @@ const ITEMS = [
   ...require('./check-tags').items,
   // 42 · 43번은 지도 화면 점검 (scripts/check-map-view.js)
   ...require('./check-map-view').items,
+  // 45 · 46번은 정리 화면 점검 (scripts/check-clean-view.js)
+  ...require('./check-clean-view').items,
 ];
 
 // ---------- 점검 임시 폴더 정리 ----------
