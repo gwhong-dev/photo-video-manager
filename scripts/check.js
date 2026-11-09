@@ -843,6 +843,67 @@ const ITEMS = [
         out.push(sub('12v 앞 보관에 진행 기록이 없어도 다음 보관의 계획·진행 기록 이름이 짝', pairOk, names3.join(', ')));
       }
 
+      // 12w 빠른 확인(cleanCandidates)이 원본마다 디스크를 두 번만 읽음 + 결과는 그대로 + 많은 중복 시간 (#49 검증 ⚠️ 큰 목록 속도)
+      if (!cleaner || !cleaner.cleanCandidates) {
+        out.push(missing('12w 빠른 확인 속도'));
+      } else {
+        const d = path.join(root, '12w');
+        const put = (name, text) => {
+          const p = path.join(d, name);
+          fs.mkdirSync(path.dirname(p), { recursive: true });
+          fs.writeFileSync(p, text);
+          return p;
+        };
+        // 여러 경우: 결과 그대로인지 (기대: 정리 대상은 done, dup, conv 세 개)
+        const keepA = put('backup/a.jpg', 'aaaa');
+        const link = path.join(d, 'src/link.jpg');
+        fs.mkdirSync(path.dirname(link), { recursive: true });
+        fs.linkSync(keepA, link); // 같은 파일을 다른 경로로 (하드링크)
+        const items = [
+          { i: 'done', src: put('src/done.jpg', 'x'), status: 'done', finalPath: put('backup/done.jpg', 'x') },
+          { i: 'dup', src: put('src/dup.jpg', 'aaaa'), status: 'dup', dupOf: keepA },
+          { i: 'size', src: put('src/size.jpg', 'aaa'), status: 'dup', dupOf: keepA }, // 크기 다름 → 빠짐
+          { i: 'conv', src: put('src/conv.heic', 'h'), status: 'dup', converted: true, sameShot: true, dupOf: keepA },
+          { i: 'link', src: link, status: 'dup', dupOf: keepA }, // 같은 파일 → 빠짐
+          { i: 'nosrc', src: path.join(d, 'src/없음.jpg'), status: 'dup', dupOf: keepA }, // 원본 없음 → 빠짐
+          { i: 'nokeep', src: put('src/nokeep.jpg', 'aaaa'), status: 'dup', dupOf: path.join(d, 'backup/없음.jpg') }, // 남길 파일 없음 → 빠짐
+          { i: 'check', src: put('src/check.jpg', 'aaaa'), status: 'dup', check: true, dupOf: keepA }, // 확인 필요 → 빠짐
+        ];
+        // 디스크 읽기 횟수 세기 (fs 함수를 잠깐 감싸요)
+        const names = ['statSync', 'lstatSync', 'existsSync', 'realpathSync'];
+        const orig = Object.fromEntries(names.map((n) => [n, fs[n]]));
+        let reads = 0;
+        let got;
+        try {
+          for (const n of names) fs[n] = (...a) => { reads++; return orig[n].apply(fs, a); };
+          got = cleaner.cleanCandidates({ items }).map((it) => it.i).join(',');
+        } finally {
+          for (const n of names) fs[n] = orig[n];
+        }
+        out.push(sub('12w 빠른 확인 결과 그대로 (크기 다름 · 같은 파일 · 없는 파일 · 확인 필요는 빠짐)', got === 'done,dup,conv', `대상 ${got} (기대 done,dup,conv)`));
+        out.push(sub('12w 빠른 확인은 원본마다 디스크를 두 번 이하로 읽음', reads <= items.length * 2, `${items.length}개에 ${reads}번`));
+        // 시간: 중복 6,000개 (작은 파일 12,000개) → 6만 개로 환산
+        const N = 6000;
+        const many = [];
+        for (let k = 0; k < N; k++) {
+          const src = path.join(d, 'many-src', `IMG_${k}.JPG`);
+          const keep = path.join(d, 'many-keep', `2026-01-01_${k}.jpg`);
+          if (k === 0) {
+            fs.mkdirSync(path.dirname(src), { recursive: true });
+            fs.mkdirSync(path.dirname(keep), { recursive: true });
+          }
+          fs.writeFileSync(src, 'x');
+          fs.writeFileSync(keep, 'x');
+          many.push({ src, status: 'dup', dupOf: keep });
+        }
+        const t0 = Date.now();
+        const n = cleaner.cleanCandidates({ items: many }).length;
+        const ms = Date.now() - t0;
+        const per60k = (ms * 10) / 1000;
+        console.log(`   ⏱ 12w 중복 6,000개 빠른 확인 ${ms}ms → 6만 개 약 ${per60k.toFixed(1)}초`); // 통과해도 시간은 보이게
+        out.push(sub('12w 중복 6,000개 빠른 확인 (6만 개 환산 10초 이하)', n === N && per60k <= 10, `${ms}ms → 6만 개 약 ${per60k.toFixed(1)}초, 대상 ${n}개`));
+      }
+
       // 12f 드라이브 종류를 모름 → 이동 (휴지통 안 씀)
       if (!cleaner || !cleaner.cleanOriginals) {
         out.push(missing('12f 드라이브 종류 모름 → 이동'));
