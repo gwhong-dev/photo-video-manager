@@ -77,3 +77,4 @@
 | 2026-11-09 | claude/peaceful-pasteur-g78fp0 | 이 커밋 | 문서만 변경, 점검 없음 | 사용자 요청 | CLAUDE.md 3-1: 메인 세션 하나 + 병렬 작업만 갈래 세션(create_session), 끝나면 메인이 확인하고 archive_session |
 | 2026-11-09 | fix/suggest-undo-skips | 이 커밋 | 클라우드: 30 · 31 ✅ (30c2 바꿈, 30c3 추가, 31n 문자열), 진짜 앱 · magick · 12j는 환경 탓 | origin/fix/suggest-undo-skips | 위치 제안 일부만 넣고 되돌리면 그때 체크를 끈 사진도 건너뜀에서 뺌 (suggest-skips.json에 batches). 전부터 건너뛴 사진, 묶음 건너뛰기는 그대로. 되돌리기 응답에 뺀 사진이 있을 때만 unskipped · skipsSaved |
 | 2026-11-09 | claude/peaceful-pasteur-g78fp0 | 이 커밋 | 문서만 변경, 점검 없음 | 사용자 요청 | CLAUDE.md 2절: PC 일은 PC의 Remote Control 환경에 갈래 세션으로 바로 보냄 |
+| 2026-11-09 | fix/clean-hash-once | 이 커밋 | 클라우드: 12x ✅, 새로 깨진 것 없음 (magick · 12j · dbus는 환경 탓) | origin/fix/clean-hash-once | 원본 정리 때 지문 한 번만 계산 (확인 창 지문 재사용, 바뀐 파일만 다시). 개발개요 4-0 속도 ✅ |
