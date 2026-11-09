@@ -4,7 +4,8 @@
 
 import React from 'react';
 
-const HOW_TEXT = { trash: '휴지통', move: '_정리완료원본', fail: '실패' };
+// pending = "예정" 줄만 있고 결과 줄이 없는 파일 (옮기던 중 꺼졌거나 결과를 적지 못함). 목록 맨 앞에 와요
+const HOW_TEXT = { trash: '휴지통', move: '_정리완료원본', fail: '실패', pending: '결과가 기록되지 않음' };
 const num = (n) => n.toLocaleString('en-US');
 
 export default function CleanPanel({ session }) {
@@ -25,7 +26,10 @@ export default function CleanPanel({ session }) {
         <span>실패 {num(session.fail)}개</span>
       </p>
       {!session.finished && (
-        <p className="clean-note">이 기록은 끝 줄이 없어요. 정리하는 도중에 프로그램이 꺼졌을 수 있어요. 마지막 파일이 원래 자리나 휴지통에 있는지 확인해 주세요.</p>
+        <p className="clean-note">이 기록은 끝 줄이 없어요. 정리하는 도중에 프로그램이 꺼졌을 수 있어요.</p>
+      )}
+      {session.pending > 0 && (
+        <p className="clean-note">'결과가 기록되지 않음' 파일 {num(session.pending)}개는 옮기는 도중이었어요. 원래 자리, 휴지통, _정리완료원본 중 어디에 있는지 확인해 주세요.</p>
       )}
       <ul className="clean-files">
         {session.files.map((f, i) => (
