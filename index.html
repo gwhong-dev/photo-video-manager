@@ -342,6 +342,7 @@
       planReady = false;
       cleanOnly = false;
       $('runBtn').disabled = true;
+      $('runBtn').textContent = '✅ 실행'; // 원본 정리만 할 때 바꾼 글자를 되돌려요
     }
     // 고르는 순간 폴더 조합 확인 → 안 되면 이유를 보여주고 고른 것을 취소
     async function folderRejected(source, backupRoot) {
@@ -410,7 +411,9 @@
           // 전부 중복이어도 백업에 이미 있는 원본은 정리할 수 있어요 → 실행을 누르면 원본 정리만 물어봐요
           planReady = true;
           cleanOnly = true;
-          setStatus(`✅ 새로 처리할 파일이 없어요 (전부 중복이에요)\n🧹 백업 폴더에 이미 있는 원본 ${num(res.cleanable)}개는 정리할 수 있어요. 실행을 누르면 원본 정리만 물어볼게요`);
+          // 버튼 글자는 누르면 생기는 일을 말해요 (CLAUDE.md 화면 디자인)
+          $('runBtn').textContent = `🧹 원본 ${num(res.cleanable)}개 정리하기`;
+          setStatus(`✅ 새로 처리할 파일이 없어요 (전부 중복이에요)\n🧹 백업 폴더에 이미 있는 원본 ${num(res.cleanable)}개는 정리할 수 있어요. 아래 "원본 ${num(res.cleanable)}개 정리하기"를 누르면 하나씩 확인한 뒤 물어볼게요`);
         } else if (res.stats.todo === 0) {
           setStatus('✅ 새로 처리할 파일이 없어요' + (res.stats.dup ? ' (전부 중복이에요)' : ''));
         } else {
@@ -435,10 +438,9 @@
           `· 영구 삭제는 하지 않아요`
         );
         if (!ok) return;
+        resetPlan(); // 작업을 만드는 동안 한 번 더 눌러도 두 번 가지 않게 버튼부터 꺼요 (글자도 되돌려요)
         try {
           setJob(await api.startJob());
-          planReady = false;
-          cleanOnly = false;
           await askTrash();
           await maybeFinish();
         } catch (e) {
