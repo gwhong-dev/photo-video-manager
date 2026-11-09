@@ -33,6 +33,7 @@ export const api = {
   placeName: (id, ask) => gallery().placeName(id, ask),
   tagList: () => gallery().tagList(),
   mapPoints: () => gallery().mapPoints(),
+  mapPlace: (lat, lng, ask) => gallery().mapPlace(lat, lng, ask),
   selectionTags: (ids) => gallery().selectionTags(ids),
   previewTag: (ids, edit) => gallery().previewTag(ids, edit),
   applyTag: (ids, edit) => gallery().applyTag(ids, edit),

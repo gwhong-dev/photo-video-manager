@@ -204,6 +204,7 @@ const items = [
         backupRoot: root,
         mapTileUrl: 'https://127.0.0.1:1/{z}/{x}/{y}.png',
         placeSearchUrl: 'https://127.0.0.1:1/search',
+        placeReverseUrl: 'https://127.0.0.1:1/reverse', // 핀 이름도 진짜 서버로 나가지 않게
       }), 'utf8');
       const r = await launchCheck(APP, {
         port: 9343,
@@ -219,9 +220,160 @@ const items = [
       out.push(sub('43c 갤러리에 그 곳 사진 2장만, 영역 줄, 지도로 돌아가기', q.areaCells === 2 && (q.areaBar || '').includes('지도에서 고른 곳의 사진만 보여요') && q.backToMap === true, seen));
       out.push(sub('43d 2017 탭이면 바르셀로나 핀 1개만, 장소 없는 사진 버튼은 정보 없는 사진 화면으로', q.pins2017 === '1' && q.missingScreen === true, seen));
       out.push(sub('43e 지도 그림을 못 받아도 안내가 나오고 핀은 그대로', (q.mapError || '').includes('지도를 불러오지 못했어요'), seen));
+      out.push(sub('43g 이름을 못 받아도 많이 찍은 곳 목록(장수 많은 순)이 나오고, 누르면 그 핀을 골라 패널에 장수, 해외 칩은 없음, 장소 검색 칸',
+        q.topRows === '이름없는곳2,이름없는곳1' && q.gotoCount === '2장' && q.chips === 0 && q.searchBox === true, seen));
       // 끊긴 상태라 지도 칸 실패(404) 로그는 당연히 나와요 (점검 35k와 같음). 그 밖의 화면 오류는 없어야 해요
       const realErrors = r.errors.filter((e) => !/Failed to load resource/.test(e));
       out.push(sub('43f 화면 오류 없음, 정상 종료, 사진 파일은 그대로', realErrors.length === 0 && r.exitCode === 0 && !q.stop && bytes() === before, `${realErrors.join(' / ')} 종료 코드 ${r.exitCode} ${q.stop || ''}`));
+      return out;
+    },
+  },
+  {
+    no: 44,
+    name: '지도 핀 이름, 많이 찍은 곳, 해외 나라 (가짜 서버, 단계 6-2)',
+    async run(env) {
+      const out = [];
+      const P = await loadPlaces();
+      const { cityOf, createMapNet } = require('../lib/map-net');
+      const json = (v) => new Response(JSON.stringify(v), { headers: { 'content-type': 'application/json' } });
+      const addr = (address) => ({ display_name: 'x', address });
+
+      // 44a 시 · 군 이름: 한국은 끝의 시 · 군 · 특별시를 떼서 짧게, 해외는 나라 · 나라 코드, 모양이 틀리면 null
+      {
+        const got = [
+          cityOf(addr({ city: '수원시', country: '대한민국', country_code: 'kr' })),
+          cityOf(addr({ city: '서울특별시', country: '대한민국', country_code: 'kr' })),
+          cityOf(addr({ county: '양평군', state: '경기도', country: '대한민국', country_code: 'kr' })),
+          cityOf(addr({ city: '세종특별자치시', country: '대한민국', country_code: 'KR' })),
+          cityOf(addr({ city: '시', country: '대한민국', country_code: 'kr' })),
+          cityOf(addr({ city: '바르셀로나', country: '스페인', country_code: 'es' })),
+          cityOf({ display_name: 'x' }),
+          cityOf([]),
+        ];
+        const names = got.slice(0, 6).map((g) => g.name).join(',');
+        out.push(sub('44a 시 · 군 이름 (수원시 → 수원, 서울특별시 → 서울, 양평군 → 양평, 두 글자 안 되면 그대로), 해외 나라, 틀린 모양',
+          names === '수원,서울,양평,세종,시,바르셀로나' && got[5].cc === 'es' && got[5].country === '스페인' && got[3].cc === 'kr' && got[6].name === '' && got[7] === null,
+          JSON.stringify(got)));
+      }
+
+      // 44b 서버에는 소수점 2자리 좌표와 zoom 10, 한국어로 물어요. 실패는 정해진 문장, 이름 없는 곳은 빈 값
+      {
+        const calls = [];
+        let mode = 'ok';
+        const net = createMapNet({
+          fetchImpl: async (url) => {
+            calls.push(url);
+            if (mode === 'fail') return new Response('', { status: 503 });
+            if (mode === 'none') return json({ error: 'Unable to geocode' });
+            return json(addr({ city: '수원시', country: '대한민국', country_code: 'kr' }));
+          },
+          getSettings: () => ({}),
+          version: '1.0.0',
+          onError: () => {},
+          nowMs: () => 0,
+          wait: async () => {},
+        });
+        const v = await net.reverseCity(37.26671234, 127.00811234);
+        const u = new URL(calls[0]);
+        mode = 'none';
+        const none = await net.reverseCity(0.001, 0.001);
+        mode = 'fail';
+        const fail = await net.reverseCity(1, 1).then(() => null, (e) => e.message);
+        const bad = await net.reverseCity('37', 127).then(() => null, (e) => e.message);
+        out.push(sub('44b 시 · 군 이름 묻기: 좌표 2자리, zoom 10, 한국어, 실패는 정해진 문장, 이름 없는 곳은 빈 값, 글자 좌표는 거절',
+          v.name === '수원' && u.searchParams.get('lat') === '37.27' && u.searchParams.get('lon') === '127.01' && u.searchParams.get('zoom') === '10'
+          && u.searchParams.get('accept-language') === 'ko' && none.name === '' && none.cc === '' && typeof fail === 'string' && fail.includes('장소 이름') && !!bad,
+          JSON.stringify([v, calls[0], none, fail, bad])));
+      }
+
+      // 44c gallery:map-place: 저장된 값이 없고 묻지 않으면 null, 물으면 한 번만 나가서 저장, 같은 2자리 좌표는 저장한 값
+      {
+        const fakes = [];
+        try {
+          const { createLogger } = require('../lib/logger');
+          const gmPath = require.resolve('../gallery-main');
+          delete require.cache[gmPath];
+          const gm = require('../gallery-main');
+          delete require.cache[gmPath];
+          const dir = path.join(env.tmp, 'mapnames-wire');
+          const ud = path.join(dir, 'ud');
+          fs.mkdirSync(ud, { recursive: true });
+          const fetchCalls = [];
+          const handlers = new Map();
+          const g = gm.setupGallery({
+            ipcMain: { handle: (ch, fn) => handlers.set(ch, fn) },
+            protocol: { handle() {} },
+            getWin: () => ({ isDestroyed: () => false, webContents: { send() {} } }),
+            getSettings: () => ({ backupRoot: path.join(dir, 'photos') }),
+            getTools: () => ({}),
+            getEt: () => null,
+            isRunning: () => false,
+            isPlanning: () => false,
+            logger: createLogger(path.join(dir, 'logs')),
+            userDir: ud,
+            loadScreen: async () => {},
+            getJobPending: () => false,
+            mapFetch: async (url) => {
+              fetchCalls.push(url);
+              return json(addr({ city: '수원시', country: '대한민국', country_code: 'kr' }));
+            },
+            openExternal: async () => {},
+            appVersion: '9.9.9',
+          });
+          fakes.push(g);
+          const call = (ch, ...a) => handlers.get(ch)(null, ...a);
+          const peek = await call('gallery:map-place', 37.2667, 127.0081, false);
+          const both = await Promise.all([call('gallery:map-place', 37.2667, 127.0081, true), call('gallery:map-place', 37.2699, 127.0099, true)]);
+          const again = await call('gallery:map-place', 37.268, 127.009, false);
+          const bad = await Promise.resolve().then(() => call('gallery:map-place', 'x', 1, true)).then(() => null, (e) => e.message);
+          out.push(sub('44c 지도 핀 이름 연결: 안 물으면 null, 같은 곳은 한 번만 나가고 저장, 저장한 값은 다시 안 나감, 이상한 좌표 거절',
+            peek === null && both.every((b) => b.name === '수원' && b.cc === 'kr') && fetchCalls.length === 1 && again && again.name === '수원' && !!bad,
+            JSON.stringify([peek, both, again, fetchCalls.length, bad])));
+        } catch (e) {
+          out.push(sub('44c 실행 중 오류', false, String(e.stack).split('\n').slice(0, 3).join(' | ')));
+        } finally {
+          for (const g of fakes) {
+            try {
+              g.close();
+            } catch (e) { /* 닫기 실패는 무시 */ }
+          }
+        }
+      }
+
+      // 44d 많이 찍은 곳 (큰 곳부터 5개), 해외 나라 칩 (한국 · 모르는 나라는 빼고 나라별 합계), 가장 가까운 핀, 이름 열쇠
+      {
+        const rows = [
+          ...spread(1, 37.27, 127.01, 50, '2026-10-01'),
+          ...spread(101, 37.56, 126.98, 30, '2019-03-02'),
+          ...spread(201, 41.39, 2.17, 10, '2017-05-05'),
+          ...spread(301, 40.42, -3.70, 7, '2017-05-07'),
+          ...spread(401, 34.69, 135.5, 4, '2019-01-01'),
+          ...spread(501, 35.68, 139.69, 3, '2019-01-02'),
+          ...spread(601, -33.87, 151.21, 2, null),
+        ];
+        const pts = P.toPoints(rows);
+        const top = P.topPlaces(pts).map((t) => t.count).join(',');
+        const wide = P.clusterPoints(pts, P.COUNTRY_ZOOM);
+        const place = (lat, lng) => {
+          if (lat > 33 && lat < 39 && lng > 124 && lng < 131) return { name: '한국', country: '대한민국', cc: 'kr' };
+          if (lng > -10 && lng < 4) return { name: '', country: '스페인', cc: 'es' };
+          if (lng > 130 && lng < 146) return { name: '', country: '일본', cc: 'jp' };
+          return null; // 아직 모름
+        };
+        const chips = P.countryChips(wide, place);
+        const chipText = chips.map((c) => `${c.country}${c.count}`).join(',');
+        const box = chips[0] && chips[0].box;
+        const near = P.nearestCluster(P.clusterPoints(pts, 9), 37.5601, 126.9801);
+        out.push(sub('44d 많이 찍은 곳 5개 (큰 곳부터), 해외 칩 (한국 · 모르는 곳 빼고 합계, 영역), 가장 가까운 핀, 이름 열쇠 2자리',
+          top === '50,30,10,7,4' && chipText === '스페인17,일본7' && box.s <= 40.42 && box.n >= 41.39 && near.count === 30 && P.cityKey(37.2667, 127.0081) === '37.27,127.01',
+          JSON.stringify([top, chipText, box, near && near.count])));
+      }
+
+      // 44e 핀 이름은 인터넷에서 온 글이라 HTML로 넣지 않아요 (textContent)
+      {
+        const view = fs.readFileSync(path.join(APP, 'src', 'components', 'MapView.jsx'), 'utf8');
+        out.push(sub('44e 핀 이름은 textContent 로 넣음 (HTML 글자로 넣지 않음)', view.includes('label.textContent = name') && !/html:\s*`[^`]*\$\{name/.test(view)));
+      }
       return out;
     },
   },
@@ -254,6 +406,24 @@ async function mapViewProbe() {
   q.years = [...document.querySelectorAll('.map-years button')].map((b) => b.innerText.trim()).join(',');
   q.missing = ((document.querySelector('.map-missing span') || {}).innerText || '').trim();
   q.mapError = ((await wait(() => document.querySelector('.map-view-note'), 8000)) || {}).innerText || '';
+  q.searchBox = !!document.querySelector('.map-view-search input');
+  // 많이 찍은 곳: 이름 서버가 닿지 않아서 "이름 없는 곳"이 될 때까지 기다려요. 누르면 그 핀을 골라요
+  const rows = () => [...document.querySelectorAll('.map-top-list button')].map((b) => b.innerText.replace(/\s+/g, ''));
+  await wait(() => rows().length === 2 && rows().every((t) => t.startsWith('이름없는곳')), 20000);
+  q.topRows = rows().join(',');
+  q.chips = document.querySelectorAll('.map-abroad button').length;
+  const first = document.querySelector('.map-top-list button');
+  if (first) {
+    first.click();
+    q.gotoCount = ((await wait(() => document.querySelector('.map-panel .map-count'))) || {}).innerText;
+    // 다음 단계(핀 2 누르기)를 위해 처음처럼 연도 탭 · 지도를 두 핀이 다 보이게 되돌려요
+    document.querySelector('.leaflet-control-zoom-out').click();
+    for (let i = 0; i < 12; i++) {
+      if (document.querySelectorAll('.place-pin').length >= 2) break;
+      document.querySelector('.leaflet-control-zoom-out').click();
+      await new Promise((res) => setTimeout(res, 300));
+    }
+  }
 
   // 핀 2 누르기 → 패널
   const two = [...document.querySelectorAll('.place-pin')].find((p) => p.innerText.trim() === '2');

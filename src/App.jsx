@@ -75,6 +75,8 @@ export default function App() {
   const [screen, setScreen] = useState('gallery'); // 'gallery' | 'missing' | 'similar' | 'tags' | 'map' (같은 창 안의 화면 전환)
   const [mapPick, setMapPick] = useState(null); // 지도에서 고른 핀의 요약 (src/places-view.mjs summarize)
   const [mapLocated, setMapLocated] = useState(null); // 위치가 있는 사진 수 (지도 패널 안내용)
+  const [mapTop, setMapTop] = useState([]); // 사진을 많이 찍은 곳 (지도 패널)
+  const [mapGoto, setMapGoto] = useState(null); // 패널에서 누른 곳 { lat, lng, seq } → 지도가 그곳으로 가서 핀을 골라요
   const mapViewRef = useRef({ center: null, zoom: null, year: null }); // 지도 화면을 다시 열 때 이어서 보여 줄 곳
   const [similarFocus, setSimilarFocus] = useState(null); // 비슷한 사진 화면에서 오른쪽 패널에 보여 줄 사진 번호
   const [selection, setSelection] = useState(EMPTY_SELECTION); // { ids, anchor, focus }
@@ -430,7 +432,7 @@ export default function App() {
   } else if (screen === 'tags') {
     center = <TagsView gen={gen} onPick={pickTagFromList} />;
   } else if (screen === 'map') {
-    center = <MapView gen={gen} noLocation={state.noLocation} picked={mapPick} onPick={setMapPick} onLoaded={setMapLocated} onGoMissing={() => goScreen('missing')} viewRef={mapViewRef} />;
+    center = <MapView gen={gen} noLocation={state.noLocation} picked={mapPick} onPick={setMapPick} onLoaded={setMapLocated} onTop={setMapTop} goto={mapGoto} onGoMissing={() => goScreen('missing')} viewRef={mapViewRef} />;
   } else if (suggestOpen) {
     center = <SuggestPanel gen={gen} focusId={suggestFocus} onFocus={setSuggestFocus} onApplied={onApplied} onNotice={setNotice} />;
   } else if (daysError && !view) {
@@ -529,7 +531,7 @@ export default function App() {
         {showAfterUndo && <UndoBar batch={lastBatch} variant="after" busy={undoing} disabled={syncing} onUndo={() => undo(lastBatch.id)} onDismiss={() => setJustApplied(null)} />}
         <div className="center">{center}</div>
       </main>
-      {showTools && screen === 'map' && <MapPanel picked={mapPick} located={mapLocated} onShowArea={showArea} />}
+      {showTools && screen === 'map' && <MapPanel picked={mapPick} located={mapLocated} top={mapTop} onShowArea={showArea} onGoto={(t) => setMapGoto((g) => ({ lat: t.lat, lng: t.lng, seq: (g ? g.seq : 0) + 1 }))} />}
       {showTools && screen !== 'map' && (
         <DetailPanel
           selectedId={screen === 'similar' ? similarFocus : screen === 'tags' ? null : suggestOpen ? suggestFocus : (soleId !== null ? soleId : selection.focus)}

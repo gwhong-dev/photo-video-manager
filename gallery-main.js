@@ -41,7 +41,7 @@ const { normalizeRequest, planEdit, toPreview, MAX_TARGETS } = require('./lib/ma
 const { createJournal, recover } = require('./lib/manual-journal');
 const { buildSuggestions } = require('./lib/location-suggest');
 const { createSkips } = require('./lib/suggest-skips');
-const { createMapNet, roundCoord } = require('./lib/map-net');
+const { createMapNet, roundCoord, roundCity } = require('./lib/map-net');
 const { buildGroups, createHasher } = require('./lib/similar');
 const { checkDiscard, discardInfo, discardFiles } = require('./lib/similar-discard');
 const { createDriveKindOf } = require('./lib/platform');
@@ -719,6 +719,37 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   //   돌려주는 값: { name } (name null = 아직 모름, '' = 이름 없는 곳). 위치가 없거나 다른 폴더 사진이면 null
   //   같은 곳을 묻는 중에 또 누르면(다른 사진에 다녀오거나 같은 동네 사진) 새로 보내지 않고 묻는 중인 것을 같이 기다려요
   const placeAsking = new Map(); // 줄인 좌표 → 묻는 중인 Promise
+  // 지도 핀 이름 (단계 6-2): 묶음 가운데 좌표 → { name, country, cc } 또는 null (저장된 이름이 없고 ask가 아니면)
+  //   좌표는 소수점 2자리(약 1km)로 줄여서 열쇠로 쓰고, 받은 값은 place_names 에 "city:" 열쇠로 저장해요 (다시 묻지 않아요)
+  ipcMain.handle('gallery:map-place', async (e, lat, lng, ask) => {
+    const ok = (v, lim) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= lim;
+    if (!ok(lat, 90) || !ok(lng, 180)) throw new Error('위치 값이 올바르지 않아요');
+    if (!db) return null;
+    const key = `city:${roundCity(lat).toFixed(2)},${roundCity(lng).toFixed(2)}`;
+    const saved = db.getPlaceName(key);
+    if (saved !== null) {
+      try {
+        const v = JSON.parse(saved);
+        return { name: String(v.name || ''), country: String(v.country || ''), cc: String(v.cc || '') };
+      } catch (err) {
+        return { name: '', country: '', cc: '' };
+      }
+    }
+    if (ask !== true) return null;
+    if (!placeAsking.has(key)) {
+      const asking = mapNet.reverseCity(lat, lng).then((v) => {
+        try {
+          db.setPlaceName(key, JSON.stringify(v), new Date().toISOString());
+        } catch (err) {
+          errorLog('지도 핀 이름 저장', err);
+        }
+        return v;
+      }).finally(() => placeAsking.delete(key));
+      placeAsking.set(key, asking);
+    }
+    return placeAsking.get(key);
+  });
+
   ipcMain.handle('gallery:place-name', async (e, id, ask) => {
     if (!Number.isSafeInteger(id) || id < 1) throw new Error('파일 번호가 올바르지 않아요');
     const root = rootNow();

@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('api', {
     placeName: (id, ask) => ipcRenderer.invoke('gallery:place-name', id, ask),
     tagList: () => ipcRenderer.invoke('gallery:tag-list'),
     mapPoints: () => ipcRenderer.invoke('gallery:map-points'),
+    mapPlace: (lat, lng, ask) => ipcRenderer.invoke('gallery:map-place', lat, lng, ask),
     selectionTags: (ids) => ipcRenderer.invoke('gallery:selection-tags', ids),
     previewTag: (ids, edit) => ipcRenderer.invoke('gallery:tag-preview', ids, edit),
     applyTag: (ids, edit) => ipcRenderer.invoke('gallery:tag-apply', ids, edit),
