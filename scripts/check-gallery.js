@@ -1106,6 +1106,21 @@ const items = [
             out.push(sub('손상 영상 미리보기는 null', (await thumbs.preview(idOf(broken))) === null));
           }
           out.push(sub('미리보기: 없는 id, 사라진 파일은 null', (await thumbs.preview(999999)) === null && (await thumbs.preview(idOf(gone))) === null));
+          // 원본 드라이브가 빠진 것처럼 원본 이름을 잠깐 바꿔 둠 → 만들어 둔 썸네일로 대신, 썸네일 폴더는 그대로 (10-6 ⚠️, 2026-11-09)
+          {
+            const away = `${jpg}.away`;
+            const tp = thumbPath(thumbDir, db.getFile(idOf(jpg)));
+            const before17 = JSON.stringify(listAll(thumbDir));
+            fs.renameSync(jpg, away);
+            let vp = null;
+            try {
+              vp = await thumbs.preview(idOf(jpg));
+            } finally {
+              fs.renameSync(away, jpg);
+            }
+            out.push(sub('원본을 못 읽으면 미리보기는 만들어 둔 썸네일 (썸네일 폴더 그대로)', !!vp && vp.type === 'image/webp' && fs.existsSync(tp) && Buffer.compare(vp.buffer, fs.readFileSync(tp)) === 0
+              && JSON.stringify(listAll(thumbDir)) === before17, vp ? `${vp.buffer.length}바이트` : '없음'));
+          }
         }
 
         // 17i pvm:// 판단
