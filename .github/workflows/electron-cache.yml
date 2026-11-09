@@ -1,0 +1,60 @@
+# 파일 위치: .github/workflows/electron-cache.yml
+# 역할: main에 Electron 받은 파일 캐시를 채워요. 모든 PR의 점검(check.yml)이 이 캐시를 꺼내 써요 (#54 검증)
+#   PR에서 저장한 캐시는 그 PR에서만 보여서, 새 PR마다 github.com에서 Electron을 다시 받았어요
+#   점검은 하지 않아요. 이름이 "점검"이 아니라서 auto-merge.yml 은 이 워크플로를 듣지 않아요
+# 언제 돌까: main에 package-lock.json 이나 이 파일이 바뀌어 들어왔을 때, 또는 손으로 (Actions 화면의 Run workflow)
+
+name: Electron 캐시 채우기
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - package-lock.json
+      - .github/workflows/electron-cache.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fill:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      # check.yml 과 같은 경로와 열쇠여야 PR이 꺼내 쓸 수 있어요
+      - name: Electron 받은 파일 꺼내기
+        id: electron-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/electron-cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Electron 받기
+        if: steps.electron-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        env:
+          electron_config_cache: ${{ runner.temp }}/electron-cache
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host '패키지 받기 실패 → 20초 뒤 한 번 더'
+            Start-Sleep -Seconds 20
+            npm ci
+          }
+          exit $LASTEXITCODE
+
+      - name: Electron 받은 파일 저장
+        if: steps.electron-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/electron-cache
+          key: ${{ steps.electron-cache.outputs.cache-primary-key }}
