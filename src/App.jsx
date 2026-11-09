@@ -435,7 +435,7 @@ export default function App() {
   } else if (screen === 'tags') {
     center = <TagsView gen={gen} onPick={pickTagFromList} />;
   } else if (screen === 'clean') {
-    center = <CleanView gen={gen} picked={cleanPick && cleanPick.id} onPick={setCleanPick} />;
+    center = <CleanView picked={cleanPick && cleanPick.id} onPick={setCleanPick} />;
   } else if (screen === 'map') {
     center = <MapView gen={gen} noLocation={state.noLocation} picked={mapPick} onPick={setMapPick} onLoaded={setMapLocated} onTop={setMapTop} goto={mapGoto} onGoMissing={() => goScreen('missing')} viewRef={mapViewRef} />;
   } else if (suggestOpen) {

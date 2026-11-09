@@ -508,7 +508,8 @@ button.primary:disabled { background: var(--panel); color: var(--sub); border-co
 .clean-heading + .clean-note, .clean-note { margin: 0 0 12px; color: var(--sub); font-size: 13px; line-height: 1.5; }
 .clean-folders { list-style: none; margin: 0 0 28px; padding: 0; border-top: 1px solid var(--line); }
 .clean-folder { display: flex; align-items: center; gap: 14px; padding: 10px 4px; border-bottom: 1px solid var(--line); font-size: 13px; }
-.clean-folder-name { width: 90px; flex: none; }
+.clean-folder-name { width: 140px; flex: none; }
+.clean-folder-sub { display: block; color: var(--faint); font-size: 12px; overflow-wrap: anywhere; }
 .clean-folder button { margin-left: auto; padding: 4px 10px; font-size: 13px; }
 .clean-dim { color: var(--faint); font-size: 13px; }
 .clean-error { margin: -16px 0 20px; color: var(--sub); font-size: 13px; }

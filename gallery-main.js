@@ -327,18 +327,29 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
 
   // ---------- 정리 화면 (읽기만) ----------
   // 정리 기록 (원본 정리 · 비슷한 사진 버리기 로그)과 _정리완료원본 폴더 크기. 파일 경로는 화면에 주지 않아요 (이름만)
+  //   모두 비동기라 폴더가 커도 앱 창이 멈추지 않아요. 읽는 중에 또 부르면 같은 결과를 같이 받아요 (겹쳐 세지 않게)
+  let cleanJob = null;
+  const cleanedDirs = new Map(); // 화면에 준 폴더 key → 경로 (예전 폴더 열기용, 화면에는 경로를 주지 않아요)
+  const loadCleanHistory = async () => {
+    const s = getSettings() || {};
+    const { sessions, oldBases } = await readCleanHistory(logger.dir);
+    const { folders, dirs } = await cleanedFolders({ source: s.source, backupRoot: rootNow(), oldBases });
+    for (const [k, d] of dirs) cleanedDirs.set(k, d);
+    return { sessions, folders };
+  };
   ipcMain.handle('gallery:clean-history', () => {
-    const s = getSettings() || {};
-    return {
-      sessions: readCleanHistory(logger.dir),
-      folders: cleanedFolders({ source: s.source, backupRoot: rootNow() }),
-    };
+    if (!cleanJob) cleanJob = loadCleanHistory().finally(() => { cleanJob = null; });
+    return cleanJob;
   });
-  // _정리완료원본 폴더 열기: 화면은 어느 쪽인지(which)만 보내고, 경로는 여기서 정해요. 없는 폴더는 열지 않아요
-  ipcMain.handle('gallery:open-cleaned', async (e, which) => {
-    if (which !== 'source' && which !== 'backup') throw new Error('열 폴더가 올바르지 않아요');
+  // _정리완료원본 폴더 열기: 화면은 폴더 key 만 보내고, 경로는 여기서 정해요. 없는 폴더는 열지 않아요
+  //   'source' · 'backup' = 지금 설정의 폴더, 'old-…' = 정리 기록에서 찾아 화면에 보여 준 예전 폴더
+  ipcMain.handle('gallery:open-cleaned', async (e, key) => {
+    if (typeof key !== 'string' || !/^(source|backup|old-[0-9a-f]{12})$/.test(key)) throw new Error('열 폴더가 올바르지 않아요');
     const s = getSettings() || {};
-    const dir = cleanedDirOf(which === 'source' ? s.source : rootNow());
+    let dir = null;
+    if (key === 'source') dir = cleanedDirOf(s.source);
+    else if (key === 'backup') dir = cleanedDirOf(rootNow());
+    else dir = cleanedDirs.get(key) || null;
     if (!dir || !isDir(dir)) throw new Error('아직 _정리완료원본 폴더가 없어요');
     if (!openPath) throw new Error('폴더를 열 수 없어요');
     const err = await openPath(dir);
