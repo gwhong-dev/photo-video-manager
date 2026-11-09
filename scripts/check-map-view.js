@@ -378,6 +378,32 @@ const items = [
           JSON.stringify([top, chipText, box, order, sameSpots])));
       }
 
+      // 44f 이름 자리는 사진을 가장 많이 찍은 곳, 나라는 빈 · 부다페스트를 따로 (10-9 확인: 평균 자리라 "대전", 슬로바키아가 나왔음)
+      {
+        // 수원 40장 + 대구 30장 + 부산 10장 → 넓게 본 한 묶음의 평균은 대전 근처지만, 이름 자리는 수원이어야 해요
+        const korea = P.toPoints([
+          ...spread(1, 37.27, 127.01, 40, '2026-10-01'),
+          ...spread(101, 35.87, 128.6, 30, '2026-10-01'),
+          ...spread(201, 35.18, 129.08, 10, '2026-10-01'),
+        ]);
+        const one = P.clusterPoints(korea, 3)[0];
+        const near = (s, lat, lng) => Math.abs(s.lat - lat) < 0.05 && Math.abs(s.lng - lng) < 0.05;
+        const suwon = one && one.count === 80 && near(one.named, 37.27, 127.01);
+        const fine = one && Number.isInteger(Math.round(one.named.lat / P.NAME_FINE)) && Math.abs(one.named.lat / P.NAME_FINE - Math.round(one.named.lat / P.NAME_FINE)) < 1e-6;
+        // 빈 25장 + 부다페스트 37장: 나라 칩이 오스트리아 · 헝가리로 나뉘어야 해요 (슬로바키아로 합치지 않게)
+        const trip = P.toPoints([...spread(301, 48.21, 16.37, 25, '2018-01-01'), ...spread(401, 47.5, 19.04, 37, '2018-01-02')]);
+        const where = (lat, lng) => {
+          if (lng > 15.5 && lng < 17.1) return { name: '빈', country: '오스트리아', cc: 'at' };
+          if (lng > 18.5 && lng < 19.5) return { name: '부다페스트', country: '헝가리', cc: 'hu' };
+          if (lng >= 17.1 && lng <= 18.5) return { name: '', country: '슬로바키아', cc: 'sk' };
+          return null;
+        };
+        const chips2 = P.countryChips(P.clusterPoints(trip, P.COUNTRY_ZOOM), where).map((c) => `${c.country}${c.count}`).join(',');
+        out.push(sub('44f 이름 자리는 묶음에서 가장 많이 찍은 곳(눈금 위), 나라 칩은 빈 · 부다페스트를 나눠 셈',
+          suwon && fine && chips2 === '헝가리37,오스트리아25',
+          JSON.stringify([one && one.count, one && one.named, chips2])));
+      }
+
       // 44e 핀 이름은 인터넷에서 온 글이라 HTML로 넣지 않아요 (textContent)
       {
         const view = fs.readFileSync(path.join(APP, 'src', 'components', 'MapView.jsx'), 'utf8');
