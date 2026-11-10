@@ -1039,6 +1039,8 @@ const ITEMS = [
   ...require('./check-map-view').items,
   // 45 · 46번은 정리 화면 점검 (scripts/check-clean-view.js)
   ...require('./check-clean-view').items,
+  // 47번은 exe 만들기 설정 점검 (scripts/check-build.js)
+  ...require('./check-build').items,
 ];
 
 // ---------- 점검 임시 폴더 정리 ----------
