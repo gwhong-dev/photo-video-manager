@@ -21,7 +21,7 @@ const cleanReadMeta = (paths) => {
 };
 const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
-const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals } = require('./lib/cleaner');
+const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals, createHashCache } = require('./lib/cleaner');
 const { createDriveKindOf } = require('./lib/platform');
 const { createLogger } = require('./lib/logger');
 const { guardWindow } = require('./lib/window-guard');
@@ -380,13 +380,16 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
 // 원본 정리 전 정보 (개수, 용량, 드라이브별 방법, 경고)
 //   확인 창에서 쓴 드라이브 판단을 실제 정리에도 그대로 써요 (보여 준 방법과 실제 방법이 달라지지 않게)
 //   원본 확인(지문 계산)은 1분 넘게 걸릴 수 있어요 → 진행 상황을 화면에 보내고, 그동안은 "실행 중"으로 막아요 (여러 번 눌러도 겹치지 않게)
+//   지문도 확인 창에서 계산한 것을 실제 정리 때 다시 써요. 크기 · 수정 시각이 바뀐 파일만 다시 계산 (createHashCache)
 let cleanDriveKindOf = null;
+let cleanHashOf = null;
 ipcMain.handle('trash-info', async () => {
   if (running) throw new Error('다른 작업이 끝난 뒤에 해 주세요');
   running = true;
   try {
     cleanDriveKindOf = createDriveKindOf();
-    const targets = job ? await cleanTargets(job, { ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, onProgress: (p) => send('clean-check-progress', p) }) : [];
+    cleanHashOf = createHashCache();
+    const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, onProgress: (p) => send('clean-check-progress', p) }) : [];
     // 확인하다 재생 불가를 찾으면 개수가 바뀌어요 → 작업 정보도 새로 보내요
     return { ...(await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf })), job: jobInfo() };
   } finally {
@@ -400,7 +403,8 @@ ipcMain.handle('trash-originals', async () => {
   // 정리하는 동안에는 "실행 중"으로 표시 → 미리보기·새 작업·작업 끝내기를 막아요 (기록이 섞이지 않게)
   running = true;
   try {
-    const targets = job ? await cleanTargets(job, { ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta }) : [];
+    // 정리 직전 확인은 줄이지 않아요: 크기 · 열어서 읽기 · 재생 확인은 다시 하고, 지문만 바뀌지 않은 파일은 다시 써요
+    const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf || createHashCache(), ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta }) : [];
     const r = await cleanOriginals({
       job,
       store,
@@ -414,6 +418,7 @@ ipcMain.handle('trash-originals', async () => {
   } finally {
     running = false;
     cleanDriveKindOf = null; // 다음 정리 때는 새로 확인
+    cleanHashOf = null; // 지문도 다음 정리 때는 새로 계산
   }
 });
 

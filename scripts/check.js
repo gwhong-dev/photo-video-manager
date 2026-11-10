@@ -906,6 +906,66 @@ const ITEMS = [
         out.push(sub('12w 중복 6,000개 빠른 확인 (6만 개 환산 10초 이하)', n === N && per60k <= 10, `${ms}ms → 6만 개 약 ${per60k.toFixed(1)}초, 대상 ${n}개`));
       }
 
+      // 12x 확인 창에서 계산한 지문을 정리 때 다시 씀. 크기 · 수정 시각이 바뀐 파일만 다시 계산 (2026-11-09 사용자 결정)
+      if (!cleaner || !cleaner.createHashCache) {
+        out.push(missing('12x 지문을 한 번만 계산'));
+      } else {
+        const c = makeCase('12x');
+        c.job.items[0].resultHash = await cleaner.hashFile(c.job.items[0].finalPath); // 저장할 때 기록한 지문
+        let calls = 0;
+        const hashOf = cleaner.createHashCache(async (p) => (calls++, cleaner.hashFile(p)));
+        const first = (await cleaner.cleanTargets(c.job, { hashOf })).map((it) => it.i).join(',');
+        const afterFirst = calls;
+        const second = (await cleaner.cleanTargets(c.job, { hashOf })).map((it) => it.i).join(',');
+        out.push(sub('12x 바뀌지 않은 파일은 정리 때 지문을 다시 계산하지 않음', first === '0,1' && second === '0,1' && afterFirst > 0 && calls === afterFirst, `확인 창 ${first} (계산 ${afterFirst}번) / 정리 ${second} (추가 계산 ${calls - afterFirst}번)`));
+        // 확인 창 뒤에 결과 파일이 바뀜 (크기는 같고 수정 시각만 다름) → 다시 계산해서 정리 대상에서 빠짐
+        const kept = c.job.items[0].finalPath;
+        fs.writeFileSync(kept, 'Z');
+        const t = new Date(Date.now() + 5000);
+        fs.utimesSync(kept, t, t);
+        const before = calls;
+        const third = (await cleaner.cleanTargets(c.job, { hashOf })).map((it) => it.i).join(',');
+        out.push(sub('12x 확인 창 뒤에 바뀐 결과 파일은 다시 계산해서 정리 안 함', third === '1' && calls === before + 1, `정리 ${third || '없음'} (기대 1), 다시 계산 ${calls - before}번`));
+        // 정리 직전 확인은 그대로: 결과 파일이 없어지면 지문이 기억돼 있어도 빠짐
+        fs.unlinkSync(c.job.items[1].dupOf);
+        const fourth = (await cleaner.cleanTargets(c.job, { hashOf })).map((it) => it.i).join(',');
+        out.push(sub('12x 남길 파일이 없어지면 기억한 지문이 있어도 정리 안 함', fourth === '', `정리 ${fourth || '없음'}`));
+      }
+
+      // 12y 휴지통 용량 경고에 휴지통에 이미 든 크기도 더함. 못 읽으면 이번 작업분만 + 안내 (2026-11-09 사용자 결정, 개발개요 4-0 M1 ①)
+      if (!cleaner || !cleaner.cleanInfo || !platform || !platform.createDriveKindOf) {
+        out.push(missing('12y 휴지통에 이미 든 크기 더하기'));
+      } else {
+        const c = makeCase('12y');
+        const targets = [{ ...c.job.items[0], size: 100 }];
+        const noFs = () => ({ blocks: 1e9, bsize: 1 });
+        const info = async (binUsedOf, job = c.job) => (await cleaner.cleanInfo(job, targets, { driveKindOf: async () => 'fixed', recycleOf: async () => ({ maxBytes: 300, nuke: false }), binUsedOf, statfs: noFs })).warnings;
+        const full = await info(async () => 250);
+        const empty = await info(async () => 0);
+        out.push(sub('12y 휴지통에 든 크기 + 이번 정리분이 설정을 넘으면 경고', full.length === 1 && full[0].includes('설정') && empty.length === 0, `250 든 휴지통 [${full.join(' / ')}] / 빈 휴지통 [${empty.join(' / ')}]`));
+        // 휴지통 크기를 읽으면 이 작업에서 먼저 보낸 원본은 그 안에 있어요 → 두 번 세지 않음
+        const doneJob = { ...c.job, items: c.job.items.map((it, i) => (i === 1 ? { ...it, trashed: true, size: 250 } : it)) };
+        const twice = await info(async () => 0, doneJob);
+        out.push(sub('12y 휴지통 크기를 읽으면 이 작업에서 보낸 것을 또 더하지 않음', twice.length === 0, twice.join(' / ')));
+        const failed = await info(async () => null, doneJob);
+        out.push(sub('12y 못 읽으면 이번 작업분만 세고 안내 한 줄', failed.length === 2 && failed[0].includes('설정') && failed[1].includes('읽지 못했어요'), failed.join(' / ')));
+        const thrown = await info(async () => { throw new Error('x'); });
+        const none = await info(async () => undefined);
+        out.push(sub('12y 읽다 오류면 못 읽음으로, 확인할 휴지통이 없으면 안내 없음', thrown.length === 1 && thrown[0].includes('읽지 못했어요') && none.length === 0, `오류 [${thrown.join(' / ')}] / 없음 [${none.join(' / ')}]`));
+        let reads = 0;
+        const judge = platform.createDriveKindOf({ fetchTables: async () => null, fetchBinUsed: async () => { reads++; return 7; } });
+        const a = await judge.binUsedOf('C:\\');
+        const b = await judge.binUsedOf('C:\\');
+        const linux = await platform.createDriveKindOf({ fetchTables: async () => null, fetchBinUsed: null }).binUsedOf('/');
+        out.push(sub('12y 드라이브마다 한 번만 읽음, 읽을 방법이 없으면 undefined', a === 7 && b === 7 && reads === 1 && linux === undefined, `${a},${b} 읽기 ${reads}번 / 없음 ${linux}`));
+        if (process.platform !== 'win32') {
+          out.push(skip('12y 진짜 휴지통 크기 읽기', 'Windows 아님'));
+        } else {
+          const real = await platform.fetchBinUsedWin(path.parse(os.tmpdir()).root);
+          out.push(sub('12y 진짜 휴지통 크기 읽기 (임시 폴더 드라이브)', typeof real === 'number' && real >= 0, String(real)));
+        }
+      }
+
       // 12f 드라이브 종류를 모름 → 이동 (휴지통 안 씀)
       if (!cleaner || !cleaner.cleanOriginals) {
         out.push(missing('12f 드라이브 종류 모름 → 이동'));
