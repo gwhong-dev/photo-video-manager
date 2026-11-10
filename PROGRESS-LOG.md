@@ -83,3 +83,4 @@
 | 2026-11-09 | fix/clean-hash-once | 이 커밋 | 클라우드: 12x ✅, 새로 깨진 것 없음 (magick · 12j · dbus는 환경 탓) | origin/fix/clean-hash-once | 원본 정리 때 지문 한 번만 계산 (확인 창 지문 재사용, 바뀐 파일만 다시). 개발개요 4-0 속도 ✅ |
 | 2026-11-10 | fix/bin-warning-existing | 이 커밋 | 클라우드: 12y ✅ 5개 (진짜 휴지통 읽기는 Windows CI), 새로 깨진 것 없음 (진짜 앱 · magick · 12j는 환경 탓) | origin/fix/bin-warning-existing | 휴지통 용량 경고에 휴지통에 이미 든 크기도 더함 (SHQueryRecycleBin, 드라이브마다 한 번). 못 읽으면 이번 작업분만 + 안내 한 줄. 개발개요 4-0 M1 ① ✅ |
 | 2026-11-10 | fix/discard-bin-existing | 이 커밋 | 클라우드: 37 ✅ (37g 추가), 12q · 12y ✅, 새로 깨진 것 없음 (진짜 앱 · magick · 12j는 환경 탓) | origin/fix/discard-bin-existing | 비슷한 사진 버리기 경고도 휴지통에 이미 든 크기를 더함 (원본 정리와 같은 `binWarnings`로 합침). 못 읽으면 이번분만 + 안내 |
+| 2026-11-10 | docs/pc-check-10-7-8-4 | 새 커밋 | 문서만 변경, 점검 없음 | 메인 세션 갈래 | 남은 PC 확인: 10-7 MP4 147개 음량(소리 141, 무음 화면 녹화 1), 8-4 E: 빠진 상태 배너 · 33,838장 유지 ✅. 끌어 놓기(화면 조작 권한 거절) · 스피커 듣기 · E: 다시 꽂기는 사용자 |
