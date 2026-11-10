@@ -63,13 +63,17 @@ function saveSettings() {
 }
 
 // ---------- 도구 찾기 ----------
+// tools 폴더를 찾아볼 곳: 개발 중에는 프로젝트 폴더, exe 로 만든 뒤에는 exe 가 든 폴더
+//   exe 안의 코드는 app.asar(묶음 파일) 속에 있어서, 그 안에 든 프로그램은 실행할 수 없어요
+//   그래서 exe 옆에 tools 폴더를 두면 거기서 찾아요. 없으면 예전처럼 PATH(이름만으로 찾기)에서 찾아요
+const toolsBaseDir = () => (app.isPackaged ? path.dirname(process.execPath) : __dirname);
 // 가져오기 실행·미리보기 중에는 쓰던 exiftool을 닫으면 남은 파일이 전부 실패로 기록돼서 도구를 새로 찾지 않아요
 const TOOLS_BUSY_MSG = '가져오기 실행이나 미리보기가 끝난 뒤에 도구를 다시 찾을 수 있어요';
 const toolsBusy = () => running || planning;
 
 //   notify: false = 갤러리에 알리지 않아요 (켤 때 처음 찾기. 갤러리는 창이 열린 뒤 toolsReady를 기다렸다가 스스로 읽기 시작해요)
 async function refreshTools({ notify = true } = {}) {
-  const found = await detectTools(settings, __dirname);
+  const found = await detectTools(settings, toolsBaseDir());
   // 찾는 동안(몇백 ms) 작업이 시작됐을 수 있어서, 바꾸기 직전에 한 번 더 확인해요
   if (toolsBusy()) throw new Error(TOOLS_BUSY_MSG);
   tools = found;
