@@ -926,6 +926,38 @@ const ITEMS = [
         const before = calls;
         const third = (await cleaner.cleanTargets(c.job, { hashOf })).map((it) => it.i).join(',');
         out.push(sub('12x 확인 창 뒤에 바뀐 결과 파일은 다시 계산해서 정리 안 함', third === '1' && calls === before + 1, `정리 ${third || '없음'} (기대 1), 다시 계산 ${calls - before}번`));
+        // 같은 크기로 덮어쓰고 수정 시각을 예전 값으로 되돌림 → 변경 시각(ctime)이 바뀌어서 다시 계산 (#70 검증 ⚠️)
+        const st = fs.statSync(kept);
+        await new Promise((r) => setTimeout(r, 30));
+        fs.writeFileSync(kept, 'Y');
+        fs.utimesSync(kept, st.atime, st.mtime);
+        const b5 = calls;
+        const fifth = (await cleaner.cleanTargets(c.job, { hashOf })).map((it) => it.i).join(',');
+        out.push(sub('12x 같은 크기로 덮어쓰고 수정 시각을 되돌려도 다시 계산', fifth === '1' && calls === b5 + 1 && fs.statSync(kept).mtimeMs === st.mtimeMs, `정리 ${fifth || '없음'} (기대 1), 다시 계산 ${calls - b5}번`));
+        // 같은 크기 · 같은 수정 시각의 다른 파일로 바꿔치기 → 파일 번호(ino)가 달라서 다시 계산
+        const st2 = fs.statSync(kept);
+        const repl = kept + '.new';
+        fs.writeFileSync(repl, 'X');
+        fs.utimesSync(repl, st2.atime, st2.mtime);
+        fs.renameSync(repl, kept);
+        const b6 = calls;
+        const sixth = (await cleaner.cleanTargets(c.job, { hashOf })).map((it) => it.i).join(',');
+        out.push(sub('12x 같은 크기 · 수정 시각의 다른 파일로 바꿔치기해도 다시 계산', sixth === '1' && calls === b6 + 1, `정리 ${sixth || '없음'} (기대 1), 다시 계산 ${calls - b6}번`));
+        // 지문을 계산하는 도중에 파일이 바뀌면 기억하지 않아요 → 다음에 다시 계산
+        let during = 0;
+        const hashOf2 = cleaner.createHashCache(async (p) => {
+          during++;
+          const h = await cleaner.hashFile(p);
+          if (during === 1) {
+            const t2 = new Date(Date.now() + 9000);
+            fs.utimesSync(p, t2, t2);
+          }
+          return h;
+        });
+        await hashOf2(kept);
+        await hashOf2(kept);
+        await hashOf2(kept);
+        out.push(sub('12x 계산 도중 바뀐 파일은 기억하지 않고 다음에 다시 계산', during === 2 && hashOf2.stats.reused === 1, `계산 ${during}번 (기대 2), 다시 씀 ${hashOf2.stats.reused}번`));
         // 정리 직전 확인은 그대로: 결과 파일이 없어지면 지문이 기억돼 있어도 빠짐
         fs.unlinkSync(c.job.items[1].dupOf);
         const fourth = (await cleaner.cleanTargets(c.job, { hashOf })).map((it) => it.i).join(',');
@@ -958,6 +990,34 @@ const ITEMS = [
         const b = await judge.binUsedOf('C:\\');
         const linux = await platform.createDriveKindOf({ fetchTables: async () => null, fetchBinUsed: null }).binUsedOf('/');
         out.push(sub('12y 드라이브마다 한 번만 읽음, 읽을 방법이 없으면 undefined', a === 7 && b === 7 && reads === 1 && linux === undefined, `${a},${b} 읽기 ${reads}번 / 없음 ${linux}`));
+        // PowerShell 출력 해석: 숫자만 있을 때만 받아요. 빈 출력을 0(휴지통 빔)으로 보지 않게 (#72 검증 ⚠️)
+        if (!platform.parseBinUsed) {
+          out.push(missing('12y 휴지통 크기 출력 해석'));
+        } else {
+          const parsed = ['123\r\n', '0', '', '  \r\n', '-1', 'abc', '1e3', '12.5', '99999999999999999999'].map((s) => platform.parseBinUsed(s));
+          out.push(sub('12y 출력이 숫자만일 때만 받고, 빈 출력 · 음수 · 글자는 못 읽음(null)', JSON.stringify(parsed) === JSON.stringify([123, 0, null, null, null, null, null, null, null]), JSON.stringify(parsed)));
+        }
+        // 연결 폴더(정션): 휴지통 크기를 진짜 경로의 드라이브로 읽어요 (휴지통 설정을 찾는 기준과 같게, #72 검증 ⚠️)
+        //   임시 폴더와 프로젝트 폴더가 다른 드라이브일 때만 (GitHub Windows CI는 C:와 D:)
+        if (!cleaner.realRootOf) {
+          out.push(missing('12y 연결 폴더는 진짜 드라이브로'));
+        } else if (process.platform !== 'win32' || path.parse(APP).root.toLowerCase() === path.parse(c.dir).root.toLowerCase()) {
+          out.push(skip('12y 연결 폴더는 진짜 드라이브 휴지통으로 읽음', '임시 폴더와 프로젝트 폴더가 같은 드라이브'));
+        } else {
+          const far = fs.mkdtempSync(path.join(APP, 'node_modules', '.pvm-check-junction-'));
+          try {
+            fs.writeFileSync(path.join(far, 'a.jpg'), 'x');
+            const link = path.join(c.dir, 'link12y');
+            fs.symlinkSync(far, link, 'junction');
+            const asked = [];
+            const linked = [{ ...c.job.items[0], src: path.join(link, 'a.jpg'), size: 100 }];
+            const r = await cleaner.cleanInfo(c.job, linked, { driveKindOf: async () => 'fixed', recycleOf: async () => ({ maxBytes: 300, nuke: false }), binUsedOf: async (d) => (asked.push(d), 0), statfs: noFs });
+            const want = path.parse(APP).root;
+            out.push(sub('12y 연결 폴더는 진짜 드라이브 휴지통으로 읽음', asked.length === 1 && asked[0].toLowerCase() === want.toLowerCase() && r.drives[0].root.toLowerCase() === want.toLowerCase(), `물어본 드라이브 ${asked.join(',')} (기대 ${want})`));
+          } finally {
+            fs.rmSync(far, { recursive: true, force: true });
+          }
+        }
         if (process.platform !== 'win32') {
           out.push(skip('12y 진짜 휴지통 크기 읽기', 'Windows 아님'));
         } else {
