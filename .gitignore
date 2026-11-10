@@ -33,3 +33,6 @@ thumbs/
 
 # Claude Code 개인 설정 (나만 쓰는 설정)
 .claude/settings.local.json
+
+# exe 로 만든 결과 (npm run dist, scripts/build-exe.bat 가 만들어요)
+release/

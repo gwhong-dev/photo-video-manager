@@ -1,0 +1,2 @@
+# 윈도우 배치 파일(.bat)은 어느 PC에서 받아도 줄바꿈을 CRLF로 (LF면 한글 줄을 잘못 읽어요)
+*.bat text eol=crlf
