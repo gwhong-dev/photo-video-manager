@@ -592,14 +592,14 @@ const items = [
           okInfo.warnings.length === 0 && small.warnings.length === 1 && small.warnings[0].includes('휴지통 설정 크기')
             && tiny.warnings.length === 1 && tiny.warnings[0].includes('약 5%'),
           JSON.stringify([okInfo.warnings, small.warnings, tiny.warnings])));
-        // 37g 휴지통에 이미 든 크기도 더함, 못 읽으면 이번분만 + 안내 (원본 정리 12y와 같은 기준, 2026-11-10 사용자 요청)
+        // 37h 휴지통에 이미 든 크기도 더함, 못 읽으면 이번분만 + 안내 (원본 정리 12y와 같은 기준, 2026-11-10 사용자 요청)
         const setting = async () => ({ maxBytes: 300 });
         const full = await D.discardInfo(wList, { driveKindOf: fixed, recycleOf: setting, binUsedOf: async () => 150, statfs: noFs });
         const roomy = await D.discardInfo(wList, { driveKindOf: fixed, recycleOf: setting, binUsedOf: async () => 50, statfs: noFs });
         const unread = await D.discardInfo(wList, { driveKindOf: fixed, recycleOf: setting, binUsedOf: async () => null, statfs: noFs });
         const judged = Object.assign(async () => 'fixed', { binUsedOf: async () => 250 });
         const viaJudge = await D.discardInfo(wList, { driveKindOf: judged, recycleOf: setting, statfs: noFs });
-        out.push(sub('37g 휴지통에 이미 든 크기도 더해 경고, 못 읽으면 이번분만 + 안내, 판단기의 binUsedOf를 씀',
+        out.push(sub('37h 휴지통에 이미 든 크기도 더해 경고, 못 읽으면 이번분만 + 안내, 판단기의 binUsedOf를 씀',
           full.warnings.length === 1 && full.warnings[0].includes('휴지통 설정 크기') && roomy.warnings.length === 0
             && unread.warnings.length === 1 && unread.warnings[0].includes('읽지 못했어요')
             && viaJudge.warnings.length === 1 && viaJudge.warnings[0].includes('휴지통 설정 크기'),
