@@ -94,3 +94,4 @@
 | 2026-11-11 | fix/thumb-fallback-note | 이 커밋 | 점검 17h · 17i 추가 항목 포함 | 이 PR | 원본을 못 읽어 미리보기를 작은 썸네일로 대신할 때 오른쪽 패널 · 위치 제안 근거 사진 아래에 흐린 글자로 안내 한 줄. main이 대신한 사진 번호를 기억하고(`X-Pvm-Preview` 헤더도), 화면은 그림을 받은 뒤 `gallery:preview-fallback`으로 물어봄 (경로는 주지 않음). 개발개요 9절 1: 파일 이름 날짜로 폴더 나누기 유지 결정 기록 |
 | 2026-11-11 | fix/verify-77 | 이 커밋 | 48 ✅ (48f · 48g 추가, 48e 바꿈) | origin/main | #77 검증 ⚠️ 수정: 후보 수(total)를 같이 보내 10개 넘을 때만 "다른 10개 뽑기", 작업 끝내기 · 새 작업 · 정리 끝에 샘플 후보 비움(`resetCleanCheck`), 확인 창 문구의 가운뎃점을 줄머리 "-"로, 샘플 열기를 `openSample`로 빼 가짜 openPath로 점검, 폴더 열기는 실제 폴더만(`lib/open-folder.js`) |
 | 2026-11-11 | docs/exe-sac-check | 이 커밋 | 문서만 변경, 점검 없음 | PR | #81 빌드를 이 PC에서 `build-exe.bat`로 만들고 바로가기로 켬: Smart App Control에 안 막히고 갤러리 33,838장 확인 |
+| 2026-11-11 | docs/pc-check-sample-open | 이 커밋 | 문서만 변경, 점검 없음 | PR | 원본 정리 확인 창의 샘플 열기를 샘플 복사본으로 PC에서 확인: 사진 → 사진 앱, 영상 → 미디어 플레이어. 끝난 작업 폴더 `D:\dev\pvm-fix-77` · `pvm-fix-verify` 정리(`git worktree remove`), 점검 결과 파일은 휴지통 |
