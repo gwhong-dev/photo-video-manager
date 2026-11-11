@@ -1180,6 +1180,8 @@ const ITEMS = [
   ...require('./check-clean-view').items,
   // 47번은 exe 만들기 설정 점검 (scripts/check-build.js)
   ...require('./check-build').items,
+  // 48번은 원본 정리 확인 창의 샘플 확인 점검 (scripts/check-clean-sample.js)
+  ...require('./check-clean-sample').items,
 ];
 
 // ---------- 점검 임시 폴더 정리 ----------
