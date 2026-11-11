@@ -21,7 +21,7 @@ const cleanReadMeta = (paths) => {
 };
 const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
-const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals, createHashCache } = require('./lib/cleaner');
+const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals, createHashCache, countHashesFrom } = require('./lib/cleaner');
 const { createDriveKindOf } = require('./lib/platform');
 const { samplePool, pickSample, samplePath } = require('./lib/clean-sample');
 const { createLogger } = require('./lib/logger');
@@ -408,8 +408,11 @@ ipcMain.handle('trash-originals', async () => {
   running = true;
   try {
     // 정리 직전 확인은 줄이지 않아요: 크기 · 열어서 읽기 · 재생 확인은 다시 하고, 지문만 바뀌지 않은 파일은 다시 써요
-    const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf || createHashCache(), ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta }) : [];
+    const hashOf = cleanHashOf || createHashCache();
+    const hashCount = countHashesFrom(hashOf); // 정리 직전 확인에서 지문을 다시 계산한 수 · 다시 쓴 수 → 로그 끝 줄
+    const targets = job ? await cleanTargets(job, { hashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta }) : [];
     const r = await cleanOriginals({
+      hashStats: hashCount(),
       job,
       store,
       targets,
