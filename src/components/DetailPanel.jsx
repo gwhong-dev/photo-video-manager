@@ -9,6 +9,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { formatBytes, formatCoords, formatCount, formatDuration, formatTakenAt } from '../format.mjs';
+import { PreviewNote, usePreviewNote } from './PreviewNote.jsx';
 
 const SOURCE_TEXT = { exif: '사진 파일에서 읽음', filename: '파일 이름에서 읽음', manual: '내가 넣은 값' };
 const LOCATION_SOURCE_TEXT = { exif: '사진 파일에서 읽음', manual: '내가 넣은 값' };
@@ -115,6 +116,7 @@ function useFileInfo(id, gen) {
 
 function Preview({ file }) {
   const [broken, setBroken] = useState(false);
+  const note = usePreviewNote(file.id); // 원본 대신 작은 썸네일이면 안내 한 줄
   // 파일이 바뀌거나 썸네일 상태가 달라지면 한 번 더 시도해요 (같은 상태에서는 다시 시도하지 않아요)
   useEffect(() => setBroken(false), [file.id, file.thumbState]);
   const isVideo = file.mediaType === 'video';
@@ -122,14 +124,17 @@ function Preview({ file }) {
   // 사진 비율에 맞춰 칸 모양을 정해요 (너무 길쭉하거나 납작하면 3:4 ~ 8:5 사이로)
   const ratio = file.width && file.height ? Math.min(1.6, Math.max(0.75, file.width / file.height)) : 4 / 3;
   return (
-    <div className="preview" style={{ aspectRatio: String(ratio) }}>
-      {failed ? (
-        <span className="no-preview">미리보기 없음</span>
-      ) : (
-        <img key={file.id} src={`pvm://preview/${file.id}`} alt="" onError={() => setBroken(true)} />
-      )}
-      {isVideo && formatDuration(file.durationSec) && <span className="badge">{formatDuration(file.durationSec)}</span>}
-    </div>
+    <>
+      <div className="preview" style={{ aspectRatio: String(ratio) }}>
+        {failed ? (
+          <span className="no-preview">미리보기 없음</span>
+        ) : (
+          <img key={file.id} src={`pvm://preview/${file.id}`} alt="" onLoad={note.onLoad} onError={() => setBroken(true)} />
+        )}
+        {isVideo && formatDuration(file.durationSec) && <span className="badge">{formatDuration(file.durationSec)}</span>}
+      </div>
+      <PreviewNote show={!failed && note.small} />
+    </>
   );
 }
 

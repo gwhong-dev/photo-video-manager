@@ -15,19 +15,24 @@ import { api, errorText } from '../api.js';
 import { checkAllLabel, formatCount, formatTakenAt, gapText, suggestApplyLabel } from '../format.mjs';
 import { checkAll, checkedIds, createLoadOrder, finishApply, groupKey, isChecked, isRepeatClick, receiveList, rememberIds } from '../suggest-view.mjs';
 import EmptyState from './EmptyState.jsx';
+import { PreviewNote, usePreviewNote } from './PreviewNote.jsx';
 
 const SKIP_NOT_SAVED = '건너뛴 사진을 파일에 저장하지 못했어요. 이번 실행 동안만 기억해요.';
 
 // 근거 사진 큰 그림. 영상은 썸네일로 보여 줘요
 function SourcePhoto({ source }) {
   const [broken, setBroken] = useState(false);
+  const note = usePreviewNote(source.id); // 원본 대신 작은 썸네일이면 안내 한 줄 (영상은 원래 썸네일이라 묻지 않아요)
   useEffect(() => setBroken(false), [source.id]);
   if (broken) return <div className="suggest-source-img"><span className="no-preview">미리보기 없음</span></div>;
   const kind = source.mediaType === 'video' ? 'thumb' : 'preview';
   return (
-    <div className="suggest-source-img">
-      <img src={`pvm://${kind}/${source.id}`} alt="" draggable="false" onError={() => setBroken(true)} />
-    </div>
+    <>
+      <div className="suggest-source-img">
+        <img src={`pvm://${kind}/${source.id}`} alt="" draggable="false" onLoad={kind === 'preview' ? note.onLoad : undefined} onError={() => setBroken(true)} />
+      </div>
+      <PreviewNote show={kind === 'preview' && note.small} />
+    </>
   );
 }
 
