@@ -21,8 +21,9 @@ const cleanReadMeta = (paths) => {
 };
 const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
-const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals, createHashCache } = require('./lib/cleaner');
+const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals, createHashCache, countHashesFrom } = require('./lib/cleaner');
 const { createDriveKindOf } = require('./lib/platform');
+const { samplePool, pickSample, samplePath } = require('./lib/clean-sample');
 const { createLogger } = require('./lib/logger');
 const { guardWindow } = require('./lib/window-guard');
 const { writePlanLog, nextTodo, checkSpace, runBatch } = require('./lib/runner');
@@ -384,6 +385,7 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
 //   지문도 확인 창에서 계산한 것을 실제 정리 때 다시 써요. 크기 · 수정 시각이 바뀐 파일만 다시 계산 (createHashCache)
 let cleanDriveKindOf = null;
 let cleanHashOf = null;
+let cleanSample = null; // 🔍 샘플 확인 후보 (확인 창을 띄울 때 만든 정리 대상의 결과 파일들)
 ipcMain.handle('trash-info', async () => {
   if (running) throw new Error('다른 작업이 끝난 뒤에 해 주세요');
   running = true;
@@ -391,8 +393,9 @@ ipcMain.handle('trash-info', async () => {
     cleanDriveKindOf = createDriveKindOf();
     cleanHashOf = createHashCache();
     const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, onProgress: (p) => send('clean-check-progress', p) }) : [];
+    cleanSample = samplePool(job, targets);
     // 확인하다 재생 불가를 찾으면 개수가 바뀌어요 → 작업 정보도 새로 보내요
-    return { ...(await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf })), job: jobInfo() };
+    return { ...(await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf })), sample: pickSample(cleanSample), job: jobInfo() };
   } finally {
     running = false;
   }
@@ -405,8 +408,11 @@ ipcMain.handle('trash-originals', async () => {
   running = true;
   try {
     // 정리 직전 확인은 줄이지 않아요: 크기 · 열어서 읽기 · 재생 확인은 다시 하고, 지문만 바뀌지 않은 파일은 다시 써요
-    const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf || createHashCache(), ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta }) : [];
+    const hashOf = cleanHashOf || createHashCache();
+    const hashCount = countHashesFrom(hashOf); // 정리 직전 확인에서 지문을 다시 계산한 수 · 다시 쓴 수 → 로그 끝 줄
+    const targets = job ? await cleanTargets(job, { hashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta }) : [];
     const r = await cleanOriginals({
+      hashStats: hashCount(),
       job,
       store,
       targets,
@@ -420,7 +426,22 @@ ipcMain.handle('trash-originals', async () => {
     running = false;
     cleanDriveKindOf = null; // 다음 정리 때는 새로 확인
     cleanHashOf = null; // 지문도 다음 정리 때는 새로 계산
+    cleanSample = null; // 샘플 후보도 다음 확인 창에서 새로
   }
+});
+
+// 🔍 샘플 확인: 다시 뽑기 (확인 창을 띄울 때 만든 후보에서 다시 무작위로)
+ipcMain.handle('clean-sample', async () => pickSample(cleanSample || []));
+
+// 🔍 샘플 확인: 누른 결과 파일을 크게 열기 (Windows 기본 프로그램, 사진 앱 · 영상 플레이어)
+//   화면은 경로를 모르고 번호만 보내요. 이번 후보 안의 파일만 열어요
+ipcMain.handle('clean-sample-open', async (e, key) => {
+  const p = samplePath(cleanSample, key);
+  if (!p) throw new Error('샘플을 다시 뽑아 주세요');
+  if (!fs.existsSync(p)) throw new Error('결과 파일을 찾지 못했어요');
+  const err = await shell.openPath(p);
+  if (err) throw new Error('파일을 열지 못했어요');
+  return true;
 });
 
 // 작업 끝내기 / 취소

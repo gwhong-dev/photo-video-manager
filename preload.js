@@ -30,6 +30,9 @@ contextBridge.exposeInMainWorld('api', {
   // 원본 정리 / 작업 끝내기
   trashInfo: () => ipcRenderer.invoke('trash-info'),
   trashOriginals: () => ipcRenderer.invoke('trash-originals'),
+  // 🔍 샘플 확인: 다시 뽑기, 크게 열기 (경로 없이 번호로만)
+  cleanSample: () => ipcRenderer.invoke('clean-sample'),
+  openCleanSample: (key) => ipcRenderer.invoke('clean-sample-open', key),
   closeJob: (reason) => ipcRenderer.invoke('close-job', reason),
 
   // 폴더 열기

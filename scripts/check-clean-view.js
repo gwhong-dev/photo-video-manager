@@ -271,6 +271,19 @@ const items = [
           JSON.stringify({ more: big.more, n: big.files.length, first: big.files[0], cap, empty })));
       }
 
+      // 45g 새 끝 줄 (지문 개수가 붙은 줄, 2026-11-11)도 끝까지 적힌 기록으로 읽고, 개수는 그대로
+      {
+        const withHash = H.parseLog('clean_2026-11-11_100000.txt', [
+          '# 원본 정리 / 2026-11-11 10:00:00 / 1개',
+          `10:00:01${T}예정(휴지통)${T}C:\\a\\x.jpg${T}X:\\b\\x.jpg`,
+          `10:00:01${T}휴지통${T}C:\\a\\x.jpg${T}X:\\b\\x.jpg`,
+          '# 끝 / 휴지통 1, 이동 0, 실패 0 / 지문 다시 계산 2개, 재사용 5개',
+        ].join('\n'));
+        out.push(sub('45g 지문 개수가 붙은 끝 줄도 끝까지 적힌 기록, 개수 그대로',
+          withHash.finished === true && withHash.trash === 1 && withHash.fail === 0 && withHash.pending === 0 && withHash.files.length === 1,
+          JSON.stringify(withHash)));
+      }
+
       // 45h 예전 폴더 (#60 검증): 지워진 예전 폴더가 9개 먼저 있어도 뒤의 있는 폴더가 보임 (보이는 것만 MAX_OLD개까지 셈)
       //   Windows 에서는 없는 드라이브 글자의 예전 폴더가 "연결 안 됨"으로 보이는지도 봐요
       {

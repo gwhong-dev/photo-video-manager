@@ -962,6 +962,25 @@ const ITEMS = [
         fs.unlinkSync(c.job.items[1].dupOf);
         const fourth = (await cleaner.cleanTargets(c.job, { hashOf })).map((it) => it.i).join(',');
         out.push(sub('12x 남길 파일이 없어지면 기억한 지문이 있어도 정리 안 함', fourth === '', `정리 ${fourth || '없음'}`));
+
+        // 원본 정리 로그 끝 줄에 "지문 다시 계산 N개, 재사용 M개" (2026-11-11 사용자 결정)
+        //   확인 창에서 계산한 것은 빼고, 정리 직전 확인의 개수만 세요
+        if (!cleaner.countHashesFrom) {
+          out.push(missing('12x 정리 로그에 지문 개수'));
+        } else {
+          const c2 = makeCase('12x-log');
+          c2.job.items[0].resultHash = await cleaner.hashFile(c2.job.items[0].finalPath);
+          const h = cleaner.createHashCache();
+          await cleaner.cleanTargets(c2.job, { hashOf: h }); // 확인 창
+          const count = cleaner.countHashesFrom(h);
+          const targets = await cleaner.cleanTargets(c2.job, { hashOf: h }); // 정리 직전
+          const stats = count();
+          const r = await cleaner.cleanOriginals({ job: c2.job, store: c2.store, targets, logger: c2.logger, trash: async () => {}, driveKindOf: async () => 'fixed', hashStats: stats });
+          const last = fs.readFileSync(r.logPath, 'utf8').split(/\r?\n/).filter(Boolean).pop();
+          const want = `# 끝 / 휴지통 2, 이동 0, 실패 0 / 지문 다시 계산 0개, 재사용 ${stats.reused}개`;
+          const plain = cleaner.countHashesFrom(async () => 'x')(); // 개수를 세지 않는 함수 → 끝 줄에 안 붙임
+          out.push(sub('12x 정리 로그 끝 줄에 정리 직전 확인의 지문 다시 계산 · 재사용 개수', targets.length === 2 && stats.computed === 0 && stats.reused > 0 && last === want && plain === null, `${last} (기대 ${want}), 개수 없는 함수 ${plain}`));
+        }
       }
 
       // 12y 휴지통 용량 경고에 휴지통에 이미 든 크기도 더함. 못 읽으면 이번 작업분만 + 안내 (2026-11-09 사용자 결정, 개발개요 4-0 M1 ①)
@@ -1161,6 +1180,8 @@ const ITEMS = [
   ...require('./check-clean-view').items,
   // 47번은 exe 만들기 설정 점검 (scripts/check-build.js)
   ...require('./check-build').items,
+  // 48번은 원본 정리 확인 창의 샘플 확인 점검 (scripts/check-clean-sample.js)
+  ...require('./check-clean-sample').items,
 ];
 
 // ---------- 점검 임시 폴더 정리 ----------
