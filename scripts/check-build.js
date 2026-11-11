@@ -90,15 +90,17 @@ const items = [
         JSON.stringify(list) === JSON.stringify(want) && JSON.stringify(one) === JSON.stringify(['S\\magick.exe', path.join('P', 'tools', 'imagemagick', 'magick.exe'), 'magick']) && passes,
         `${JSON.stringify(list)} / main.js 설정 폴더 넘김 ${passes}`));
 
-      // 47g exe 퓨즈 runAsNode 꺼짐 (2026-11-11 결정). 퓨즈 = exe 안에 박아 두는 켜고 끄는 스위치
-      //   꺼 두면 ELECTRON_RUN_AS_NODE=1 로 exe 를 그냥 Node 처럼 실행해 아무 코드나 돌리는 길이 막혀요
-      //   대신 앱 코드가 process.fork 나 ELECTRON_RUN_AS_NODE 를 쓰면 exe 에서 고장 나서, 그것도 같이 봐요
-      //   (점검 스크립트의 process.execPath 는 node.exe 로 돌아서 상관없어요)
-      const fuses = build.electronFuses || {};
-      const usesRunAsNode = graph.files.filter((rel) => /ELECTRON_RUN_AS_NODE|\bfork\s*\(|execPath\s*,/.test(fs.readFileSync(path.join(APP, rel), 'utf8')));
-      out.push(sub('47g exe 퓨즈 runAsNode 꺼짐, 앱 코드는 fork · ELECTRON_RUN_AS_NODE 를 안 씀',
-        fuses.runAsNode === false && usesRunAsNode.length === 0,
-        `runAsNode: ${fuses.runAsNode}${usesRunAsNode.length ? ` / 쓰는 파일: ${usesRunAsNode.join(', ')}` : ''}`));
+      // 47g exe 는 Electron 공식 원본 그대로 (2026-11-11 결정). Smart App Control 이 새로 만든 서명 없는 exe 를 막아서
+      //   npm run dist 끝에 scripts/use-official-electron.js 로 exe 를 공식 electron.exe 복사본으로 바꿔요
+      //   exe 를 고치는 설정(퓨즈 electronFuses)은 두지 않아요. 고치면 다시 새 파일이 돼서 막혀요
+      //   이미 만든 exe 가 있으면 공식 원본과 같은지 알려만 줘요 (예전에 만든 exe 가 남은 폴더에서 점검이 막히지 않게)
+      const official = require('./use-official-electron');
+      const swaps = /electron-builder[^&]*&&\s*node scripts\/use-official-electron\.js\s*$/.test((pkg.scripts || {}).dist || '');
+      const built = process.platform === 'win32' && fs.existsSync(official.TARGET) && fs.existsSync(official.OFFICIAL);
+      const same = built ? official.sha(official.TARGET) === official.sha(official.OFFICIAL) : null;
+      out.push(sub('47g exe 는 공식 electron.exe 그대로 (dist 끝에 바꿔 넣음, 퓨즈 설정 없음)',
+        swaps && build.electronFuses == null,
+        `dist 끝에 바꿔 넣기 ${swaps}, 퓨즈 설정 ${build.electronFuses == null ? '없음' : '있음'}, 만든 exe ${built ? (same ? '원본과 같음' : '원본과 다름 (build-exe.bat 다시 실행)') : '없음'}`));
       return out;
     },
   },
