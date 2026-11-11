@@ -93,6 +93,35 @@
     .t-nodate { background: #f3eefe; color: var(--purple); }
     .t-check { background: #fdeeee; color: var(--red); }
     .muted { color: var(--sub); }
+
+    /* 원본 정리 확인 창 + 🔍 샘플 확인 (CLAUDE.md "화면 디자인" 색과 글꼴) */
+    #cleanDialog {
+      width: min(640px, 92vw);
+      max-height: 88vh;
+      padding: 0;
+      border: 1px solid #55534E;
+      border-radius: 10px;
+      background: #403F3B;
+      color: #F1EEE6;
+      font-family: 'IBM Plex Sans KR', 'Malgun Gothic', sans-serif;
+    }
+    #cleanDialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+    #cleanDialog button { font-family: inherit; background: #403F3B; color: #F1EEE6; border-color: #55534E; }
+    #cleanDialog button:hover:not(:disabled) { background: #4A4944; }
+    #cleanDialog button.cd-go { background: #F1EEE6; color: #33322F; border-color: #F1EEE6; font-weight: 600; }
+    #cleanDialog button.cd-go:hover:not(:disabled) { background: #E2DED4; }
+    .cd-body { padding: 18px 22px; overflow-y: auto; max-height: calc(88vh - 64px); }
+    .cd-title { font-size: 17px; font-weight: 600; margin: 0 0 10px; }
+    .cd-msg { white-space: pre-line; line-height: 1.55; }
+    .cd-sample-head { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; padding-top: 12px; border-top: 1px solid #55534E; }
+    .cd-sub { color: #B3AFA5; font-size: 12px; margin-top: 4px; }
+    .cd-list { list-style: none; margin: 8px 0 0; padding: 0; }
+    #cleanDialog .cd-list button { width: 100%; display: flex; gap: 12px; align-items: baseline; text-align: left; border: 0; border-bottom: 1px solid #55534E; border-radius: 0; padding: 7px 4px; background: transparent; }
+    #cleanDialog .cd-list button:hover:not(:disabled) { background: #4A4944; }
+    .cd-kind { flex: none; width: 72px; color: #B3AFA5; }
+    .cd-name { flex: 1; word-break: break-all; }
+    .cd-folder { flex: none; color: #8C887E; font-size: 12px; }
+    .cd-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 22px; border-top: 1px solid #55534E; background: #33322F; border-radius: 0 0 10px 10px; }
   </style>
 </head>
 <body>
@@ -179,6 +208,25 @@
     </div>
     <table id="table"></table>
   </div>
+
+  <!-- 6. 원본 정리 확인 창 (🔍 샘플 확인: 결과 파일 무작위 10개, 누르면 크게 열림, 다시 뽑기) -->
+  <dialog id="cleanDialog">
+    <div class="cd-body">
+      <div class="cd-title">🧹 원본 정리</div>
+      <div class="cd-msg" id="cdMsg"></div>
+      <div class="cd-sample-head">
+        <b>🔍 샘플 확인</b>
+        <button class="small" id="cdResample">다른 10개 뽑기</button>
+      </div>
+      <div class="cd-sub" id="cdSampleInfo"></div>
+      <ul class="cd-list" id="cdSample"></ul>
+      <div class="cd-sub" id="cdSampleErr"></div>
+    </div>
+    <div class="cd-foot">
+      <button id="cdLater">나중에 정리하기</button>
+      <button class="cd-go" id="cdGo">원본 정리하기</button>
+    </div>
+  </dialog>
 
   <script>
     const $ = (id) => document.getElementById(id);
@@ -564,10 +612,10 @@
         .map((d) => `${d.root} (${d.label}) ${num(d.count)}개 → ${d.method === 'trash' ? '휴지통으로' : '가져올 폴더\\_정리완료원본 으로 이동'}`)
         .join('\n');
       let msg =
-        `🧹 원본 정리\n\n변환·저장이 끝난 원본 ${num(info.count)}개 (${fmtBytes(info.bytes)})를 정리할까요?\n\n${where}\n\n` +
+        `변환·저장이 끝난 원본 ${num(info.count)}개 (${fmtBytes(info.bytes)})를 정리할까요?\n\n${where}\n\n` +
         `· 결과 파일이 백업 폴더에 있는 것만 정리해요\n· 실패한 파일, 재생할 수 없는 영상, 확인이 필요한 중복은 남겨 둬요\n· 영구 삭제는 하지 않아요`;
       if (info.warnings.length) msg += '\n\n⚠️ ' + info.warnings.join('\n⚠️ ');
-      if (!confirm(msg)) return;
+      if (!(await confirmClean(msg, cleanGoText(info), info.sample || []))) return;
 
       const before = $('status').textContent; // 이번 회차 결과는 남겨 두기
       setBusy(true);
@@ -584,6 +632,81 @@
         setBusy(false);
       }
     }
+    // 확인 창: 정리하기 → true, 나중에 정리하기 · Esc → false
+    //   🔍 샘플 확인으로 백업 폴더에 남을 결과 파일을 직접 열어 보고 정할 수 있어요
+    function confirmClean(msg, goText, sample) {
+      return new Promise((resolve) => {
+        const d = $('cleanDialog');
+        $('cdMsg').textContent = msg;
+        $('cdGo').textContent = goText;
+        renderSample(sample);
+        const done = (ok) => {
+          d.oncancel = null;
+          d.close();
+          resolve(ok);
+        };
+        $('cdGo').onclick = () => done(true);
+        $('cdLater').onclick = () => done(false);
+        d.oncancel = (e) => {
+          e.preventDefault();
+          done(false);
+        };
+        d.showModal();
+        $('cdLater').focus(); // Enter를 잘못 눌러도 정리되지 않게
+      });
+    }
+
+    // 버튼 문구는 결과를 말해요 (모두 휴지통 / 모두 옮기기 / 섞임)
+    function cleanGoText(info) {
+      const methods = new Set(info.drives.map((d) => d.method));
+      const n = num(info.count);
+      if (methods.size === 1 && methods.has('trash')) return `원본 ${n}개 휴지통으로 옮기기`;
+      if (methods.size === 1 && methods.has('move')) return `원본 ${n}개 _정리완료원본으로 옮기기`;
+      return `원본 ${n}개 정리하기`;
+    }
+
+    // 🔍 샘플 목록 그리기 (종류, 이름, 백업 폴더 안의 위치). 누르면 Windows 기본 프로그램으로 크게 열어요
+    function renderSample(list) {
+      const ul = $('cdSample');
+      ul.textContent = '';
+      $('cdSampleErr').textContent = '';
+      for (const s of list) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'cd-item';
+        b.title = '크게 열기';
+        for (const [cls, text] of [['cd-kind', s.kind], ['cd-name', s.name], ['cd-folder', s.folder]]) {
+          const span = document.createElement('span');
+          span.className = cls;
+          span.textContent = text;
+          b.appendChild(span);
+        }
+        b.onclick = async () => {
+          $('cdSampleErr').textContent = '';
+          try {
+            await api.openCleanSample(s.key);
+          } catch (e) {
+            $('cdSampleErr').textContent = '⚠ ' + cleanErr(e);
+          }
+        };
+        const li = document.createElement('li');
+        li.appendChild(b);
+        ul.appendChild(li);
+      }
+      const full = list.length >= 10;
+      $('cdSampleInfo').textContent = full
+        ? '백업 폴더에 남을 결과 파일 중 무작위 10개예요 (종류별로 골고루). 누르면 크게 열려요'
+        : `백업 폴더에 남을 결과 파일 ${list.length}개를 모두 보여 줘요. 누르면 크게 열려요`;
+      $('cdResample').disabled = !full; // 10개보다 적으면 다시 뽑아도 같아요
+    }
+    $('cdResample').onclick = async () => {
+      try {
+        renderSample(await api.cleanSample());
+      } catch (e) {
+        $('cdSampleErr').textContent = '⚠ ' + cleanErr(e);
+      }
+    };
+
     $('trashBtn').onclick = async () => {
       try {
         await askTrash();
