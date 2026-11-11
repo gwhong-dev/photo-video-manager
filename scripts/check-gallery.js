@@ -1098,6 +1098,7 @@ const items = [
           const pv = await thumbs.preview(idOf(big));
           const pm = pv ? await sharp(pv.buffer).metadata() : null;
           out.push(sub('사진 미리보기: webp, 긴 변 1200px', !!pv && pv.type === 'image/webp' && !!pm && pm.format === 'webp' && Math.max(pm.width, pm.height) === 1200, pm ? JSON.stringify([pm.width, pm.height]) : '없음'));
+          out.push(sub('원본으로 만든 미리보기에는 썸네일 대신 표시가 없음', !!pv && !pv.fallback));
           out.push(sub('미리보기는 저장하지 않음 (썸네일 폴더 파일 그대로)', JSON.stringify(listAll(thumbDir)) === JSON.stringify(filesBefore)));
           if (hasVideo && tools.ffmpeg.ok) {
             const vp = await thumbs.preview(idOf(video));
@@ -1120,6 +1121,7 @@ const items = [
             }
             out.push(sub('원본을 못 읽으면 미리보기는 만들어 둔 썸네일 (썸네일 폴더 그대로)', !!vp && vp.type === 'image/webp' && fs.existsSync(tp) && Buffer.compare(vp.buffer, fs.readFileSync(tp)) === 0
               && JSON.stringify(listAll(thumbDir)) === before17, vp ? `${vp.buffer.length}바이트` : '없음'));
+            out.push(sub('썸네일로 대신한 미리보기에는 표시(fallback)가 있음 (2026-11-11)', !!vp && vp.fallback === true));
           }
         }
 
@@ -1137,7 +1139,31 @@ const items = [
           const t = await media('pvm://thumb/' + jid);
           const pr = await media('pvm://preview/' + jid);
           out.push(sub('pvm://thumb/<id> 는 200과 경로', t.status === 200 && typeof t.path === 'string' && t.path.startsWith(thumbDir) && fs.existsSync(t.path), JSON.stringify({ status: t.status, path: t.path })));
-          out.push(sub('pvm://preview/<id> 는 200과 내용', pr.status === 200 && Buffer.isBuffer(pr.buffer) && pr.buffer.length > 0 && pr.type === 'image/webp', String(pr.status)));
+          out.push(sub('pvm://preview/<id> 는 200과 내용', pr.status === 200 && Buffer.isBuffer(pr.buffer) && pr.buffer.length > 0 && pr.type === 'image/webp' && !pr.fallback, String(pr.status)));
+          // 원본을 못 읽을 때: 썸네일 내용과 fallback 표시만, 경로는 주지 않아요 (원본 이름을 잠깐 바꿔 둠)
+          {
+            const away = `${jpg}.away`;
+            fs.renameSync(jpg, away);
+            let fr = null;
+            try {
+              fr = await media('pvm://preview/' + jid);
+            } finally {
+              fs.renameSync(away, jpg);
+            }
+            out.push(sub('원본을 못 읽으면 pvm://preview 는 200, fallback 표시, 경로 없음', fr.status === 200 && fr.fallback === true && Buffer.isBuffer(fr.buffer) && fr.path === undefined, JSON.stringify({ status: fr.status, fallback: fr.fallback })));
+          }
+          // 화면 연결: main이 기억하고 헤더에 적음, preload 통로, 두 패널이 같은 안내 문구를 씀
+          {
+            const rd = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+            const gm = rd('gallery-main.js');
+            const pre = rd('preload.js');
+            const note = rd('src/components/PreviewNote.jsx');
+            const wired = gm.includes("ipcMain.handle('gallery:preview-fallback'") && gm.includes('previewFallbacks.add(id)') && gm.includes("'X-Pvm-Preview'")
+              && pre.includes("ipcRenderer.invoke('gallery:preview-fallback'")
+              && note.includes('원본이 연결되지 않아 작은 그림으로 보여요')
+              && ['src/components/DetailPanel.jsx', 'src/components/SuggestPanel.jsx'].every((f) => rd(f).includes('usePreviewNote(') && rd(f).includes('onLoad='));
+            out.push(sub('썸네일 대신 안내: main 기억 + preload 통로 + 두 패널 연결', wired));
+          }
           dbCalls = 0;
           thumbCalls = 0;
           const bad = [

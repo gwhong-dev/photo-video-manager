@@ -18,6 +18,7 @@ export const api = {
   listDays: (filter) => gallery().listDays(filter),
   listFiles: (day, filter) => gallery().listFiles(day, filter),
   getFile: (id) => gallery().getFile(id),
+  previewFallback: (id) => gallery().previewFallback(id), // 방금 받은 미리보기가 원본 대신 작은 썸네일인지 (참/거짓)
   // 날짜와 위치 직접 넣기
   listIds: (filter) => gallery().listIds(filter),
   getCopySource: (id) => gallery().getCopySource(id),

@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('api', {
     listDays: (filter) => ipcRenderer.invoke('gallery:list-days', filter),
     listFiles: (day, filter) => ipcRenderer.invoke('gallery:list-files', day, filter),
     getFile: (id) => ipcRenderer.invoke('gallery:get-file', id),
+    previewFallback: (id) => ipcRenderer.invoke('gallery:preview-fallback', id), // 미리보기가 작은 썸네일로 대신한 것인지
     // 날짜와 위치 직접 넣기 (경로 없이 id로만 부탁해요)
     listIds: (filter) => ipcRenderer.invoke('gallery:list-ids', filter),
     getCopySource: (id) => ipcRenderer.invoke('gallery:get-copy-source', id),

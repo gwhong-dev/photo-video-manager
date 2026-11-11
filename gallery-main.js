@@ -226,6 +226,9 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // ---------- 읽기와 썸네일 ----------
   let library = null;
   let thumbs = null;
+  // 원본을 못 읽어 미리보기를 작은 썸네일로 대신 보낸 사진 번호들. 원본으로 다시 보내면 빠져요
+  //   화면의 <img>는 응답 헤더를 못 읽어서, 그림을 받은 뒤 gallery:preview-fallback 으로 물어봐요 (2026-11-11 사용자 결정)
+  const previewFallbacks = new Set();
   if (db) {
     thumbs = createThumbs({ db, thumbDir: path.join(base, 'thumbs'), getTools, isBusy: busy, logger });
     library = createLibrary({
@@ -380,6 +383,9 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     const { path: ignoredPath, root: ignoredRoot, ...safe } = f;
     return safe;
   });
+
+  // 방금 보낸 미리보기가 원본 대신 작은 썸네일이었는지 (화면이 "원본이 연결되지 않아..." 한 줄을 보여 줄지 정해요)
+  ipcMain.handle('gallery:preview-fallback', (e, id) => Number.isSafeInteger(id) && id > 0 && previewFallbacks.has(id));
 
   // 다시 읽기: 실패했던 썸네일을 대기로 돌리고, 읽기 실패했던 파일도 다시 읽어요
   ipcMain.handle('gallery:rescan', async () => {
@@ -845,6 +851,14 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       if (r.status !== 200) return notFound();
       // 같은 id의 사진이 바뀌면 썸네일도 바뀌니 화면이 옛 그림을 붙들지 않게 해요
       const headers = { 'Content-Type': r.type, 'Cache-Control': 'no-cache' };
+      const u = new URL(request.url);
+      if (u.hostname === 'preview') {
+        // 썸네일로 대신했는지 기억해 두고 헤더에도 적어요 (경로는 주지 않아요)
+        const id = Number(u.pathname.slice(1));
+        if (r.fallback) previewFallbacks.add(id);
+        else previewFallbacks.delete(id);
+        headers['X-Pvm-Preview'] = r.fallback ? 'thumb' : 'full';
+      }
       if (r.buffer) return new Response(r.buffer, { status: 200, headers });
       // 한글, #, % 가 든 경로도 안전하게 file:// 주소로 바꿔요
       const netFetch = require('electron').net.fetch;
