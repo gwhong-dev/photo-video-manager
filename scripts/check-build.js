@@ -89,6 +89,18 @@ const items = [
       out.push(sub('47f 도구는 설정 폴더 tools, exe 옆 tools, PATH 순서로 찾음 (폴더 하나만 줘도 예전처럼)',
         JSON.stringify(list) === JSON.stringify(want) && JSON.stringify(one) === JSON.stringify(['S\\magick.exe', path.join('P', 'tools', 'imagemagick', 'magick.exe'), 'magick']) && passes,
         `${JSON.stringify(list)} / main.js 설정 폴더 넘김 ${passes}`));
+
+      // 47g exe 는 Electron 공식 원본 그대로 (2026-11-11 결정). Smart App Control 이 새로 만든 서명 없는 exe 를 막아서
+      //   npm run dist 끝에 scripts/use-official-electron.js 로 exe 를 공식 electron.exe 복사본으로 바꿔요
+      //   exe 를 고치는 설정(퓨즈 electronFuses)은 두지 않아요. 고치면 다시 새 파일이 돼서 막혀요
+      //   이미 만든 exe 가 있으면 공식 원본과 같은지 알려만 줘요 (예전에 만든 exe 가 남은 폴더에서 점검이 막히지 않게)
+      const official = require('./use-official-electron');
+      const swaps = /electron-builder[^&]*&&\s*node scripts\/use-official-electron\.js\s*$/.test((pkg.scripts || {}).dist || '');
+      const built = process.platform === 'win32' && fs.existsSync(official.TARGET) && fs.existsSync(official.OFFICIAL);
+      const same = built ? official.sha(official.TARGET) === official.sha(official.OFFICIAL) : null;
+      out.push(sub('47g exe 는 공식 electron.exe 그대로 (dist 끝에 바꿔 넣음, 퓨즈 설정 없음)',
+        swaps && build.electronFuses == null,
+        `dist 끝에 바꿔 넣기 ${swaps}, 퓨즈 설정 ${build.electronFuses == null ? '없음' : '있음'}, 만든 exe ${built ? (same ? '원본과 같음' : '원본과 다름 (build-exe.bat 다시 실행)') : '없음'}`));
       return out;
     },
   },
