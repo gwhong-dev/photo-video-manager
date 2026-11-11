@@ -612,10 +612,10 @@
         .map((d) => `${d.root} (${d.label}) ${num(d.count)}개 → ${d.method === 'trash' ? '휴지통으로' : '가져올 폴더\\_정리완료원본 으로 이동'}`)
         .join('\n');
       let msg =
-        `변환·저장이 끝난 원본 ${num(info.count)}개 (${fmtBytes(info.bytes)})를 정리할까요?\n\n${where}\n\n` +
-        `· 결과 파일이 백업 폴더에 있는 것만 정리해요\n· 실패한 파일, 재생할 수 없는 영상, 확인이 필요한 중복은 남겨 둬요\n· 영구 삭제는 하지 않아요`;
+        `백업 폴더에 저장이 끝난 원본 ${num(info.count)}개 (${fmtBytes(info.bytes)})를 정리할까요?\n\n${where}\n\n` +
+        `- 결과 파일이 백업 폴더에 있는 것만 정리해요\n- 실패한 파일, 재생할 수 없는 영상, 확인이 필요한 중복은 남겨 둬요\n- 영구 삭제는 하지 않아요`;
       if (info.warnings.length) msg += '\n\n⚠️ ' + info.warnings.join('\n⚠️ ');
-      if (!(await confirmClean(msg, cleanGoText(info), info.sample || []))) return;
+      if (!(await confirmClean(msg, cleanGoText(info), info.sample))) return;
 
       const before = $('status').textContent; // 이번 회차 결과는 남겨 두기
       setBusy(true);
@@ -632,7 +632,7 @@
         setBusy(false);
       }
     }
-    // 확인 창: 정리하기 → true, 나중에 정리하기 · Esc → false
+    // 확인 창: 정리하기 → true, 나중에 정리하기나 Esc → false
     //   🔍 샘플 확인으로 백업 폴더에 남을 결과 파일을 직접 열어 보고 정할 수 있어요
     function confirmClean(msg, goText, sample) {
       return new Promise((resolve) => {
@@ -666,7 +666,10 @@
     }
 
     // 🔍 샘플 목록 그리기 (종류, 이름, 백업 폴더 안의 위치). 누르면 Windows 기본 프로그램으로 크게 열어요
-    function renderSample(list) {
+    //   sample = { items: 뽑은 목록, total: 후보 전체 수 }
+    function renderSample(sample) {
+      const list = (sample && sample.items) || [];
+      const total = (sample && sample.total) || list.length;
       const ul = $('cdSample');
       ul.textContent = '';
       $('cdSampleErr').textContent = '';
@@ -693,11 +696,11 @@
         li.appendChild(b);
         ul.appendChild(li);
       }
-      const full = list.length >= 10;
-      $('cdSampleInfo').textContent = full
-        ? '백업 폴더에 남을 결과 파일 중 무작위 10개예요 (종류별로 골고루). 누르면 크게 열려요'
+      const more = total > list.length; // 보여 준 것보다 후보가 많을 때만 다시 뽑을 뜻이 있어요
+      $('cdSampleInfo').textContent = more
+        ? `백업 폴더에 남을 결과 파일 ${num(total)}개 중 무작위 ${list.length}개예요 (종류별로 골고루). 누르면 크게 열려요`
         : `백업 폴더에 남을 결과 파일 ${list.length}개를 모두 보여 줘요. 누르면 크게 열려요`;
-      $('cdResample').disabled = !full; // 10개보다 적으면 다시 뽑아도 같아요
+      $('cdResample').disabled = !more; // 후보가 10개 이하면 다시 뽑아도 같은 파일이에요
     }
     $('cdResample').onclick = async () => {
       try {
