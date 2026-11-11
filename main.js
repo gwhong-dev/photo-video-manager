@@ -23,7 +23,8 @@ const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
 const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals, createHashCache, countHashesFrom } = require('./lib/cleaner');
 const { createDriveKindOf } = require('./lib/platform');
-const { samplePool, pickSample, samplePath } = require('./lib/clean-sample');
+const { samplePool, sampleView, openSample } = require('./lib/clean-sample');
+const { openFolderOnly } = require('./lib/open-folder');
 const { createLogger } = require('./lib/logger');
 const { guardWindow } = require('./lib/window-guard');
 const { writePlanLog, nextTodo, checkSpace, runBatch } = require('./lib/runner');
@@ -322,6 +323,7 @@ ipcMain.handle('start-job', async () => {
   if (store.exists()) store.close('replaced'); // 이전 작업은 보관
   job = store.create(lastPlan);
   lastPlan = null;
+  resetCleanCheck(); // 이전 작업의 샘플 후보가 남지 않게
   writePlanLog(job, logger); // 계획 로그 (날짜없음 참고 날짜, 중복, 확인 필요 목록)
   return jobInfo();
 });
@@ -386,6 +388,13 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
 let cleanDriveKindOf = null;
 let cleanHashOf = null;
 let cleanSample = null; // 🔍 샘플 확인 후보 (확인 창을 띄울 때 만든 정리 대상의 결과 파일들)
+// 정리 확인 창에서 만든 것들 비우기 (정리를 끝냈을 때, 작업을 끝내거나 새로 시작할 때)
+//   지난 작업의 샘플 후보가 남아 있으면 다른 작업의 파일을 열 수 있어서요
+function resetCleanCheck() {
+  cleanDriveKindOf = null; // 다음 정리 때는 새로 확인
+  cleanHashOf = null; // 지문도 다음 정리 때는 새로 계산
+  cleanSample = null; // 샘플 후보도 다음 확인 창에서 새로
+}
 ipcMain.handle('trash-info', async () => {
   if (running) throw new Error('다른 작업이 끝난 뒤에 해 주세요');
   running = true;
@@ -395,7 +404,7 @@ ipcMain.handle('trash-info', async () => {
     const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, onProgress: (p) => send('clean-check-progress', p) }) : [];
     cleanSample = samplePool(job, targets);
     // 확인하다 재생 불가를 찾으면 개수가 바뀌어요 → 작업 정보도 새로 보내요
-    return { ...(await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf })), sample: pickSample(cleanSample), job: jobInfo() };
+    return { ...(await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf })), sample: sampleView(cleanSample), job: jobInfo() };
   } finally {
     running = false;
   }
@@ -424,31 +433,24 @@ ipcMain.handle('trash-originals', async () => {
     return { ...r, job: jobInfo() };
   } finally {
     running = false;
-    cleanDriveKindOf = null; // 다음 정리 때는 새로 확인
-    cleanHashOf = null; // 지문도 다음 정리 때는 새로 계산
-    cleanSample = null; // 샘플 후보도 다음 확인 창에서 새로
+    resetCleanCheck();
   }
 });
 
 // 🔍 샘플 확인: 다시 뽑기 (확인 창을 띄울 때 만든 후보에서 다시 무작위로)
-ipcMain.handle('clean-sample', async () => pickSample(cleanSample || []));
+//   돌려주는 값: { items: 뽑은 10개, total: 후보 전체 수 }
+ipcMain.handle('clean-sample', async () => sampleView(cleanSample || []));
 
 // 🔍 샘플 확인: 누른 결과 파일을 크게 열기 (Windows 기본 프로그램, 사진 앱 · 영상 플레이어)
 //   화면은 경로를 모르고 번호만 보내요. 이번 후보 안의 파일만 열어요
-ipcMain.handle('clean-sample-open', async (e, key) => {
-  const p = samplePath(cleanSample, key);
-  if (!p) throw new Error('샘플을 다시 뽑아 주세요');
-  if (!fs.existsSync(p)) throw new Error('결과 파일을 찾지 못했어요');
-  const err = await shell.openPath(p);
-  if (err) throw new Error('파일을 열지 못했어요');
-  return true;
-});
+ipcMain.handle('clean-sample-open', async (e, key) => openSample(cleanSample, key, { exists: fs.existsSync, openPath: (x) => shell.openPath(x) }));
 
 // 작업 끝내기 / 취소
 ipcMain.handle('close-job', async (e, reason) => {
   if (running) throw new Error('실행 중에는 할 수 없어요');
   store.close(reason === 'cancel' ? 'cancelled' : 'done');
   job = null;
+  resetCleanCheck(); // 끝낸 작업의 샘플 후보가 남지 않게
   return true;
 });
 
@@ -458,12 +460,8 @@ ipcMain.handle('open-logs', async () => {
   await shell.openPath(logDir());
 });
 
-// 폴더 열기
-ipcMain.handle('open-folder', async (e, p) => {
-  if (!p || !fs.existsSync(p)) return false;
-  await shell.openPath(p);
-  return true;
-});
+// 폴더 열기 (실제 폴더일 때만. 화면이 파일 경로를 보내도 열지 않아요)
+ipcMain.handle('open-folder', async (e, p) => openFolderOnly(p, { isDir: (x) => fs.statSync(x).isDirectory(), openPath: (x) => shell.openPath(x) }));
 
 // ---------- 시작 / 종료 ----------
 // 프로그램은 하나만 켜지게 (두 개가 같은 작업 기록을 동시에 건드리면 안 돼서요)
