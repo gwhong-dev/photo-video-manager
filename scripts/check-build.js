@@ -75,6 +75,20 @@ const items = [
       const attrs = fs.existsSync(path.join(APP, '.gitattributes')) ? fs.readFileSync(path.join(APP, '.gitattributes'), 'utf8') : '';
       const ok = !!(pkg.scripts || {}).dist && fs.existsSync(path.join(APP, 'scripts', 'build-exe.bat')) && /\*\.bat\s+text\s+eol=crlf/.test(attrs);
       out.push(sub('47e npm run dist, scripts/build-exe.bat, .bat 줄바꿈 CRLF', ok, (pkg.scripts || {}).dist || '(dist 없음)'));
+
+      // 47f exe 의 도구 찾기: 설정 폴더 tools → exe 옆 tools → PATH 순서 (exe 를 다시 만들면 exe 옆 폴더는 지워져서, #73 검증 ⚠️)
+      //   main.js 가 exe 일 때 [설정 폴더, exe 폴더]를 넘기는지도 봐요
+      const { candidates } = require('../lib/tools');
+      const ud = path.join('U', 'photo-video-manager');
+      const ex = path.join('X', 'win-unpacked');
+      const list = candidates('exiftool', '', [ud, ex]);
+      const want = [path.join(ud, 'tools', 'exiftool', 'exiftool.exe'), path.join(ud, 'tools', 'exiftool', 'exiftool'), path.join(ex, 'tools', 'exiftool', 'exiftool.exe'), path.join(ex, 'tools', 'exiftool', 'exiftool'), 'exiftool'];
+      const one = candidates('magick', 'S\\magick.exe', 'P');
+      const mainText = fs.readFileSync(path.join(APP, 'main.js'), 'utf8');
+      const passes = /app\.isPackaged\s*\?\s*\[userDir\(\),\s*path\.dirname\(process\.execPath\)\]/.test(mainText);
+      out.push(sub('47f 도구는 설정 폴더 tools, exe 옆 tools, PATH 순서로 찾음 (폴더 하나만 줘도 예전처럼)',
+        JSON.stringify(list) === JSON.stringify(want) && JSON.stringify(one) === JSON.stringify(['S\\magick.exe', path.join('P', 'tools', 'imagemagick', 'magick.exe'), 'magick']) && passes,
+        `${JSON.stringify(list)} / main.js 설정 폴더 넘김 ${passes}`));
       return out;
     },
   },
