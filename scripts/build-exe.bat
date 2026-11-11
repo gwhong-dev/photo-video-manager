@@ -2,6 +2,7 @@
 rem 파일 위치: scripts/build-exe.bat
 rem 역할: git pull 한 뒤 더블클릭 한 번으로 exe 만들기 + 바탕화면 바로가기 만들기
 rem   결과: 프로젝트 폴더\release\win-unpacked\photo-video-manager.exe (폴더째 있어야 켜져요)
+rem   exe 는 Electron 공식 원본(electron.exe) 복사본이에요. 새로 고친 exe 는 이 PC의 Smart App Control 이 막아서요 (scripts/use-official-electron.js)
 rem   설정과 갤러리 목록은 예전처럼 %APPDATA%\photo-video-manager 를 그대로 써요
 chcp 65001 > nul
 rem 이 파일이 있는 곳의 한 칸 위(프로젝트 폴더)로 이동. 한글이 든 경로도 따옴표로 감싸서 안전해요

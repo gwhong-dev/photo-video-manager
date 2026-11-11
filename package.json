@@ -7,7 +7,7 @@
     "start": "vite build && electron .",
     "samples": "node scripts/make-samples.js",
     "check": "vite build && node scripts/check.js",
-    "dist": "vite build && electron-builder --win dir",
+    "dist": "vite build && electron-builder --win dir && node scripts/use-official-electron.js",
     "postinstall": "node scripts/postinstall.js"
   },
   "engines": {
@@ -55,9 +55,6 @@
       "node_modules/sharp/**/*",
       "node_modules/@img/**/*"
     ],
-    "electronFuses": {
-      "runAsNode": false
-    },
     "win": {
       "target": [
         "dir"
