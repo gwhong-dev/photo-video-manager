@@ -55,6 +55,9 @@
       "node_modules/sharp/**/*",
       "node_modules/@img/**/*"
     ],
+    "electronFuses": {
+      "runAsNode": false
+    },
     "win": {
       "target": [
         "dir"

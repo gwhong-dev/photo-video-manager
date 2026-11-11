@@ -89,6 +89,16 @@ const items = [
       out.push(sub('47f 도구는 설정 폴더 tools, exe 옆 tools, PATH 순서로 찾음 (폴더 하나만 줘도 예전처럼)',
         JSON.stringify(list) === JSON.stringify(want) && JSON.stringify(one) === JSON.stringify(['S\\magick.exe', path.join('P', 'tools', 'imagemagick', 'magick.exe'), 'magick']) && passes,
         `${JSON.stringify(list)} / main.js 설정 폴더 넘김 ${passes}`));
+
+      // 47g exe 퓨즈 runAsNode 꺼짐 (2026-11-11 결정). 퓨즈 = exe 안에 박아 두는 켜고 끄는 스위치
+      //   꺼 두면 ELECTRON_RUN_AS_NODE=1 로 exe 를 그냥 Node 처럼 실행해 아무 코드나 돌리는 길이 막혀요
+      //   대신 앱 코드가 process.fork 나 ELECTRON_RUN_AS_NODE 를 쓰면 exe 에서 고장 나서, 그것도 같이 봐요
+      //   (점검 스크립트의 process.execPath 는 node.exe 로 돌아서 상관없어요)
+      const fuses = build.electronFuses || {};
+      const usesRunAsNode = graph.files.filter((rel) => /ELECTRON_RUN_AS_NODE|\bfork\s*\(|execPath\s*,/.test(fs.readFileSync(path.join(APP, rel), 'utf8')));
+      out.push(sub('47g exe 퓨즈 runAsNode 꺼짐, 앱 코드는 fork · ELECTRON_RUN_AS_NODE 를 안 씀',
+        fuses.runAsNode === false && usesRunAsNode.length === 0,
+        `runAsNode: ${fuses.runAsNode}${usesRunAsNode.length ? ` / 쓰는 파일: ${usesRunAsNode.join(', ')}` : ''}`));
       return out;
     },
   },
