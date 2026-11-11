@@ -119,10 +119,64 @@ const items = [
         const wired = html.includes('<dialog id="cleanDialog">') && html.includes('🔍 샘플 확인') && html.includes('id="cdResample"') && html.includes('id="cdLater"')
           && ask.includes('await confirmClean(') && !ask.includes('confirm(msg)') && html.includes('휴지통으로 옮기기') && html.includes('api.openCleanSample(s.key)')
           && pre.includes("'clean-sample'") && pre.includes("'clean-sample-open'")
-          && main.includes("ipcMain.handle('clean-sample'") && main.includes("ipcMain.handle('clean-sample-open'") && main.includes('sample: pickSample(cleanSample)')
-          && main.includes('samplePath(cleanSample, key)');
+          && main.includes("ipcMain.handle('clean-sample'") && main.includes("ipcMain.handle('clean-sample-open'") && main.includes('sample: sampleView(cleanSample)')
+          && main.includes('openSample(cleanSample, key,');
         const readOnly = !/\.(rename|rm|unlink|rmdir|writeFile|appendFile|copyFile|mkdir|cp|truncate)(Sync)?\(|trashItem|require\('fs'\)/.test(lib);
         out.push(sub('48e 확인 창 연결 (샘플 목록, 다시 뽑기, 나중에, 결과를 말하는 버튼), 통로 두 개, 샘플 코드는 읽기만', wired && readOnly, JSON.stringify({ wired, readOnly })));
+      }
+
+      // 48f 샘플 열기를 가짜 openPath 로 실제로 돌려 보기 (#77 검증)
+      //     이번 후보 번호만 열고, 없는 파일 · 열기 실패 · 이상한 번호는 쉬운 문장 오류. "다른 10개 뽑기"용 후보 수
+      {
+        const pool = [{ path: 'X:\\a.jpg', kind: '사진', name: 'a.jpg', folder: '2026' }, { path: 'X:\\없음.jpg', kind: '사진', name: '없음.jpg', folder: '2026' }];
+        const opened = [];
+        const deps = (fail) => ({ exists: (p) => p !== 'X:\\없음.jpg', openPath: async (p) => { opened.push(p); return fail ? '열 수 없음' : ''; } });
+        const errOf = async (fn) => { try { await fn(); return null; } catch (e) { return e.message; } };
+        const ok = (await S.openSample(pool, 0, deps(false))) === true;
+        const errs = [
+          await errOf(() => S.openSample(pool, 1, deps(false))),
+          await errOf(() => S.openSample(pool, 0, deps(true))),
+          await errOf(() => S.openSample(pool, 5, deps(false))),
+          await errOf(() => S.openSample(null, 0, deps(false))),
+        ];
+        const errOk = errs[0] === '결과 파일을 찾지 못했어요' && errs[1] === '파일을 열지 못했어요' && errs[2] === '샘플을 다시 뽑아 주세요' && errs[3] === '샘플을 다시 뽑아 주세요';
+        // 열린 건 이번 후보의 0번 두 번뿐 (정상 1번 + 열기 실패 1번). 없는 파일 · 이상한 번호는 열지 않음
+        const openOk = opened.length === 2 && opened.every((p) => p === 'X:\\a.jpg');
+        const ten = Array.from({ length: 10 }, (_, i) => ({ path: `X:\\${i}.jpg`, kind: '사진', name: `${i}.jpg`, folder: '' }));
+        const v10 = S.sampleView(ten);
+        const v11 = S.sampleView(ten.concat([{ path: 'X:\\10.jpg', kind: '사진', name: '10.jpg', folder: '' }]));
+        const viewOk = v10.total === 10 && v10.items.length === 10 && v11.total === 11 && v11.items.length === 10 && S.sampleView(null).total === 0;
+        // 화면: 후보가 보여 준 것보다 많을 때만 "다른 10개 뽑기"가 켜짐 (딱 10개면 꺼짐)
+        const html = fs.readFileSync(path.join(APP, 'index.html'), 'utf8');
+        const btnOk = html.includes('const more = total > list.length;') && html.includes("$('cdResample').disabled = !more;");
+        out.push(sub('48f 샘플 열기를 가짜 openPath로 돌림 (이번 후보만, 쉬운 오류 문장), 후보가 10개 넘을 때만 다시 뽑기', ok && errOk && openOk && viewOk && btnOk,
+          JSON.stringify({ ok, errs, opened, viewOk, btnOk })));
+      }
+
+      // 48g 지난 작업의 샘플 후보를 비움 (작업 끝내기, 새 작업, 정리 끝) + 폴더 열기는 실제 폴더만 (#77 검증)
+      {
+        const main = fs.readFileSync(path.join(APP, 'main.js'), 'utf8');
+        const block = (name) => {
+          const at = main.indexOf(`ipcMain.handle('${name}'`);
+          return at < 0 ? '' : main.slice(at, main.indexOf('\n});', at));
+        };
+        const reset = /function resetCleanCheck\(\) \{[^}]*cleanSample = null;/.test(main);
+        const used = ['close-job', 'start-job', 'trash-originals'].every((n) => block(n).includes('resetCleanCheck();'));
+        const { openFolderOnly } = require('../lib/open-folder');
+        const opened = [];
+        const deps = { isDir: (p) => { if (p === 'X:\\없음') throw new Error('ENOENT'); return p === 'X:\\폴더'; }, openPath: async (p) => { opened.push(p); return ''; } };
+        const res = [
+          await openFolderOnly('X:\\폴더', deps),
+          await openFolderOnly('X:\\파일.exe', deps),
+          await openFolderOnly('X:\\없음', deps),
+          await openFolderOnly('', deps),
+          await openFolderOnly(null, deps),
+          await openFolderOnly({}, deps),
+        ];
+        const folderOk = JSON.stringify(res) === JSON.stringify([true, false, false, false, false, false]) && opened.length === 1 && opened[0] === 'X:\\폴더';
+        const wired = main.includes("ipcMain.handle('open-folder', async (e, p) => openFolderOnly(p,");
+        out.push(sub('48g 작업 끝내기, 새 작업, 정리 끝에 샘플 후보 비움, 폴더 열기는 실제 폴더만', reset && used && folderOk && wired,
+          JSON.stringify({ reset, used, res, opened, wired })));
       }
       return out;
     },
