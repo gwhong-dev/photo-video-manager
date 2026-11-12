@@ -524,7 +524,7 @@
       $('bar').value = handled;
       const pct = Math.floor((handled / p.total) * 100);
       $('progressText').textContent =
-        `${pct}%  |  ${num(handled)} / ${num(p.total)}  |  완료 ${num(p.done)} ·중복 ${num(p.dup)} · 실패 ${num(p.fail)} · 재생 불가 ${num(p.broken)}  |  ` +
+        `${pct}%  |  ${num(handled)} / ${num(p.total)}  |  완료 ${num(p.done)} · 중복 ${num(p.dup)} · 실패 ${num(p.fail)} · 재생 불가 ${num(p.broken)}  |  ` +
         `경과 ${fmtTime(p.elapsedSec)}  |  남은 시간 ${fmtTime(p.remainSec)}  |  ${p.name}`;
     });
 
