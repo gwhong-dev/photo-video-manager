@@ -718,6 +718,58 @@ const ITEMS = [
         }
       }
 
+      // 12n-ro 읽기 전용 원본(압축 푼 iCloud 파일 등) 복사 → 성공, 원본 속성은 그대로
+      {
+        const p = await pipeline(path.join(root, '12n-ro'), env, { manual: false, run: false });
+        const it = p.job.items.find((x) => x.kind === 'copy' && x.status !== 'skip' && x.date);
+        const itNoDate = p.job.items.find((x) => x.kind === 'copy' && x.status !== 'skip' && !x.date);
+        const res = [];
+        for (const t of [it, itNoDate].filter(Boolean)) {
+          fs.chmodSync(t.src, 0o444); // 샘플 복사본만 읽기 전용으로
+          let r;
+          try { r = await processor.processItem(t, env.ctx); } catch (e) { r = { status: 'error', note: e.message }; }
+          const stillRo = (() => { try { fs.accessSync(t.src, fs.constants.W_OK); return false; } catch { return true; } })();
+          res.push({ ok: r.status === 'done' && fs.existsSync(r.finalPath) && stillRo, label: `${t.date ? '날짜 있음' : '날짜 없음'} ${r.status} ${r.note || ''}` });
+          fs.chmodSync(t.src, 0o666);
+        }
+        out.push(sub('12n-ro 읽기 전용 원본 복사 → 성공 + 원본은 읽기 전용 그대로', res.length > 0 && res.every((x) => x.ok), res.map((x) => x.label).join(' / ') || '대상 없음'));
+      }
+
+      // 12r 실패한 파일만 다시 시도 → 대기로 되돌림 + 그 파일의 임시 파일만 정리 + 원본 · 정상 결과 · 남의 파일은 그대로
+      {
+        const p = await pipeline(path.join(root, '12r'), env, { manual: false, run: false });
+        const failEt = { read: (...a) => env.et.read(...a), write: () => Promise.reject(new Error('가짜 실패')) };
+        await runner.runBatch({ job: p.job, store: p.store, batchSize: 100000, ctx: { ...env.ctx, et: failEt }, logger: p.logger });
+        const failed = p.job.items.filter((x) => x.status === 'fail');
+        const okBefore = p.job.items.filter((x) => x.status === 'done');
+        const t = failed[0];
+        if (!t || !okBefore.length) {
+          out.push(skip('12r 실패 다시 시도', `실패 ${failed.length}개 / 완료 ${okBefore.length}개라 시험할 수 없어요`));
+        } else {
+          const ext = path.extname(t.dest);
+          const tmp = path.join(path.dirname(t.dest), path.basename(t.dest, ext) + '.__tmp__' + ext);
+          const etTmp = tmp + '_exiftool_tmp';
+          const decoy = path.join(path.dirname(t.dest), 'keep__tmp__.txt'); // 임시 이름 모양이 아닌 남의 파일
+          const otherTmp = path.join(p.backupRoot, 'other.__tmp__.jpg'); // 이 항목의 것이 아닌 임시 파일
+          fs.mkdirSync(path.dirname(t.dest), { recursive: true });
+          for (const f of [tmp, etTmp, decoy, otherTmp]) fs.writeFileSync(f, 'x');
+          const srcHash = sha1(t.src);
+          const doneHash = okBefore.map((x) => sha1(x.finalPath)).join(',');
+          const r = runner.requeueFailed(p.job, p.store);
+          const afterRequeue = p.job.items.filter((x) => x.status === 'todo').length;
+          const cleanedOk = !fs.existsSync(tmp) && !fs.existsSync(etTmp) && fs.existsSync(decoy) && fs.existsSync(otherTmp);
+          const run2 = await runner.runBatch({ job: p.job, store: p.store, batchSize: 100000, ctx: env.ctx, logger: p.logger });
+          const s = jobStats(p.job);
+          const doneNow = p.job.items.filter((x) => x.status === 'done');
+          out.push(sub('12r 실패한 것만 대기로 되돌림', r.requeued === failed.length && afterRequeue === failed.length, `되돌림 ${r.requeued}/${failed.length}, 대기 ${afterRequeue}`));
+          out.push(sub('12r 그 파일의 임시 파일만 정리 (남의 파일 · 다른 항목 임시 파일은 그대로)', cleanedOk && r.cleaned === 2, `정리 ${r.cleaned}개, 남의 파일 ${fs.existsSync(decoy)}, 다른 임시 ${fs.existsSync(otherTmp)}`));
+          out.push(sub('12r 다시 시도로 모두 완료 + 이전 결과 · 원본 그대로', run2.fail === 0 && s.fail === 0 && doneNow.length === okBefore.length + failed.length && fs.existsSync(t.finalPath) && sha1(t.src) === srcHash && okBefore.map((x) => sha1(x.finalPath)).join(',') === doneHash, `실패 ${s.fail}, 완료 ${doneNow.length}`));
+          // 폴더 · 바로가기 같은 일반 파일이 아닌 것은 지우지 않음
+          const dirTmp = path.join(path.dirname(failed[1] ? failed[1].dest : t.dest), 'dir.__tmp__');
+          out.push(sub('12r 백업 폴더 밖 · 항목 없음은 안 건드림', runner.requeueFailed(p.job, p.store).cleaned === 0 && !fs.existsSync(dirTmp)));
+        }
+      }
+
       // 12o 원본 확인(지문 계산) 진행 상황을 하나씩 알려줌 → 화면에 "원본 확인 중… (n/전체)"
       if (!cleaner || !cleaner.cleanTargets) {
         out.push(missing('12o 원본 확인 진행 표시'));
@@ -1121,7 +1173,8 @@ const ITEMS = [
       const logger = createLogger(path.join(root, 'logs'));
       const store = new JobStore(path.join(root, 'jobs'));
       const job = store.create(await makePlan({ source, backupRoot, includeSub: true }, env.et));
-      const r = await runner.runBatch({ job, store, batchSize: 100000, ctx: env.ctx, logger });
+      const progress = [];
+      const r = await runner.runBatch({ job, store, batchSize: 100000, ctx: env.ctx, logger, onProgress: (p) => progress.push(p) });
       const item = (name) => job.items.find((it) => path.basename(it.src) === name);
       const brokenItems = [item('손상.mp4'), item('손상.MOV')];
 
@@ -1135,6 +1188,12 @@ const ITEMS = [
 
       const st = jobStats(job);
       out.push(sub('13d 눈에 띄는 표시 (상태 이름, 주의 목록, 개수)', statusLabelOf(brokenItems[0]) === '⚠ 재생 불가' && isIssue(brokenItems[0]) && st.broken === 2 && r.broken === 2, `${statusLabelOf(brokenItems[0])}, 작업 ${st.broken}개, 회차 ${r.broken}개`));
+      // 13g 진행 메시지: 화면(index.html)은 처리한 수 = 완료+중복+실패+재생불가 로 계산함. 어긋나면 "완료 -11" 처럼 음수가 나옴
+      const lastP = progress[progress.length - 1] || {};
+      const sumOf = (p) => p.done + p.dup + p.fail + p.broken;
+      out.push(sub('13g 진행 메시지 개수가 맞음 (모두 0 이상, 합이 총 개수를 안 넘고, 마지막엔 같음)',
+        progress.length > 0 && progress.every((p) => p.done >= 0 && p.dup >= 0 && p.fail >= 0 && p.broken >= 0 && sumOf(p) <= p.total) && sumOf(lastP) === lastP.total && lastP.broken === 2,
+        JSON.stringify(lastP)));
       const runLog = fs.readFileSync(r.logPath, 'utf8');
       out.push(sub('13d 로그에 재생불가 기록', runLog.split('\n').filter((l) => l.split('\t')[1] === '재생불가').length === 2 && runLog.includes('재생불가 2'), path.basename(r.logPath)));
 
