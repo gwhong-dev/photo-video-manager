@@ -683,6 +683,23 @@ const ITEMS = [
         }
       }
 
+      // 12n-ro 읽기 전용 원본(압축 푼 iCloud 파일 등) 복사 → 성공, 원본 속성은 그대로
+      {
+        const p = await pipeline(path.join(root, '12n-ro'), env, { manual: false, run: false });
+        const it = p.job.items.find((x) => x.kind === 'copy' && x.status !== 'skip' && x.date);
+        const itNoDate = p.job.items.find((x) => x.kind === 'copy' && x.status !== 'skip' && !x.date);
+        const res = [];
+        for (const t of [it, itNoDate].filter(Boolean)) {
+          fs.chmodSync(t.src, 0o444); // 샘플 복사본만 읽기 전용으로
+          let r;
+          try { r = await processor.processItem(t, env.ctx); } catch (e) { r = { status: 'error', note: e.message }; }
+          const stillRo = (() => { try { fs.accessSync(t.src, fs.constants.W_OK); return false; } catch { return true; } })();
+          res.push({ ok: r.status === 'done' && fs.existsSync(r.finalPath) && stillRo, label: `${t.date ? '날짜 있음' : '날짜 없음'} ${r.status} ${r.note || ''}` });
+          fs.chmodSync(t.src, 0o666);
+        }
+        out.push(sub('12n-ro 읽기 전용 원본 복사 → 성공 + 원본은 읽기 전용 그대로', res.length > 0 && res.every((x) => x.ok), res.map((x) => x.label).join(' / ') || '대상 없음'));
+      }
+
       // 12o 원본 확인(지문 계산) 진행 상황을 하나씩 알려줌 → 화면에 "원본 확인 중… (n/전체)"
       if (!cleaner || !cleaner.cleanTargets) {
         out.push(missing('12o 원본 확인 진행 표시'));
