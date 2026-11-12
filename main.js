@@ -25,9 +25,9 @@ const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals, createHashCach
 const { createDriveKindOf } = require('./lib/platform');
 const { samplePool, sampleView, openSample } = require('./lib/clean-sample');
 const { openFolderOnly } = require('./lib/open-folder');
-const { createLogger } = require('./lib/logger');
+const { createLogger, now } = require('./lib/logger');
 const { guardWindow } = require('./lib/window-guard');
-const { writePlanLog, nextTodo, checkSpace, runBatch } = require('./lib/runner');
+const { writePlanLog, nextTodo, requeueFailed, checkSpace, runBatch } = require('./lib/runner');
 const { setupGallery, registerScheme } = require('./gallery-main');
 
 // ---------- 상태 ----------
@@ -338,6 +338,15 @@ ipcMain.handle('space-info', async (e, batchSize) => {
 ipcMain.handle('pause', async () => {
   pauseAsked = true;
   return true;
+});
+
+// 실패한 파일을 다시 시도할 수 있게 대기로 되돌리기 (임시 파일 정리 포함, 실행은 화면이 이어서 run-batch 로)
+ipcMain.handle('retry-failed', async () => {
+  if (!job) throw new Error('작업이 없어요');
+  if (running) throw new Error('이미 실행 중이에요');
+  const r = requeueFailed(job, store);
+  try { logger.newLog('retry', `# 실패 다시 시도 / ${now()} / 대기로 되돌림 ${r.requeued}개, 임시 파일 정리 ${r.cleaned}개`); } catch (e) { /* 로그 실패는 무시 */ }
+  return { ...r, job: jobInfo() };
 });
 
 // 실행: 다음 N개 처리
