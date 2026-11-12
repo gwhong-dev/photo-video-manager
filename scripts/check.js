@@ -1086,7 +1086,8 @@ const ITEMS = [
       const logger = createLogger(path.join(root, 'logs'));
       const store = new JobStore(path.join(root, 'jobs'));
       const job = store.create(await makePlan({ source, backupRoot, includeSub: true }, env.et));
-      const r = await runner.runBatch({ job, store, batchSize: 100000, ctx: env.ctx, logger });
+      const progress = [];
+      const r = await runner.runBatch({ job, store, batchSize: 100000, ctx: env.ctx, logger, onProgress: (p) => progress.push(p) });
       const item = (name) => job.items.find((it) => path.basename(it.src) === name);
       const brokenItems = [item('손상.mp4'), item('손상.MOV')];
 
@@ -1100,6 +1101,12 @@ const ITEMS = [
 
       const st = jobStats(job);
       out.push(sub('13d 눈에 띄는 표시 (상태 이름, 주의 목록, 개수)', statusLabelOf(brokenItems[0]) === '⚠ 재생 불가' && isIssue(brokenItems[0]) && st.broken === 2 && r.broken === 2, `${statusLabelOf(brokenItems[0])}, 작업 ${st.broken}개, 회차 ${r.broken}개`));
+      // 13g 진행 메시지: 화면(index.html)은 처리한 수 = 완료+중복+실패+재생불가 로 계산함. 어긋나면 "완료 -11" 처럼 음수가 나옴
+      const lastP = progress[progress.length - 1] || {};
+      const sumOf = (p) => p.done + p.dup + p.fail + p.broken;
+      out.push(sub('13g 진행 메시지 개수가 맞음 (모두 0 이상, 합이 총 개수를 안 넘고, 마지막엔 같음)',
+        progress.length > 0 && progress.every((p) => p.done >= 0 && p.dup >= 0 && p.fail >= 0 && p.broken >= 0 && sumOf(p) <= p.total) && sumOf(lastP) === lastP.total && lastP.broken === 2,
+        JSON.stringify(lastP)));
       const runLog = fs.readFileSync(r.logPath, 'utf8');
       out.push(sub('13d 로그에 재생불가 기록', runLog.split('\n').filter((l) => l.split('\t')[1] === '재생불가').length === 2 && runLog.includes('재생불가 2'), path.basename(r.logPath)));
 

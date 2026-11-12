@@ -518,11 +518,13 @@
     $('nextBtn').onclick = () => runBatch();
 
     api.onProgress((p) => {
+      // p.done 은 "완료된 수"만이에요. 처리한 수는 완료 + 중복 + 실패 + 재생 불가
+      const handled = p.done + p.dup + p.fail + p.broken;
       $('bar').max = p.total;
-      $('bar').value = p.done;
-      const pct = Math.floor((p.done / p.total) * 100);
+      $('bar').value = handled;
+      const pct = Math.floor((handled / p.total) * 100);
       $('progressText').textContent =
-        `${pct}%  |  ${num(p.done)} / ${num(p.total)}  |  완료 ${num(p.done - p.dup - p.fail - p.broken)} · 중복 ${num(p.dup)} · 실패 ${num(p.fail)} · 재생 불가 ${num(p.broken)}  |  ` +
+        `${pct}%  |  ${num(handled)} / ${num(p.total)}  |  완료 ${num(p.done)} ·중복 ${num(p.dup)} · 실패 ${num(p.fail)} · 재생 불가 ${num(p.broken)}  |  ` +
         `경과 ${fmtTime(p.elapsedSec)}  |  남은 시간 ${fmtTime(p.remainSec)}  |  ${p.name}`;
     });
 
