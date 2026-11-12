@@ -1,7 +1,7 @@
 # 파일 위치: .github/workflows/electron-cache.yml
 # 역할: main에 Electron 받은 파일 캐시를 채워요. 모든 PR의 점검(check.yml)이 이 캐시를 꺼내 써요 (#54 검증)
 #   PR에서 저장한 캐시는 그 PR에서만 보여서, 새 PR마다 github.com에서 Electron을 다시 받았어요
-#   점검은 하지 않아요. 이름이 "점검"이 아니라서 auto-merge.yml 은 이 워크플로를 듣지 않아요
+#   점검은 하지 않아요
 # 언제 돌까: main에 package-lock.json 이나 이 파일이 바뀌어 들어왔을 때, 또는 손으로 (Actions 화면의 Run workflow)
 
 name: Electron 캐시 채우기
