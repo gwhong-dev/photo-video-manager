@@ -263,7 +263,7 @@
     // 버튼 켜고 끄기
     function setBusy(on, isRunning = false) {
       busy = on;
-      ['previewBtn', 'srcBtn', 'destBtn', 'nextBtn', 'trashBtn', 'finishBtn', 'cancelBtn', 'includeSub', 'batchSize', 'recheckBtn']
+      ['previewBtn', 'srcBtn', 'destBtn', 'nextBtn', 'trashBtn', 'finishBtn', 'cancelBtn', 'includeSub', 'batchSize', 'recheckBtn', 'retryBtn']
         .forEach((id) => ($(id).disabled = on));
       document.querySelectorAll('#tools button').forEach((b) => (b.disabled = on)); // "위치 지정"도 작업 중에는 막아요 (쓰던 exiftool을 닫으면 안 돼서)
       $('runBtn').disabled = on || !planReady;
