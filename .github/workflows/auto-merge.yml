@@ -21,6 +21,8 @@ permissions:
 
 jobs:
   merge:
+    # 2026-11-12 개발 체계 개편: 라벨 자동 머지는 쓰지 않아요 (CLAUDE.md 4절 7번). 켜지지 않게 꺼 둠
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7
