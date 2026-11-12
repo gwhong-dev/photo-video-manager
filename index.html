@@ -145,6 +145,7 @@
     <div class="chips" id="bannerChips"></div>
     <div class="row" style="margin-top:10px">
       <button class="primary" id="nextBtn">▶ 이어서 실행</button>
+      <button id="retryBtn" style="display:none">🔁 실패한 0개 다시 시도</button>
       <button id="trashBtn">🧹 원본 정리</button>
       <button id="finishBtn">✔ 작업 끝내기</button>
       <button class="danger" id="cancelBtn">✖ 작업 취소</button>
@@ -262,7 +263,7 @@
     // 버튼 켜고 끄기
     function setBusy(on, isRunning = false) {
       busy = on;
-      ['previewBtn', 'srcBtn', 'destBtn', 'nextBtn', 'trashBtn', 'finishBtn', 'cancelBtn', 'includeSub', 'batchSize', 'recheckBtn']
+      ['previewBtn', 'srcBtn', 'destBtn', 'nextBtn', 'trashBtn', 'finishBtn', 'cancelBtn', 'includeSub', 'batchSize', 'recheckBtn', 'retryBtn']
         .forEach((id) => ($(id).disabled = on));
       document.querySelectorAll('#tools button').forEach((b) => (b.disabled = on)); // "위치 지정"도 작업 중에는 막아요 (쓰던 exiftool을 닫으면 안 돼서)
       $('runBtn').disabled = on || !planReady;
@@ -329,6 +330,8 @@
 
       $('nextBtn').style.display = s.todo ? '' : 'none';
       $('nextBtn').textContent = `▶ 다음 ${num(Math.min(batchSize(), s.todo))}개 실행`;
+      $('retryBtn').style.display = s.fail ? '' : 'none';
+      $('retryBtn').textContent = `🔁 실패한 ${num(s.fail)}개 다시 시도`;
       $('trashBtn').style.display = info.deletable ? '' : 'none';
       $('finishBtn').style.display = s.todo ? 'none' : '';
       $('cancelBtn').style.display = s.todo ? '' : 'none';
@@ -516,6 +519,18 @@
       }
     };
     $('nextBtn').onclick = () => runBatch();
+    // 실패한 파일만 대기로 되돌린 뒤 기존 실행 흐름으로 처리 (원본은 그대로, 임시 파일만 정리)
+    $('retryBtn').onclick = async () => {
+      const n = job ? job.stats.fail : 0;
+      if (!n || !confirm(`실패한 ${num(n)}개를 다시 처리할까요?\n\n· 원본은 그대로 두고, 백업 폴더에 새로 만들어요\n· 지난번에 쓰다 만 임시 파일(.__tmp__)만 지워요`)) return;
+      try {
+        const r = await api.retryFailed();
+        setJob(r.job);
+        await runBatch();
+      } catch (e) {
+        setStatus('❌ ' + cleanErr(e));
+      }
+    };
 
     api.onProgress((p) => {
       // p.done 은 "완료된 수"만이에요. 처리한 수는 완료 + 중복 + 실패 + 재생 불가

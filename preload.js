@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('api', {
   startJob: () => ipcRenderer.invoke('start-job'),
   spaceInfo: (batchSize) => ipcRenderer.invoke('space-info', batchSize),
   runBatch: (batchSize) => ipcRenderer.invoke('run-batch', batchSize),
+  retryFailed: () => ipcRenderer.invoke('retry-failed'),
   pause: () => ipcRenderer.invoke('pause'),
 
   // 원본 정리 / 작업 끝내기
