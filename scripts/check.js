@@ -1009,6 +1009,17 @@ const ITEMS = [
         const b = await judge.binUsedOf('C:\\');
         const linux = await platform.createDriveKindOf({ fetchTables: async () => null, fetchBinUsed: null }).binUsedOf('/');
         out.push(sub('12y 드라이브마다 한 번만 읽음, 읽을 방법이 없으면 undefined', a === 7 && b === 7 && reads === 1 && linux === undefined, `${a},${b} 읽기 ${reads}번 / 없음 ${linux}`));
+        // 못 읽은 까닭: 시간 초과면 안내 글에 까닭을 덧붙임 (G: 외장 HDD, 휴지통 파일 수만 개 → 20초 넘김)
+        const slowJudge = platform.createDriveKindOf({ fetchTables: async () => null, fetchBinUsed: async () => ({ used: null, reason: 'timeout' }) });
+        const okJudge = platform.createDriveKindOf({ fetchTables: async () => null, fetchBinUsed: async () => ({ used: 9, reason: null }) });
+        const slowUsed = await slowJudge.binUsedOf('G:\\');
+        const okUsed = await okJudge.binUsedOf('G:\\');
+        const slowW = (await cleaner.binWarnings('G:\\', 10, 1000, { binUsedOf: slowJudge.binUsedOf, failReasonOf: slowJudge.binFailReason, statfs: noFs })).warnings;
+        const plainW = (await cleaner.binWarnings('G:\\', 10, 1000, { binUsedOf: async () => null, statfs: noFs })).warnings;
+        out.push(sub('12y 휴지통 크기를 시간 안에 못 읽으면 까닭(시간 초과)을 안내에 덧붙이고, 읽으면 숫자 그대로',
+          slowUsed === null && slowJudge.binFailReason('G:\\') === 'timeout' && okUsed === 9 && okJudge.binFailReason('G:\\') === null
+          && slowW.length === 1 && slowW[0].includes('오래 걸렸어요') && plainW.length === 1 && !plainW[0].includes('오래 걸렸어요'),
+          `${slowW.join(' / ')} | ${plainW.join(' / ')}`));
         // PowerShell 출력 해석: 숫자만 있을 때만 받아요. 빈 출력을 0(휴지통 빔)으로 보지 않게 (#72 검증 ⚠️)
         if (!platform.parseBinUsed) {
           out.push(missing('12y 휴지통 크기 출력 해석'));
