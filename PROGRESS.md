@@ -31,3 +31,5 @@
 
 ## 참고
 - 기록: `PROGRESS-LOG.md` (요청할 때만 읽기)
+- [M] `npm run check` 43c(지도 화면 뒤 갤러리 이동) · 48c(원본 정리 샘플 결과 파일 존재)가 main 코드에서도 실패 (2026-11-13, #88 작업 중 발견). 원인 확인 필요
+- [L] Mac 단계에서 `lib/processor.js` 의 `chmod(tmp, 0o666)` 을 `mode | 0o200` 으로 (umask 무시로 권한이 넓어짐)
