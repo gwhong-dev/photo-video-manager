@@ -103,4 +103,4 @@
 
 | 날짜 | PR | 등급 | 문제(왜) | 해결(무엇을) | 결과 · 검증 | 노션 |
 |---|---|---|---|---|---|---|
-| 2026-11-12 | (PR 번호) | L | 규칙이 CLAUDE.md · 절차 문서 · claude.ai 지침 · 메모리에 흩어져 서로 다르고, 작업 폴더가 USB 에 있었으며, L 변경도 검증 전에 머지됨 | SuwonCultureMap 과 같은 체계로: CLAUDE.md 를 유일한 원본으로, PC 2대 git 으로만 이어가기 · 절대 경로 금지 · 세션 시작 fetch 확인, 코드 대화는 Code 탭 전담, 등급은 파일 경로로 · L 은 사용자 "머지" 뒤, 작업 기록은 이 표와 `docs/decisions/` | PC A 내장 디스크에 새로 clone (옛 USB 폴더는 그대로). 검증: (검증 후 기록) | ✔ |
+| 2026-11-12 | #85 | L | 규칙이 CLAUDE.md · 절차 문서 · claude.ai 지침 · 메모리에 흩어져 서로 다르고, 작업 폴더가 USB 에 있었으며, L 변경도 검증 전에 머지됨 | SuwonCultureMap 과 같은 체계로: CLAUDE.md 를 유일한 원본으로, PC 2대 git 으로만 이어가기 · 절대 경로 금지 · 세션 시작 fetch 확인, 코드 대화는 Code 탭 전담, 등급은 파일 경로로 · L 은 사용자 "머지" 뒤, 작업 기록은 이 표와 `docs/decisions/` | PC A 내장 디스크에 새로 clone (옛 USB 폴더는 그대로). 검증 에이전트(처음 보는 상태): ❌ 1 L 경로 누락(휴지통 판단 platform.js · 같은 파일 판단 paths.js · runner.js · main/gallery-main 의 정리 연결) · ⚠️ 6(S·M 경계, 옛 클라우드 · 수정 단계 문구, auto-merge.yml 이 켜져 있음, 빠진 옛 규칙, 표 깨짐) → 모두 같은 PR 에서 고침, auto-merge.yml 은 if: false 로 끔. CI 통과 | ✔ |

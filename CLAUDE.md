@@ -82,15 +82,16 @@ scripts\build-exe.bat   # exe(폴더형) 만들기 → release\win-unpacked
    - CLAUDE.md 처럼 그 자체가 목적인 문서 변경만 따로 PR
 
 등급 정하는 법 (바꾸는 파일 경로로 기계적으로, 여러 개면 가장 높은 등급, 애매하면 한 단계 위)
-- **L**: `CLAUDE.md`(규칙 자체) · `.claude/**`(권한 · 훅) · `.github/**` · 원본 정리 · 파일 이동 · 삭제 코드(`lib/cleaner.js` · `lib/processor.js` · `lib/planner.js` · `lib/job.js` · `lib/similar-discard.js`) · DB 구조(`lib/db.js`) · 창 · 네트워크 막기(`lib/window-guard.js` · `lib/map-net.js` · `preload.js`) · 의존성 · 배포(`package.json` · `package-lock.json` · `scripts/build-exe.bat` · `scripts/use-official-electron.js` · `scripts/postinstall.js`) · 비밀값 · 개인정보 처리
-- **M**: 그 밖의 코드 전체 (`main.js` · `gallery-main.js` · 그 밖의 `lib/` · `src/` · `index.html` · `scripts/check*.js`)
-- **S**: 문서(`CLAUDE.md` 를 뺀 `*.md`) · 점검 항목만 추가 · 자동 샘플 · 이미지 · 화면 **문구만** 바꾼 경우
+- **L**: `CLAUDE.md`(규칙 자체) · `.claude/**`(권한 · 훅) · `.github/**` · 원본 정리 · 파일 이동 · 삭제 코드와 그 판단(`lib/cleaner.js` · `lib/processor.js` · `lib/planner.js` · `lib/job.js` · `lib/runner.js` · `lib/similar-discard.js` · `lib/platform.js`(휴지통 가능 드라이브) · `lib/paths.js`(같은 파일 판단), `main.js` · `gallery-main.js` 에서 휴지통 · 원본 정리 · 버리기 연결(`trashItem` · `cleanOriginals` · `discardFiles`)을 바꾼 경우) · DB 구조(`lib/db.js`) · 창 · 네트워크 막기(`lib/window-guard.js` · `lib/map-net.js` · `preload.js`) · 의존성 · 배포(`package.json` · `package-lock.json` · `scripts/build-exe.bat` · `scripts/use-official-electron.js` · `scripts/postinstall.js`) · 비밀값 · 개인정보 처리
+- **M**: 그 밖의 코드 전체 (`main.js` · `gallery-main.js` · 그 밖의 `lib/` · `src/` · `index.html`, `scripts/check*.js` 의 점검 방식 · 공용 함수 변경)
+- **S**: 문서(`CLAUDE.md` 를 뺀 `*.md`) · `scripts/check*.js` 에 점검 항목만 더한 경우 · 자동 샘플 · 이미지 · 화면 **문구만** 바꾼 경우
 
 등급별 추가 절차
 - S: 추가 없음 (검증 에이전트 생략)
 - M: 검증 에이전트 1회 → PR 댓글 1개, 지적은 같은 PR 에서 고침. 보류 항목은 이유와 함께 PROGRESS.md "나중에 할 일"에
 - L: M 절차 + Claude 가 PC 에서 앱 실행 · 샘플 복사본 확인 (결과는 ✅/❌ + 로그 요약으로 PR 댓글) + 머지는 사용자 "머지" 승인 뒤
 - 사용자 손이 필요한 확인 · 골라야 하는 것은 PR 을 멈추지 않고 PROGRESS.md "사용자 확인 · 질문"에 모아 둔 뒤 다음 할 일로. 결정 없이 할 개발이 더 없을 때 한 번에 알림
+- 다음 작업이 아직 머지 안 된 PR 에 기대면, 그 PR 을 먼저 머지(L 은 승인 뒤)하거나 그 브랜치에서 이어서 만든다
 - 머지된 브랜치 삭제는 맨 나중에. 중간에 권하지 말 것
 - "git pull 후 더블클릭"용 USB 반영 스크립트는 새로 만들지 않음 (기존 `scripts/` 는 그대로 둠)
 
@@ -120,7 +121,8 @@ Code 에서 한 일은 claude.ai 채팅이 노션 · 포트폴리오 · 문서�
 - 설정 분리: 공통(비밀값 없음) / 로컬(gitignore) / 운영(환경변수)
 - 정리 · 삭제 · 머지는 검증 전에 하지 않음
 - 수정 요청: 원인 표 → 고칠 방법이 하나면 바로 수정, 여러 개면 멈추고 고르게 함 → ✅ 확인
-- 파일 삭제 · 이동, `git reset --hard` · `git push --force` · `git clean`, PC 전역 설정 · 환경변수 변경은 사용자 확인 뒤. 단, 아래는 예외
+- `git reset --hard` · `git push --force` · `git clean`, PC 전역 설정 · 환경변수 변경은 사용자 확인 뒤
+- 파일 삭제 · 이동은 사용자가 직접. 단, 아래는 예외
   - 프로그램 기능으로 하는 원본 정리 (샘플 복사본 · 사용자가 요청한 테스트 복사본)
   - `npm run check`가 만든 `pvm-check-` 임시 폴더 삭제
   - 사용자가 요청한 테스트의 복사본 처리 (영구 삭제는 하지 않음)
