@@ -332,6 +332,41 @@ const ITEMS = [
           quick.join(',') === '0,1,0' && strictNo.length === 0 && strictYes.length === 1 && strictDiff.length === 0,
           `${quick.join(',')} / ${strictNo.length} ${strictYes.length} ${strictDiff.length}`));
       }
+      // 8c 변환할 파일은 같은 날짜 폴더의 기존 결과와 이름이 달라도 애플 ID가 같으면 이미 있음 (exiftool 은 가짜로 바꿔 끼움)
+      {
+        const { keyOf } = require('../lib/planner');
+        const root8 = path.join(env.tmp, 'convert-id-compare');
+        const src8 = path.join(root8, 'source');
+        const bk8 = path.join(root8, 'backup');
+        const day = path.join(bk8, '2026', '01', '02');
+        fs.mkdirSync(src8, { recursive: true });
+        fs.mkdirSync(day, { recursive: true });
+        const w = (p, s) => (fs.writeFileSync(p, s), p);
+        const oldJpg = w(path.join(day, 'old_name.jpg'), 'old jpg');
+        const otherJpg = w(path.join(day, 'other.jpg'), 'other jpg');
+        const noExt = w(path.join(day, 'same_id.png'), 'png with same id'); // 확장자가 다르면 비교 안 함
+        const hSame = w(path.join(src8, 'IMG_A.HEIC'), 'heic A'); // 옛 JPG 와 같은 애플 ID
+        const hNew = w(path.join(src8, 'IMG_B.HEIC'), 'heic B'); // 새 사진
+        const hImgUid = w(path.join(src8, 'IMG_C.HEIC'), 'heic C'); // ImageUniqueID 만 같음 → 비교 안 함
+        const date = { DateTimeOriginal: '2026:01:02 03:04:05' };
+        const metaOf = {
+          [keyOf(oldJpg)]: { ContentIdentifier: 'ID-A', ...date },
+          [keyOf(otherJpg)]: { ContentIdentifier: 'ID-OTHER', ImageUniqueID: 'UID-C', ...date },
+          [keyOf(noExt)]: { ContentIdentifier: 'ID-B', ...date },
+          [keyOf(hSame)]: { ContentIdentifier: 'ID-A', ...date },
+          [keyOf(hNew)]: { ContentIdentifier: 'ID-B', ...date },
+          [keyOf(hImgUid)]: { ImageUniqueID: 'UID-C', ...date },
+        };
+        const fakeEt = { read: async (paths) => paths.map((p) => ({ SourceFile: p, ...(metaOf[keyOf(p)] || {}) })) };
+        const plan8 = await makePlan({ source: src8, backupRoot: bk8, includeSub: true }, fakeEt);
+        const by = (name) => plan8.items.find((it) => path.basename(it.src) === name);
+        const a = by('IMG_A.HEIC');
+        out.push(sub('8c 변환 파일이 같은 폴더의 이름 다른 기존 결과와 애플 ID가 같으면 이미 있음 (정리 직전 확인 대상)',
+          a.status === 'dup' && a.dupOf === oldJpg && a.sameShot === true && !a.check, `${a.status} ${a.note}`));
+        out.push(sub('8c 애플 ID가 다르거나 확장자가 다르거나 ImageUniqueID만 같으면 건너뛰지 않고 변환',
+          by('IMG_B.HEIC').status === 'todo' && by('IMG_C.HEIC').status === 'todo',
+          `${by('IMG_B.HEIC').status} ${by('IMG_C.HEIC').status}`));
+      }
       return out;
     },
   },
