@@ -534,6 +534,10 @@ app.whenReady().then(async () => {
       openExternal: (u) => shell.openExternal(u),
       openPath: (p) => shell.openPath(p), // 정리 화면의 _정리완료원본 폴더 열기 (gallery-main 이 정한 경로만)
       appVersion: app.getVersion(),
+      pickFolder: async (title) => { // 날짜없음 채우기에서 앨범 폴더 고르기 (폴더 선택 창만 열어요)
+        const r = await dialog.showOpenDialog(win, { title, properties: ['openDirectory'] });
+        return r.canceled ? null : r.filePaths[0];
+      },
       trash: (p) => shell.trashItem(p), // 비슷한 사진 버리기 (휴지통이 없는 드라이브는 _정리완료원본으로 이동)
     });
   } catch (e) {

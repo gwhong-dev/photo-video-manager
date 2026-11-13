@@ -82,6 +82,12 @@ contextBridge.exposeInMainWorld('api', {
     previewDiscard: (ids) => ipcRenderer.invoke('gallery:similar-preview', ids),
     discardSimilar: (ids) => ipcRenderer.invoke('gallery:similar-discard', ids),
     onSimilarProgress: (cb) => subscribe('gallery:similar-progress', cb),
+    fillPreview: () => ipcRenderer.invoke('gallery:fill-preview'), // 날짜없음 채우기: 후보 미리보기 (아무것도 옮기지 않음)
+    fillRun: (token) => ipcRenderer.invoke('gallery:fill-run', token),
+    fillUndo: () => ipcRenderer.invoke('gallery:fill-undo'),
+    fillPickFolder: () => ipcRenderer.invoke('gallery:fill-pick-folder'),
+    fillClearFolders: () => ipcRenderer.invoke('gallery:fill-clear-folders'),
+    onFillProgress: (cb) => subscribe('gallery:fill-progress', cb),
     rescan: () => ipcRenderer.invoke('gallery:rescan'),
     openScreen: (name) => ipcRenderer.invoke('gallery:open-screen', name), // 'import' | 'gallery'
     // 구독을 끊는 함수를 돌려줘요

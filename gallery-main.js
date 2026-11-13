@@ -45,6 +45,7 @@ const { createMapNet, roundCoord, roundCity } = require('./lib/map-net');
 const { buildGroups, createHasher } = require('./lib/similar');
 const { checkDiscard, discardInfo, discardFiles } = require('./lib/similar-discard');
 const { createDriveKindOf } = require('./lib/platform');
+const { historyFromJobs, planFill, toFillPreview, runFill, undoFill, lastFillRun } = require('./lib/fill-nodate');
 const { isTagKind, normalizeTagEdit, planTagEdit, toTagPreview } = require('./lib/manual-tags');
 const { readCleanHistory, cleanedFolders, cleanedDirOf } = require('./lib/clean-history');
 
@@ -115,7 +116,7 @@ function checkIds(ids) {
 // 화면에는 정해진 문장과 오류 코드(EISDIR, EACCES 같은 짧은 영문 대문자)만 보여요
 const codeNote = (e) => (e && typeof e.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(e.code) ? ` (${e.code})` : '');
 
-function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning, mapFetch, openExternal, openPath, appVersion, trash, makeDriveKindOf = createDriveKindOf }) {
+function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning, mapFetch, openExternal, openPath, appVersion, trash, pickFolder, makeDriveKindOf = createDriveKindOf }) {
   const base = typeof userDir === 'function' ? userDir() : userDir;
   // 백업 폴더 경로. 끝의 \ 나 / 가 달라도 같은 폴더로 보게 path.resolve 로 한 번만 다듬어요 (대소문자는 그대로 둬요).
   //   DB의 root 열쇠가 되니 모든 곳이 이 함수 하나를 써요
@@ -310,6 +311,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       try {
         Object.assign(out, db.summary(root));
         out.lastBatch = db.lastBatch(root); // { id, kind, count, createdAt } 또는 null (되돌리기 버튼용)
+        const fl = lastFillRun(fillJournalDir, root); // 날짜없음 채우기 되돌리기 버튼용 { count, at } 또는 null
+        out.lastFill = fl ? { count: fl.count, at: fl.at } : null;
       } catch (err) {
         out.dbError = `목록을 읽지 못했어요: ${err && err.message ? err.message : err}`;
       }
@@ -757,6 +760,95 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       return { trashed: r.trashed, moved: r.moved, fail: r.fail, pairs: r.pairs, pairFail: r.pairFail, logFail: r.logFail, logName: path.basename(r.logPath || '') };
     } finally {
       discarding = false;
+    }
+  });
+
+  // ---------- 날짜없음 채우기 (_날짜없음 → 앨범 정보 날짜의 날짜 폴더) ----------
+  //   미리보기(fill-preview) → 실행(fill-run) → 되돌리기(fill-undo). 화면은 경로를 모르고 개수와 이름만 받아요
+  //   옮기기만 해요 (삭제 · 복사 없음, lib/fill-nodate.js). 옮긴 뒤 갤러리가 폴더를 다시 읽어서 맞춰요
+  const fillJournalDir = path.join(base, 'fill-nodate');
+  const fillAlbumDirs = []; // 사용자가 고른 앨범 폴더 (경로는 화면에 주지 않아요)
+  let fillPlan = null; // 마지막 미리보기 { root, items, token }
+  let filling = false;
+  const fillBusyCheck = () => {
+    const root = editReady();
+    if (discarding || filling) throw new Error('다른 옮기기가 끝난 뒤에 할 수 있어요');
+    if (library && library.isScanning()) throw new Error('백업 폴더를 읽는 중이에요. 끝난 뒤 다시 눌러 주세요');
+    return root;
+  };
+  ipcMain.handle('gallery:fill-pick-folder', async () => {
+    fillBusyCheck();
+    if (typeof pickFolder !== 'function') throw new Error('폴더를 고를 수 없어요');
+    const dir = await pickFolder('iCloud 공유 앨범이 들어 있는 폴더 고르기 (예: iCloud Shared Albums)');
+    if (!dir || !isDir(dir)) return { picked: false, folders: fillAlbumDirs.map((d) => path.basename(d)) };
+    const abs = path.resolve(dir);
+    if (!fillAlbumDirs.includes(abs)) fillAlbumDirs.push(abs);
+    if (fillAlbumDirs.length > 5) fillAlbumDirs.shift();
+    return { picked: true, folders: fillAlbumDirs.map((d) => path.basename(d)) };
+  });
+  ipcMain.handle('gallery:fill-clear-folders', () => {
+    fillAlbumDirs.length = 0;
+    fillPlan = null;
+    return true;
+  });
+  ipcMain.handle('gallery:fill-preview', async () => {
+    const root = fillBusyCheck();
+    const history = historyFromJobs(path.join(base, 'jobs'), (n, err) => errorLog(`날짜 채우기: 가져오기 기록 ${n} 읽기`, err));
+    // 직접 넣은 값 · 태그는 경로에 묶여 있어서 옮기면 잃어요 → 그 사진은 건너뛰어요
+    const isProtected = (p) => {
+      try {
+        return !!db.getManual(p) || db.getManualTags(p).length > 0;
+      } catch (err) {
+        return true; // 못 읽으면 안전한 쪽(옮기지 않음)
+      }
+    };
+    const plan = await planFill({ root, history, albumDirs: [...fillAlbumDirs], isProtected });
+    const token = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    fillPlan = { root, items: plan.items, token };
+    return { token, folders: fillAlbumDirs.map((d) => path.basename(d)), ...toFillPreview(plan) };
+  });
+  ipcMain.handle('gallery:fill-run', async (e, token) => {
+    const root = fillBusyCheck();
+    if (!fillPlan || fillPlan.token !== token || fillPlan.root !== root) throw new Error('미리보기가 바뀌었어요. 다시 후보를 확인해 주세요');
+    const plan = fillPlan;
+    fillPlan = null; // 한 번 실행한 미리보기는 다시 쓰지 않아요
+    filling = true;
+    try {
+      const r = await runFill({ root, items: plan.items, logger, journalDir: fillJournalDir, onProgress: (p) => send('gallery:fill-progress', p) });
+      if (r.pairs.length) {
+        try {
+          db.setMissing(r.pairs.map((x) => x.from), 1);
+        } catch (err) {
+          errorLog('날짜 채우기 사라짐 표시', err);
+        }
+        runScan(root, { changed: true }).catch((err) => errorLog('날짜 채우기 뒤 다시 읽기', err)); // 새 자리 파일을 읽어요
+      }
+      send('gallery:library-changed');
+      return { moved: r.moved, fail: r.fail, skipped: r.skipped, logName: path.basename(r.logPath || '') };
+    } finally {
+      filling = false;
+    }
+  });
+  ipcMain.handle('gallery:fill-undo', async () => {
+    const root = fillBusyCheck();
+    const last = lastFillRun(fillJournalDir, root);
+    if (!last) throw new Error('되돌릴 기록이 없어요');
+    filling = true;
+    try {
+      const r = await undoFill({ journalPath: last.journalPath, logger });
+      if (r.restored) {
+        // 옮겼던 새 자리는 사라짐으로, 원래 자리 파일은 폴더를 다시 읽어서 되살려요
+        try {
+          db.setMissing(r.pairs.map((x) => x.to), 1);
+        } catch (err) {
+          errorLog('날짜 채우기 되돌리기 사라짐 표시', err);
+        }
+        runScan(root, { changed: true }).catch((err) => errorLog('날짜 채우기 되돌린 뒤 다시 읽기', err));
+      }
+      send('gallery:library-changed');
+      return { restored: r.restored, fail: r.fail, skipped: r.skipped };
+    } finally {
+      filling = false;
     }
   });
 
