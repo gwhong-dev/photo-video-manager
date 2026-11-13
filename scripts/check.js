@@ -1142,6 +1142,37 @@ const ITEMS = [
           const real = await platform.fetchBinUsedWin(path.parse(os.tmpdir()).root);
           out.push(sub('12y 진짜 휴지통 크기 읽기 (임시 폴더 드라이브)', typeof real === 'number' && real >= 0, String(real)));
         }
+        // $I 파일(휴지통 정보 기록)로 크기 합산: SHQueryRecycleBin 이 시간 안에 안 끝나는 큰 휴지통의 대신 방법
+        if (!platform.parseRecycleInfoSize || !platform.fetchBinUsedByInfoWin) {
+          out.push(missing('12y $I 파일로 휴지통 크기 합산'));
+        } else {
+          const rec = (version, size) => {
+            const b = Buffer.alloc(24);
+            b.writeBigInt64LE(BigInt(version), 0);
+            b.writeBigInt64LE(BigInt(size), 8);
+            return b;
+          };
+          const parsed = [platform.parseRecycleInfoSize(rec(2, 1000)), platform.parseRecycleInfoSize(rec(1, 7)), platform.parseRecycleInfoSize(rec(3, 5)), platform.parseRecycleInfoSize(rec(2, -1)), platform.parseRecycleInfoSize(Buffer.alloc(8))];
+          out.push(sub('12y $I 기록 해석: 버전 1·2 만 받고 모르는 모양은 null', JSON.stringify(parsed) === JSON.stringify([1000, 7, null, null, null]), JSON.stringify(parsed)));
+          if (process.platform !== 'win32') {
+            out.push(skip('12y 가짜 휴지통 폴더 합산', 'Windows 아님'));
+          } else {
+            const fake = fs.mkdtempSync(path.join(os.tmpdir(), 'pvm-check-bin-'));
+            try {
+              const bin = path.join(fake, '$RECYCLE.BIN');
+              fs.mkdirSync(path.join(bin, 'S-1-5-21-1'), { recursive: true });
+              fs.writeFileSync(path.join(bin, '$IAAA.JPG'), rec(2, 1000)); // 계정 폴더 없이 바로 아래
+              fs.writeFileSync(path.join(bin, '$RAAA.JPG'), 'x'); // $R(진짜 파일)은 세지 않아요
+              fs.writeFileSync(path.join(bin, 'S-1-5-21-1', '$IBBB.JPG'), rec(2, 2500)); // 계정 폴더 안
+              const total = await platform.fetchBinUsedByInfoWin(fake);
+              fs.writeFileSync(path.join(bin, '$ICCC.JPG'), Buffer.from('not a record file....')); // 모르는 모양
+              const withBad = await platform.fetchBinUsedByInfoWin(fake);
+              out.push(sub('12y 가짜 휴지통 폴더: $I 만 합산(3500), 모르는 파일이 있으면 못 읽음(null)', total === 3500 && withBad === null, `${total} / ${withBad}`));
+            } finally {
+              fs.rmSync(fake, { recursive: true, force: true });
+            }
+          }
+        }
       }
 
       // 12f 드라이브 종류를 모름 → 이동 (휴지통 안 씀)
