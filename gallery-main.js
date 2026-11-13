@@ -741,7 +741,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // 버리기 실행. 끝나면 옮긴 사진을 "사라짐"으로 적고 화면에 목록이 바뀌었다고 알려요
   ipcMain.handle('gallery:similar-discard', async (e, ids) => {
     const root = editReady();
-    if (discarding) throw new Error('이미 옮기는 중이에요');
+    if (discarding || filling) throw new Error('이미 옮기는 중이에요');
     if (library && library.isScanning()) throw new Error('백업 폴더를 읽는 중이에요. 끝난 뒤 다시 눌러 주세요');
     const { files } = checkDiscard(db, root, ids);
     discarding = true;
@@ -770,6 +770,14 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   const fillAlbumDirs = []; // 사용자가 고른 앨범 폴더 (경로는 화면에 주지 않아요)
   let fillPlan = null; // 마지막 미리보기 { root, items, token }
   let filling = false;
+  // 직접 넣은 값 · 태그는 경로에 묶여 있어서 옮기면 잃어요 → 그 사진은 옮기지도 되돌리지도 않아요
+  const isProtected = (p) => {
+    try {
+      return !!db.getManual(p) || db.getManualTags(p).length > 0;
+    } catch (err) {
+      return true; // 못 읽으면 안전한 쪽(옮기지 않음)
+    }
+  };
   const fillBusyCheck = () => {
     const root = editReady();
     if (discarding || filling) throw new Error('다른 옮기기가 끝난 뒤에 할 수 있어요');
@@ -794,14 +802,6 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   ipcMain.handle('gallery:fill-preview', async () => {
     const root = fillBusyCheck();
     const history = historyFromJobs(path.join(base, 'jobs'), (n, err) => errorLog(`날짜 채우기: 가져오기 기록 ${n} 읽기`, err));
-    // 직접 넣은 값 · 태그는 경로에 묶여 있어서 옮기면 잃어요 → 그 사진은 건너뛰어요
-    const isProtected = (p) => {
-      try {
-        return !!db.getManual(p) || db.getManualTags(p).length > 0;
-      } catch (err) {
-        return true; // 못 읽으면 안전한 쪽(옮기지 않음)
-      }
-    };
     const plan = await planFill({ root, history, albumDirs: [...fillAlbumDirs], isProtected });
     const token = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     fillPlan = { root, items: plan.items, token };
@@ -814,7 +814,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     fillPlan = null; // 한 번 실행한 미리보기는 다시 쓰지 않아요
     filling = true;
     try {
-      const r = await runFill({ root, items: plan.items, logger, journalDir: fillJournalDir, onProgress: (p) => send('gallery:fill-progress', p) });
+      const r = await runFill({ root, items: plan.items, logger, journalDir: fillJournalDir, isProtected, onProgress: (p) => send('gallery:fill-progress', p) });
       if (r.pairs.length) {
         try {
           db.setMissing(r.pairs.map((x) => x.from), 1);
@@ -835,7 +835,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     if (!last) throw new Error('되돌릴 기록이 없어요');
     filling = true;
     try {
-      const r = await undoFill({ journalPath: last.journalPath, logger });
+      const r = await undoFill({ journalPath: last.journalPath, logger, isProtected });
       if (r.restored) {
         // 옮겼던 새 자리는 사라짐으로, 원래 자리 파일은 폴더를 다시 읽어서 되살려요
         try {

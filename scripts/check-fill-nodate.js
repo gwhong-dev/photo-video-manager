@@ -159,6 +159,33 @@ const items = [
           r.moved === 0 && r.fail === 3 && fs.existsSync(outside) && fs.existsSync(path.join(e.nd, 'IMG_1.JPG')) && !fs.existsSync(path.join(e.base, 'escape')), JSON.stringify(r)));
       }
 
+      // 50p 되돌릴 때: 옮긴 파일과 크기가 다른 파일(나중에 그 자리에 생긴 것)은 끌어오지 않고, 실패가 남으면 다시 되돌릴 수 있음
+      {
+        const e = build(env.tmp, 'p');
+        const plan = await F.planFill({ root: e.root, albumDirs: [e.albums] });
+        const r = await F.runFill({ root: e.root, items: plan.items, logger: createLogger(e.logs), journalDir: e.journal });
+        const victim = r.pairs.find((x) => path.basename(x.from) === 'IMG_9.JPG');
+        fs.writeFileSync(victim.to, 'a different and longer file than before');
+        const u = await F.undoFill({ journalPath: r.journalPath, logger: createLogger(e.logs) });
+        const still = F.lastFillRun(e.journal, e.root);
+        out.push(sub('50p 되돌릴 때 크기가 달라진 파일은 끌어오지 않고, 실패가 남은 묶음은 다시 되돌릴 수 있음',
+          u.fail === 1 && u.restored === r.moved - 1 && fs.existsSync(victim.to) && !fs.existsSync(victim.from) && !!still, JSON.stringify(u)));
+        fs.writeFileSync(victim.to, 'friends nine'); // 원래 크기로 돌려 놓으면 두 번째 되돌리기로 끝남
+        const u2 = await F.undoFill({ journalPath: r.journalPath, logger: createLogger(e.logs) });
+        out.push(sub('50q 원인을 풀고 다시 되돌리면 남은 것이 돌아오고 묶음이 끝남', u2.restored === 1 && u2.fail === 0 && F.lastFillRun(e.journal, e.root) === null, JSON.stringify(u2)));
+      }
+
+      // 50r 직접 넣은 값 · 태그가 있는 파일은 실행 때도, 되돌릴 때도 건드리지 않음
+      {
+        const e = build(env.tmp, 'r');
+        const plan = await F.planFill({ root: e.root, albumDirs: [e.albums] });
+        const prot = (p) => path.basename(p).includes('IMG_9');
+        const r = await F.runFill({ root: e.root, items: plan.items, logger: createLogger(e.logs), journalDir: e.journal, isProtected: prot });
+        const ok1 = r.skipped === 1 && fs.existsSync(path.join(e.nd, 'IMG_9.JPG')) && r.moved === plan.counts.move - 1;
+        const u = await F.undoFill({ journalPath: r.journalPath, logger: createLogger(e.logs), isProtected: (p) => path.basename(p).includes('IMG_1.') || path.basename(p).includes('IMG_1_') });
+        out.push(sub('50r 미리보기 뒤에 직접 값이 생긴 파일은 옮기지 않고, 옮긴 뒤 새 자리에 직접 값이 생긴 파일은 되돌리지 않음', ok1 && u.fail === 1 && u.restored === r.moved - 1, JSON.stringify([r.skipped, u])));
+      }
+
       // 50o 글자 점검: 삭제 호출이 없고, 화면 연결이 있음
       {
         const lib = fs.readFileSync(path.join(__dirname, '..', 'lib', 'fill-nodate.js'), 'utf8').split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
@@ -166,7 +193,7 @@ const items = [
         const pre = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
         out.push(sub('50o 날짜 채우기 코드에 삭제 · 복사 · 덮어쓰기 호출이 없고(이동 rename 만), 갤러리와 화면이 연결됨',
           !/unlinkSync|rmSync|\.unlink\(|\.rm\(|trashItem|copyFile|writeFile\b/.test(lib) && lib.includes('renameSync')
-          && gm.includes("'gallery:fill-preview'") && gm.includes("'gallery:fill-run'") && gm.includes("'gallery:fill-undo'") && pre.includes('fillRun')));
+          && gm.includes("'gallery:fill-preview'") && gm.includes("'gallery:fill-run'") && gm.includes("'gallery:fill-undo'") && pre.includes('fillRun') && gm.includes('if (discarding || filling) throw')));
       }
       return out;
     },
