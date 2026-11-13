@@ -57,6 +57,7 @@ async function launchOnce(appDir, { port: portOpt, waitMs = 4000, env = {}, exe:
   const port = portOpt || (await freePort());
   const exe = exeOverride || path.join(appDir, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
   const child = spawn(exe, ['.', `--remote-debugging-port=${port}`], { cwd: appDir, env: { ...process.env, ...env } });
+  trackChild(child);
   let mainOut = '';
   child.stdout.on('data', (d) => (mainOut += d));
   child.stderr.on('data', (d) => (mainOut += d));

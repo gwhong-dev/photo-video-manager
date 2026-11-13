@@ -1306,8 +1306,8 @@ function manualReport(p) {
 // ---------- 실행 ----------
 (async () => {
   const ICON = { ok: '✅', fail: '❌', skip: '⏭' };
-  const tmp = path.join(os.tmpdir(), `pvm-check-${stamp()}`);
-  fs.mkdirSync(tmp, { recursive: true });
+  // mkdtemp: 같은 초에 시작한 다른 점검과 폴더 이름이 겹치지 않게 (이 점검 전용 폴더)
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `${TEMP_PREFIX}${stamp()}-`));
   console.log(`🧪 점검 시작 (임시 폴더: ${tmp})`);
 
   // 전체 제한 시간 (기본 40분). 넘으면 Electron · exiftool 을 정리하고 실패로 끝내요 (폴더는 원인 확인용으로 남김)
