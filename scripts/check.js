@@ -19,6 +19,7 @@ const { JobStore, jobStats } = require('../lib/job');
 const { createLogger, stamp } = require('../lib/logger');
 const runner = require('../lib/runner');
 const { launchCheck } = require('./launch-check');
+const { cleanupTempDirs, startWatchdog, TEMP_PREFIX } = require('./check-guard');
 
 const APP = path.join(__dirname, '..');
 const SAMPLES = path.join(APP, 'test', 'samples');
@@ -1152,6 +1153,37 @@ const ITEMS = [
           const real = await platform.fetchBinUsedWin(path.parse(os.tmpdir()).root);
           out.push(sub('12y 진짜 휴지통 크기 읽기 (임시 폴더 드라이브)', typeof real === 'number' && real >= 0, String(real)));
         }
+        // $I 파일(휴지통 정보 기록)로 크기 합산: SHQueryRecycleBin 이 시간 안에 안 끝나는 큰 휴지통의 대신 방법
+        if (!platform.parseRecycleInfoSize || !platform.fetchBinUsedByInfoWin) {
+          out.push(missing('12y $I 파일로 휴지통 크기 합산'));
+        } else {
+          const rec = (version, size) => {
+            const b = Buffer.alloc(24);
+            b.writeBigInt64LE(BigInt(version), 0);
+            b.writeBigInt64LE(BigInt(size), 8);
+            return b;
+          };
+          const parsed = [platform.parseRecycleInfoSize(rec(2, 1000)), platform.parseRecycleInfoSize(rec(1, 7)), platform.parseRecycleInfoSize(rec(3, 5)), platform.parseRecycleInfoSize(rec(2, -1)), platform.parseRecycleInfoSize(Buffer.alloc(8))];
+          out.push(sub('12y $I 기록 해석: 버전 1·2 만 받고 모르는 모양은 null', JSON.stringify(parsed) === JSON.stringify([1000, 7, null, null, null]), JSON.stringify(parsed)));
+          if (process.platform !== 'win32') {
+            out.push(skip('12y 가짜 휴지통 폴더 합산', 'Windows 아님'));
+          } else {
+            const fake = fs.mkdtempSync(path.join(os.tmpdir(), 'pvm-check-bin-'));
+            try {
+              const bin = path.join(fake, '$RECYCLE.BIN');
+              fs.mkdirSync(path.join(bin, 'S-1-5-21-1'), { recursive: true });
+              fs.writeFileSync(path.join(bin, '$IAAA.JPG'), rec(2, 1000)); // 계정 폴더 없이 바로 아래
+              fs.writeFileSync(path.join(bin, '$RAAA.JPG'), 'x'); // $R(진짜 파일)은 세지 않아요
+              fs.writeFileSync(path.join(bin, 'S-1-5-21-1', '$IBBB.JPG'), rec(2, 2500)); // 계정 폴더 안
+              const total = await platform.fetchBinUsedByInfoWin(fake);
+              fs.writeFileSync(path.join(bin, '$ICCC.JPG'), Buffer.from('not a record file....')); // 모르는 모양
+              const withBad = await platform.fetchBinUsedByInfoWin(fake);
+              out.push(sub('12y 가짜 휴지통 폴더: $I 만 합산(3500), 모르는 파일이 있으면 못 읽음(null)', total === 3500 && withBad === null, `${total} / ${withBad}`));
+            } finally {
+              fs.rmSync(fake, { recursive: true, force: true });
+            }
+          }
+        }
       }
 
       // 12f 드라이브 종류를 모름 → 이동 (휴지통 안 씀)
@@ -1298,43 +1330,9 @@ const ITEMS = [
   ...require('./check-build').items,
   // 48번은 원본 정리 확인 창의 샘플 확인 점검 (scripts/check-clean-sample.js)
   ...require('./check-clean-sample').items,
+  // 49번은 점검 동시 실행 · 제한 시간 점검 (scripts/check-parallel.js)
+  ...require('./check-parallel').items,
 ];
-
-// ---------- 점검 임시 폴더 정리 ----------
-// 규칙 (docs/점검-푸시-절차.md): 점검이 만든 %TEMP%\pvm-check-... 폴더는 복사본이라 영구 삭제해도 돼요.
-//   통과 → 이번 폴더 포함 전부 지움
-//   실패 → 원인을 볼 수 있게 이번 폴더 1개만 남기고 나머지 지움
-const TEMP_PREFIX = 'pvm-check-';
-const sameDir = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
-
-// 지워도 되는 폴더인지 코드로 확인 (%TEMP% 바로 안 + 이름이 pvm-check- + 링크 아닌 진짜 폴더)
-function isCheckTempDir(dir) {
-  const full = path.resolve(dir);
-  if (!sameDir(path.dirname(full), os.tmpdir())) return false;
-  if (!path.basename(full).startsWith(TEMP_PREFIX)) return false;
-  try {
-    const st = fs.lstatSync(full);
-    return st.isDirectory() && !st.isSymbolicLink();
-  } catch (e) {
-    return false;
-  }
-}
-
-function cleanupTempDirs(current, failed) {
-  const removed = [];
-  for (const name of fs.readdirSync(os.tmpdir())) {
-    const dir = path.join(os.tmpdir(), name);
-    if (!isCheckTempDir(dir)) continue;
-    if (failed && sameDir(dir, current)) continue; // 실패한 이번 폴더는 남김
-    try {
-      fs.rmSync(dir, { recursive: true, force: true });
-      removed.push(name);
-    } catch (e) {
-      console.log(`  ⚠️ 임시 폴더를 못 지웠어요: ${dir} (${e.message})`);
-    }
-  }
-  return removed;
-}
 
 // ---------- 수동 샘플 처리 결과 표 (참고용) ----------
 function manualReport(p) {
@@ -1347,12 +1345,31 @@ function manualReport(p) {
   return lines.join('\n');
 }
 
+// ---------- 일부 항목만 돌리기 ----------
+// npm run check -- --only 18,43   (또는 node scripts/check.js --only 18,43)
+//   분기 세션이 자기가 바꾼 항목만 로컬에서 돌릴 때 써요. 전체 점검은 CI 가 해요 (머지 전 확인은 CI 가 유일한 안전장치)
+function parseOnly(argv) {
+  const i = argv.indexOf('--only');
+  if (i < 0) return null;
+  const nums = String(argv[i + 1] || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const bad = nums.filter((n) => !ITEMS.some((it) => String(it.no) === n));
+  if (!nums.length || bad.length) {
+    console.log(`❌ --only 에는 점검 번호를 쉼표로 적어 주세요 (예: --only 18,43). 없는 번호: ${bad.join(', ') || '(비어 있음)'}`);
+    process.exit(1);
+  }
+  return new Set(nums);
+}
+
 // ---------- 실행 ----------
 (async () => {
   const ICON = { ok: '✅', fail: '❌', skip: '⏭' };
-  const tmp = path.join(os.tmpdir(), `pvm-check-${stamp()}`);
-  fs.mkdirSync(tmp, { recursive: true });
+  const only = parseOnly(process.argv.slice(2));
+  // mkdtemp: 같은 초에 시작한 다른 점검과 폴더 이름이 겹치지 않게 (이 점검 전용 폴더)
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `${TEMP_PREFIX}${stamp()}-`));
   console.log(`🧪 점검 시작 (임시 폴더: ${tmp})`);
+
+  // 전체 제한 시간 (기본 15분). 넘으면 Electron · exiftool 을 정리하고 실패로 끝내요 (폴더는 원인 확인용으로 남김)
+  const stopWatchdog = startWatchdog();
 
   const tools = await detectTools({}, APP);
   if (!tools.exiftool.ok) {
@@ -1373,6 +1390,7 @@ function manualReport(p) {
     failed = 0;
     env.full = await pipeline(path.join(tmp, 'full'), env);
     for (const item of ITEMS) {
+      if (only && !only.has(String(item.no))) continue;
       let subs;
       try {
         subs = await item.run(env);
@@ -1396,8 +1414,9 @@ function manualReport(p) {
     et.close();
   }
 
+  stopWatchdog();
   const removed = cleanupTempDirs(tmp, failed > 0);
-  console.log(`\n결과: ${failed ? `❌ ${failed}개 항목 실패` : '✅ 모두 통과'}`);
+  console.log(`\n결과: ${failed ? `❌ ${failed}개 항목 실패` : only ? `✅ 고른 항목(${[...only].join(', ')}) 통과 (일부만 돌렸으니 전체는 CI 가 확인)` : '✅ 모두 통과'}`);
   console.log(failed ? `  원인 확인용으로 남긴 폴더: ${tmp}` : '  이번 임시 폴더는 지웠어요');
   if (removed.length) console.log(`  지운 점검 임시 폴더 ${removed.length}개: ${removed.join(', ')}`);
   process.exit(failed ? 1 : 0);

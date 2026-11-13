@@ -7,6 +7,7 @@ const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { freePort, trackChild } = require('./check-guard');
 
 // 앱을 띄우기 전에 main 쪽 파일 문법부터 확인해요.
 //   문법 오류가 있는 채로 Electron을 켜면 "main process 오류" 대화상자가 사용자 화면에 떠서 점검이 멈춰 버려요
@@ -49,11 +50,14 @@ async function launchCheck(appDir, opts = {}) {
 // clickText: until 을 기다린 뒤 이 글자가 든 버튼 하나를 눌러요. clickUntil: 누른 뒤 화면 글자에 이 글이 나올 때까지 기다려요 (최대 untilMs)
 //   결과의 clicked 는 버튼을 찾아 눌렀는지예요 (clickText 를 안 주면 undefined)
 //   thenClickText, thenClickUntil: 그다음에 누를 버튼 하나 더 (메뉴를 연 뒤 탭을 누를 때)
-async function launchOnce(appDir, { port = 9333, waitMs = 4000, env = {}, exe: exeOverride, until = '', untilMs = 20000, probe = '', clickText = '', clickUntil = '', thenClickText = '', thenClickUntil = '' } = {}) {
+async function launchOnce(appDir, { port: portOpt, waitMs = 4000, env = {}, exe: exeOverride, until = '', untilMs = 20000, probe = '', clickText = '', clickUntil = '', thenClickText = '', thenClickUntil = '' } = {}) {
   const bad = syntaxErrors(appDir);
   if (bad.length) return { ok: false, title: '', text: '', errors: bad, exitCode: null, mainOut: '' };
+  // 포트는 실행마다 빈 것을 골라요 (같은 PC 에서 점검이 동시에 돌아도 안 부딪히게). port 를 직접 주면 그 값을 써요
+  const port = portOpt || (await freePort());
   const exe = exeOverride || path.join(appDir, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
   const child = spawn(exe, ['.', `--remote-debugging-port=${port}`], { cwd: appDir, env: { ...process.env, ...env } });
+  trackChild(child);
   let mainOut = '';
   child.stdout.on('data', (d) => (mainOut += d));
   child.stderr.on('data', (d) => (mainOut += d));
