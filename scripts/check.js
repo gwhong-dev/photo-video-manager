@@ -1377,7 +1377,7 @@ const ITEMS = [
   ...require('./check-clean-sample').items,
   // 49번은 점검 동시 실행 · 제한 시간 점검 (scripts/check-parallel.js)
   ...require('./check-parallel').items,
-  // 50번은 가져오기 동시 처리 점검 (scripts/check-speed.js)
+  // 52번은 가져오기 동시 처리 점검 (scripts/check-speed.js)
   ...require('./check-speed').items,
   // 51번은 한국어 답변 훅 점검 (scripts/check-korean-hook.js)
   ...require('./check-korean-hook').items,
