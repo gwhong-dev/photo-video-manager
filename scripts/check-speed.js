@@ -115,6 +115,45 @@ const items = [
           out.push(sub('50f 일시정지 → 멈추고 남은 파일은 대기', r.paused && todoLeft > 0 && leftovers(p.backupRoot).length === 0, `paused ${r.paused}, 처리 ${r.handled}, 남은 ${todoLeft}`));
         }
 
+        // 50i 큰 파일 차례를 기다리던 중 일시정지 → 시작하지 않고 대기로 남음 (큰 파일은 한 번에 하나)
+        {
+          const p = await prepare(path.join(base, 'pause-big'), env.et, { copies: 3 });
+          for (const it of p.job.items) if (it.status === 'todo') it.size = runner.BIG_FILE_BYTES + 1; // 모두 "큰 파일"로
+          const roomy = () => ({ blocks: 1e12, bsize: 4096, bavail: 1e12 }); // 공간은 넉넉하다고
+          let seen = 0;
+          const r = await runner.runBatch({
+            job: p.job, store: p.store, batchSize: 100000, ctx: { ...env.ctx, et: pool }, logger: p.logger, concurrency: 4, statfs: roomy,
+            shouldPause: () => seen >= 1,
+            onProgress: (x) => { seen = x.done; },
+          });
+          out.push(sub('50i 큰 파일 차례 기다리다 일시정지 → 1개만 처리하고 멈춤', r.paused && r.handled === 1, `paused ${r.paused}, 처리 ${r.handled}`));
+        }
+
+        // 50j 예상 밖 오류(작업 기록 쓰기 실패) → 새 파일은 안 집고, 처리 중인 것이 끝난 뒤 오류
+        {
+          const p = await prepare(path.join(base, 'fatal'), env.et, { copies: 3 });
+          const total = p.job.items.filter((it) => it.status === 'todo').length;
+          let started = 0;
+          let settled = 0;
+          let thrown = 0;
+          const store = {
+            // 결과 기록과 이어서 쓰는 "실패" 기록까지 두 번 실패시켜요 (일꾼 밖으로 오류가 나가게)
+            mark: (job, i, patch) => {
+              if (patch.status) settled++;
+              if (patch.status && thrown < 2) { thrown++; throw new Error('기록 쓰기 실패 (시험)'); }
+              return p.store.mark(job, i, patch);
+            },
+          };
+          const ctx = { ...env.ctx, et: pool, ffprobe: env.ctx.ffprobe };
+          let err = null;
+          try {
+            await runner.runBatch({ job: p.job, store, batchSize: 100000, ctx, logger: p.logger, concurrency: 4, onProgress: () => {} , shouldPause: () => { started++; return false; } });
+          } catch (e) { err = e; }
+          // 오류를 던졌고, 처리를 시작한 파일(started) 수가 전체보다 적어야 해요 (오류 뒤 새 파일을 안 집음)
+          out.push(sub('50j 기록 쓰기 오류 → 남은 파일은 안 집고 오류로 끝남', !!err && /시험/.test(err.message) && started < total, `오류 ${err ? err.message : '없음'}, 시작 ${started} / 전체 ${total}`));
+          out.push(sub('50k 오류 뒤에도 임시 파일 안 남음', leftovers(p.backupRoot).length === 0, leftovers(p.backupRoot).join(', ')));
+        }
+
         // 50g 여러 개 켠 exiftool로 읽어도 결과가 같음 (미리보기 정보 읽기)
         {
           const files = walk(AUTO, true, []);
