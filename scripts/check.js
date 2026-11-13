@@ -386,7 +386,52 @@ const ITEMS = [
     no: 9,
     name: '날짜 없음',
     async run(env) {
-      return [expectPath(env.full, 'noinfo.jpg')];
+      const out = [expectPath(env.full, 'noinfo.jpg')];
+      // 9b iCloud 공유 앨범 사진은 촬영 정보가 없어도 앨범 폴더의 AlbumInfo.json 날짜로 날짜 폴더에 감 (exiftool 은 가짜)
+      {
+        const { keyOf } = require('../lib/planner');
+        const root9 = path.join(env.tmp, 'album-info-date');
+        const album = path.join(root9, 'source', 'My Albums', '대전 여행');
+        const other = path.join(root9, 'source', 'My Albums', '정보없는 앨범');
+        const bk9 = path.join(root9, 'backup');
+        fs.mkdirSync(album, { recursive: true });
+        fs.mkdirSync(other, { recursive: true });
+        fs.mkdirSync(bk9, { recursive: true });
+        const w = (p, s) => (fs.writeFileSync(p, s), p);
+        const inAlbum = w(path.join(album, 'IMG_0057.HEIC'), 'heic in album');
+        const notListed = w(path.join(album, 'IMG_9999.JPG'), 'jpg not in album info');
+        const dated = w(path.join(album, 'IMG_0100.JPG'), 'jpg with shot date'); // 촬영 정보가 앨범 정보보다 우선
+        const noJson = w(path.join(other, 'IMG_0057.HEIC'), 'same name, other album'); // 이름이 같아도 다른 앨범 날짜는 안 씀
+        const late = w(path.join(album, 'IMG_0200.JPG'), 'jpg late evening GMT'); // 밤 11시 30분(GMT)은 한국에선 다음 날 → 시간대 변환 확인
+        w(path.join(album, 'AlbumInfo.json'), JSON.stringify({
+          albumName: '대전 여행',
+          photos: [
+            { name: 'IMG_0057.HEIC', dateCreated: 'Saturday August 13,2022 12:00 PM GMT' },
+            { name: 'IMG_0100.JPG', dateCreated: 'Sunday August 14,2022 12:00 PM GMT' },
+            { name: 'IMG_0200.JPG', dateCreated: 'Sunday August 14,2022 11:30 PM GMT' },
+            { name: 'BROKEN.JPG', dateCreated: '날짜 아님' },
+          ],
+        }));
+        w(path.join(other, 'AlbumInfo.json'), '{ 깨진 json');
+        const fakeEt = {
+          read: async (paths) => paths.map((p) => ({ SourceFile: p, ...(keyOf(p) === keyOf(dated) ? { DateTimeOriginal: '2020:05:06 07:08:09' } : {}) })),
+        };
+        const plan9 = await makePlan({ source: path.join(root9, 'source'), backupRoot: bk9, includeSub: true }, fakeEt);
+        const at = (p) => plan9.items.find((it) => keyOf(it.src) === keyOf(p));
+        const a = at(inAlbum);
+        out.push(sub('9b 앨범 정보에 날짜가 있으면 촬영 정보가 없어도 그 날짜 폴더로 (출처: 앨범정보)',
+          a.dateFrom === '앨범정보' && a.relDir === path.join('2022', '08', '13'), `${a.dateFrom} ${a.relDir}`));
+        // 기대값은 이 PC 시간대로 계산 (한국이면 8월 15일 08:30, 시간대가 바뀌어도 맞게)
+        const lt = new Date(Date.UTC(2022, 7, 14, 23, 30));
+        const wantLate = path.join(String(lt.getFullYear()), String(lt.getMonth() + 1).padStart(2, '0'), String(lt.getDate()).padStart(2, '0'));
+        out.push(sub('9b 앨범 정보 시각은 GMT 라서 이 PC 시간대로 바꿔 날짜 폴더를 정함 (밤 11시 30분 GMT)',
+          at(late).relDir === wantLate && at(late).date.startsWith(`${lt.getFullYear()}:`), `${at(late).relDir} / 기대 ${wantLate}`));
+        out.push(sub('9b 앨범 정보에 없는 사진 · 깨진 AlbumInfo.json 앨범 · 이름만 같은 다른 앨범 사진은 계속 날짜없음',
+          at(notListed).relDir === '_날짜없음' && at(noJson).relDir === '_날짜없음', `${at(notListed).relDir} ${at(noJson).relDir}`));
+        out.push(sub('9b 촬영 정보가 있으면 앨범 정보보다 촬영 정보가 우선',
+          at(dated).dateFrom === '촬영정보' && at(dated).relDir === path.join('2020', '05', '06'), `${at(dated).dateFrom} ${at(dated).relDir}`));
+      }
+      return out;
     },
   },
   {
