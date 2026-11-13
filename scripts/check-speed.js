@@ -1,5 +1,5 @@
 // 파일 위치: scripts/check-speed.js
-// 역할: 가져오기 동시 처리 점검 (50). scripts/check.js 의 ITEMS 끝에 붙어요
+// 역할: 가져오기 동시 처리 점검 (52). scripts/check.js 의 ITEMS 끝에 붙어요
 //   동시에 여러 파일을 처리해도 하나씩 할 때와 결과가 같은지, 이름이 겹치지 않는지, 일시정지가 되는지 확인해요
 //   ⚠️ 샘플은 임시 폴더 복사본으로만 써요
 //
@@ -56,14 +56,14 @@ const leftovers = (dir) => listFiles(dir).filter((f) => /\.__tmp__|_exiftool_tmp
 
 const items = [
   {
-    no: 50,
+    no: 52,
     name: '가져오기 동시 처리 (속도)',
     async run(env) {
       const out = [];
       const base = path.join(env.tmp, 'speed');
       const pool = new ExifToolPool(env.tools.exiftool.path, 3);
       try {
-        // 50a 하나씩(1) 과 동시에(4) 처리한 결과가 같음: 상태 · 결과 위치 · 파일 날짜
+        // 52a 하나씩(1) 과 동시에(4) 처리한 결과가 같음: 상태 · 결과 위치 · 파일 날짜
         {
           const one = await prepare(path.join(base, 'one'), env.et, { copies: 3 });
           await runner.runBatch({ job: one.job, store: one.store, batchSize: 100000, ctx: env.ctx, logger: one.logger, concurrency: 1 });
@@ -76,33 +76,33 @@ const items = [
           const setOf = (m) => Object.values(m).map((v) => `${v.status}|${v.result}|${v.mtime}`).sort().join('\n');
           const sameSet = setOf(a) === setOf(b);
           const fails = Object.values(b).filter((v) => v.status === 'fail').length;
-          out.push(sub('50a 동시 처리 결과 = 하나씩 처리 결과 (결과 위치 · 날짜 목록, 실패 0)', sameSet && fails === 0, `다른 줄 ${diff.length}개 ${diff.slice(0, 3).join(', ')} / 실패 ${fails}`));
-          out.push(sub('50b 임시 파일(.__tmp__) 안 남음', leftovers(four.backupRoot).length === 0, leftovers(four.backupRoot).join(', ')));
+          out.push(sub('52a 동시 처리 결과 = 하나씩 처리 결과 (결과 위치 · 날짜 목록, 실패 0)', sameSet && fails === 0, `다른 줄 ${diff.length}개 ${diff.slice(0, 3).join(', ')} / 실패 ${fails}`));
+          out.push(sub('52b 임시 파일(.__tmp__) 안 남음', leftovers(four.backupRoot).length === 0, leftovers(four.backupRoot).join(', ')));
           const doneFiles = Object.values(b).filter((v) => v.result && v.status === 'done').map((v) => v.result.toLowerCase());
-          out.push(sub('50c 완료 결과 파일 이름이 서로 다름', new Set(doneFiles).size === doneFiles.length, `${doneFiles.length}개`));
+          out.push(sub('52c 완료 결과 파일 이름이 서로 다름', new Set(doneFiles).size === doneFiles.length, `${doneFiles.length}개`));
           const runLog = listFiles(path.join(four.root, 'logs')).find((f) => /run_/.test(path.basename(f)));
           const head = runLog ? fs.readFileSync(runLog, 'utf8').split('\n')[0] : '';
-          out.push(sub('50d 실행 로그에 동시 처리 수', /동시 처리 4개/.test(head), head));
+          out.push(sub('52d 실행 로그에 동시 처리 수', /동시 처리 4개/.test(head), head));
         }
 
-        // 50e 같은 이름을 노리는 두 파일을 동시에: 둘 다 완료, 하나는 _1 (이름 잡기)
+        // 52e 같은 이름을 노리는 두 파일을 동시에: 둘 다 완료, 하나는 _1 (이름 잡기)
         {
           const p = await prepare(path.join(base, 'same-name'), env.et);
           const todo = p.job.items.filter((it) => it.status === 'todo' && it.kind === 'copy' && it.date);
           const [x, y] = todo;
           if (!x || !y) {
-            out.push(sub('50e 같은 이름 두 파일 동시 처리', false, '시험할 파일이 모자라요'));
+            out.push(sub('52e 같은 이름 두 파일 동시 처리', false, '시험할 파일이 모자라요'));
           } else {
             y.dest = x.dest; // 일부러 같은 자리를 노리게
             for (const it of p.job.items) if (it !== x && it !== y && it.status === 'todo') it.status = 'skip';
             await runner.runBatch({ job: p.job, store: p.store, batchSize: 100000, ctx: { ...env.ctx, et: pool }, logger: p.logger, concurrency: 4 });
             const ok = x.status === 'done' && y.status === 'done' && x.finalPath && y.finalPath && x.finalPath.toLowerCase() !== y.finalPath.toLowerCase();
             const names = [x.finalPath, y.finalPath].map((f) => (f ? path.basename(f) : '-'));
-            out.push(sub('50e 같은 이름 두 파일 동시 처리 → 둘 다 완료, 이름 다름 (_1)', ok && names.some((n) => /_1\.[^.]+$/.test(n)), names.join(' / ')));
+            out.push(sub('52e 같은 이름 두 파일 동시 처리 → 둘 다 완료, 이름 다름 (_1)', ok && names.some((n) => /_1\.[^.]+$/.test(n)), names.join(' / ')));
           }
         }
 
-        // 50f 일시정지: 처리 중인 것까지만 하고 멈춤, 나머지는 대기로 남음
+        // 52f 일시정지: 처리 중인 것까지만 하고 멈춤, 나머지는 대기로 남음
         {
           const p = await prepare(path.join(base, 'pause'), env.et, { copies: 3 });
           let seen = 0;
@@ -112,10 +112,10 @@ const items = [
             onProgress: (x) => { seen = x.done; },
           });
           const todoLeft = p.job.items.filter((it) => it.status === 'todo').length;
-          out.push(sub('50f 일시정지 → 멈추고 남은 파일은 대기', r.paused && todoLeft > 0 && leftovers(p.backupRoot).length === 0, `paused ${r.paused}, 처리 ${r.handled}, 남은 ${todoLeft}`));
+          out.push(sub('52f 일시정지 → 멈추고 남은 파일은 대기', r.paused && todoLeft > 0 && leftovers(p.backupRoot).length === 0, `paused ${r.paused}, 처리 ${r.handled}, 남은 ${todoLeft}`));
         }
 
-        // 50i 큰 파일 차례를 기다리던 중 일시정지 → 시작하지 않고 대기로 남음 (큰 파일은 한 번에 하나)
+        // 52i 큰 파일 차례를 기다리던 중 일시정지 → 시작하지 않고 대기로 남음 (큰 파일은 한 번에 하나)
         {
           const p = await prepare(path.join(base, 'pause-big'), env.et, { copies: 3 });
           for (const it of p.job.items) if (it.status === 'todo') it.size = runner.BIG_FILE_BYTES + 1; // 모두 "큰 파일"로
@@ -126,10 +126,10 @@ const items = [
             shouldPause: () => seen >= 1,
             onProgress: (x) => { seen = x.done; },
           });
-          out.push(sub('50i 큰 파일 차례 기다리다 일시정지 → 1개만 처리하고 멈춤', r.paused && r.handled === 1, `paused ${r.paused}, 처리 ${r.handled}`));
+          out.push(sub('52i 큰 파일 차례 기다리다 일시정지 → 1개만 처리하고 멈춤', r.paused && r.handled === 1, `paused ${r.paused}, 처리 ${r.handled}`));
         }
 
-        // 50j 예상 밖 오류(작업 기록 쓰기 실패) → 새 파일은 안 집고, 처리 중인 것이 끝난 뒤 오류
+        // 52j 예상 밖 오류(작업 기록 쓰기 실패) → 새 파일은 안 집고, 처리 중인 것이 끝난 뒤 오류
         {
           const p = await prepare(path.join(base, 'fatal'), env.et, { copies: 3 });
           const total = p.job.items.filter((it) => it.status === 'todo').length;
@@ -150,23 +150,23 @@ const items = [
             await runner.runBatch({ job: p.job, store, batchSize: 100000, ctx, logger: p.logger, concurrency: 4, onProgress: () => {} , shouldPause: () => { started++; return false; } });
           } catch (e) { err = e; }
           // 오류를 던졌고, 처리를 시작한 파일(started) 수가 전체보다 적어야 해요 (오류 뒤 새 파일을 안 집음)
-          out.push(sub('50j 기록 쓰기 오류 → 남은 파일은 안 집고 오류로 끝남', !!err && /시험/.test(err.message) && started < total, `오류 ${err ? err.message : '없음'}, 시작 ${started} / 전체 ${total}`));
-          out.push(sub('50k 오류 뒤에도 임시 파일 안 남음', leftovers(p.backupRoot).length === 0, leftovers(p.backupRoot).join(', ')));
+          out.push(sub('52j 기록 쓰기 오류 → 남은 파일은 안 집고 오류로 끝남', !!err && /시험/.test(err.message) && started < total, `오류 ${err ? err.message : '없음'}, 시작 ${started} / 전체 ${total}`));
+          out.push(sub('52k 오류 뒤에도 임시 파일 안 남음', leftovers(p.backupRoot).length === 0, leftovers(p.backupRoot).join(', ')));
         }
 
-        // 50g 여러 개 켠 exiftool로 읽어도 결과가 같음 (미리보기 정보 읽기)
+        // 52g 여러 개 켠 exiftool로 읽어도 결과가 같음 (미리보기 정보 읽기)
         {
           const files = walk(AUTO, true, []);
           const a = await readMetaWithKeys(env.et, files, ['DateTimeOriginal', 'Model']);
           const b = await readMetaWithKeys(pool, files, ['DateTimeOriginal', 'Model']);
           const norm = (m) => JSON.stringify([...m.entries()].sort((x, y) => x[0].localeCompare(y[0])));
-          out.push(sub('50g exiftool 여러 개로 읽어도 결과 같음', a.size > 0 && norm(a) === norm(b), `${a.size}개 / ${b.size}개`));
+          out.push(sub('52g exiftool 여러 개로 읽어도 결과 같음', a.size > 0 && norm(a) === norm(b), `${a.size}개 / ${b.size}개`));
         }
 
-        // 50h 재생 확인 한 번으로 영상 형식까지 읽음 (MOV→MP4 가 ffprobe 를 다시 켜지 않게)
+        // 52h 재생 확인 한 번으로 영상 형식까지 읽음 (MOV→MP4 가 ffprobe 를 다시 켜지 않게)
         {
           const v = await probeVideo(env.tools.ffprobe.path, path.join(AUTO, 'IMG_0103.MOV'));
-          out.push(sub('50h 재생 확인이 영상 형식도 돌려줌', v.ok === true && !!v.video, JSON.stringify(v)));
+          out.push(sub('52h 재생 확인이 영상 형식도 돌려줌', v.ok === true && !!v.video, JSON.stringify(v)));
         }
       } finally {
         pool.close();
