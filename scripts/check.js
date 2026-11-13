@@ -19,6 +19,7 @@ const { JobStore, jobStats } = require('../lib/job');
 const { createLogger, stamp } = require('../lib/logger');
 const runner = require('../lib/runner');
 const { launchCheck } = require('./launch-check');
+const { cleanupTempDirs, startWatchdog, TEMP_PREFIX } = require('./check-guard');
 
 const APP = path.join(__dirname, '..');
 const SAMPLES = path.join(APP, 'test', 'samples');
@@ -1287,43 +1288,9 @@ const ITEMS = [
   ...require('./check-build').items,
   // 48번은 원본 정리 확인 창의 샘플 확인 점검 (scripts/check-clean-sample.js)
   ...require('./check-clean-sample').items,
+  // 49번은 점검 동시 실행 · 제한 시간 점검 (scripts/check-parallel.js)
+  ...require('./check-parallel').items,
 ];
-
-// ---------- 점검 임시 폴더 정리 ----------
-// 규칙 (docs/점검-푸시-절차.md): 점검이 만든 %TEMP%\pvm-check-... 폴더는 복사본이라 영구 삭제해도 돼요.
-//   통과 → 이번 폴더 포함 전부 지움
-//   실패 → 원인을 볼 수 있게 이번 폴더 1개만 남기고 나머지 지움
-const TEMP_PREFIX = 'pvm-check-';
-const sameDir = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
-
-// 지워도 되는 폴더인지 코드로 확인 (%TEMP% 바로 안 + 이름이 pvm-check- + 링크 아닌 진짜 폴더)
-function isCheckTempDir(dir) {
-  const full = path.resolve(dir);
-  if (!sameDir(path.dirname(full), os.tmpdir())) return false;
-  if (!path.basename(full).startsWith(TEMP_PREFIX)) return false;
-  try {
-    const st = fs.lstatSync(full);
-    return st.isDirectory() && !st.isSymbolicLink();
-  } catch (e) {
-    return false;
-  }
-}
-
-function cleanupTempDirs(current, failed) {
-  const removed = [];
-  for (const name of fs.readdirSync(os.tmpdir())) {
-    const dir = path.join(os.tmpdir(), name);
-    if (!isCheckTempDir(dir)) continue;
-    if (failed && sameDir(dir, current)) continue; // 실패한 이번 폴더는 남김
-    try {
-      fs.rmSync(dir, { recursive: true, force: true });
-      removed.push(name);
-    } catch (e) {
-      console.log(`  ⚠️ 임시 폴더를 못 지웠어요: ${dir} (${e.message})`);
-    }
-  }
-  return removed;
-}
 
 // ---------- 수동 샘플 처리 결과 표 (참고용) ----------
 function manualReport(p) {
@@ -1339,9 +1306,12 @@ function manualReport(p) {
 // ---------- 실행 ----------
 (async () => {
   const ICON = { ok: '✅', fail: '❌', skip: '⏭' };
-  const tmp = path.join(os.tmpdir(), `pvm-check-${stamp()}`);
-  fs.mkdirSync(tmp, { recursive: true });
+  // mkdtemp: 같은 초에 시작한 다른 점검과 폴더 이름이 겹치지 않게 (이 점검 전용 폴더)
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `${TEMP_PREFIX}${stamp()}-`));
   console.log(`🧪 점검 시작 (임시 폴더: ${tmp})`);
+
+  // 전체 제한 시간 (기본 40분). 넘으면 Electron · exiftool 을 정리하고 실패로 끝내요 (폴더는 원인 확인용으로 남김)
+  const stopWatchdog = startWatchdog();
 
   const tools = await detectTools({}, APP);
   if (!tools.exiftool.ok) {
@@ -1385,6 +1355,7 @@ function manualReport(p) {
     et.close();
   }
 
+  stopWatchdog();
   const removed = cleanupTempDirs(tmp, failed > 0);
   console.log(`\n결과: ${failed ? `❌ ${failed}개 항목 실패` : '✅ 모두 통과'}`);
   console.log(failed ? `  원인 확인용으로 남긴 폴더: ${tmp}` : '  이번 임시 폴더는 지웠어요');

@@ -752,7 +752,6 @@ const items = [
         placeSearchUrl: 'https://127.0.0.1:1/search',
       }), 'utf8');
       const r = await launchCheck(APP, {
-        port: 9338,
         env: { PVM_USER_DATA: ud },
         until: '10.28',
         probe: `(${mapProbe.toString()})()`,
