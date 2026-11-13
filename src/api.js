@@ -48,6 +48,12 @@ export const api = {
   previewDiscard: (ids) => gallery().previewDiscard(ids),
   discardSimilar: (ids) => gallery().discardSimilar(ids),
   onSimilarProgress: (cb) => gallery().onSimilarProgress(cb),
+  // 날짜 없음 채우기 (_날짜없음 → 앨범 정보 날짜의 날짜 폴더)
+  fillPreview: () => gallery().fillPreview(),
+  fillRun: (token) => gallery().fillRun(token),
+  fillUndo: () => gallery().fillUndo(),
+  fillPickFolder: () => gallery().fillPickFolder(),
+  fillClearFolders: () => gallery().fillClearFolders(),
   rescan: () => gallery().rescan(),
   openScreen: (name) => gallery().openScreen(name),
   // 구독을 끊는 함수를 돌려줘요 (React에서 정리할 때 써요)

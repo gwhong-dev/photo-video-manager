@@ -160,6 +160,13 @@ Code 에서 한 일은 claude.ai 채팅이 노션 · 포트폴리오 · 문서�
     1.목표 2.완료 3.진행 중 4.결정 사항 5.변경 파일 6.다음 할 일(하나)
     마지막 줄: "PROGRESS.md 상단만 읽고 6번부터 이어서 진행해줘"
 
+## 통합문서 트리 등록
+- 통합문서: https://claude.ai/artifact/SJuyeJswRQbMnP364V9gzK
+- 아티팩트(Docs · Design · HTML)를 만들면 작업 끝에 photo-artifact-tree 스킬을 쓴다.
+- Claude Docs 를 열 수 없으면 PROGRESS-LOG.md 비고에
+  "트리 등록 필요: 제목 · 링크 · 탭"을 남기고 사용자에게 알린다.
+- 스킬 원본은 .claude/skills/photo-artifact-tree/SKILL.md. 고치면 계정 스킬도 맞춘다.
+
 ## 화면 디자인
 - Figma: https://www.figma.com/design/QM0MduYMErt4ZpcamBQ19s (v0.2)
 - 화면: 갤러리 / 비슷한 사진 / 정보 없는 사진 / 지도
