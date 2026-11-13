@@ -1597,7 +1597,7 @@ const items = [
         fs.mkdirSync(ud, { recursive: true });
         const exe = path.join(APP, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
         const t0 = Date.now();
-        const bad = await launchCheck(copy, { port: 9334, exe, env: { PVM_USER_DATA: ud } });
+        const bad = await launchCheck(copy, { exe, env: { PVM_USER_DATA: ud } });
         const ms = Date.now() - t0;
         out.push(sub('불러오다 난 오류는 대화상자 없이 실패로 끝남 (10초 안)', bad.ok === false && bad.exitCode === 1 && ms < 10000 && bad.errors.some((e) => e.includes('점검용 가짜 오류')), `${ms}ms, 종료 코드 ${bad.exitCode}, ${bad.errors.join(' / ').slice(0, 120)}`));
         out.push(sub('저장소의 lib/paths.js는 그대로', !fs.readFileSync(path.join(APP, 'lib', 'paths.js'), 'utf8').includes('점검용 가짜 오류')));
@@ -1737,7 +1737,6 @@ const items = [
         fs.mkdirSync(ud, { recursive: true });
         fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: copyRoot }), 'utf8');
         const r2 = await launchCheck(APP, {
-          port: 9335,
           env: { PVM_USER_DATA: ud },
           until: '10.28',
           probe: "(document.querySelector('input[type=search]') || {}).placeholder || ''",

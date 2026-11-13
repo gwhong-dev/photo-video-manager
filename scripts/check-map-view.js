@@ -209,7 +209,6 @@ const items = [
         placeReverseUrl: 'https://127.0.0.1:1/reverse', // 핀 이름도 진짜 서버로 나가지 않게
       }), 'utf8');
       const r = await launchCheck(APP, {
-        port: 9343,
         env: { PVM_USER_DATA: ud },
         until: '백업 폴더 다시 읽기',
         untilMs: 30000,

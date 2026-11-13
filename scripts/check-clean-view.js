@@ -326,7 +326,6 @@ const items = [
       writeLogs(path.join(ud, 'logs'), 'C:\\Users\\사용자\\사진\\가져올');
       fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: backup, source: src }), 'utf8');
       const r = await launchCheck(APP, {
-        port: 9344,
         env: { PVM_USER_DATA: ud },
         until: '백업 폴더 다시 읽기',
         untilMs: 30000,

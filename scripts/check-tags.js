@@ -362,7 +362,6 @@ const items = [
       fs.mkdirSync(ud, { recursive: true });
       fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: root }), 'utf8');
       const r = await launchCheck(APP, {
-        port: 9342,
         env: { PVM_USER_DATA: ud },
         until: '백업 폴더 다시 읽기',
         untilMs: 30000,

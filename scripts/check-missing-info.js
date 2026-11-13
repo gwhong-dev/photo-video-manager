@@ -1814,7 +1814,6 @@ const items = [
       fs.mkdirSync(ud, { recursive: true });
       fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: copyRoot }), 'utf8');
       const r = await launchCheck(APP, {
-        port: 9336,
         env: { PVM_USER_DATA: ud },
         until: '10.28', // 사진을 다 읽어 와서 갤러리에 날짜가 보일 때까지
         clickText: '정보 없는 사진',
