@@ -1334,14 +1334,30 @@ function manualReport(p) {
   return lines.join('\n');
 }
 
+// ---------- 일부 항목만 돌리기 ----------
+// npm run check -- --only 18,43   (또는 node scripts/check.js --only 18,43)
+//   분기 세션이 자기가 바꾼 항목만 로컬에서 돌릴 때 써요. 전체 점검은 CI 가 해요 (머지 전 확인은 CI 가 유일한 안전장치)
+function parseOnly(argv) {
+  const i = argv.indexOf('--only');
+  if (i < 0) return null;
+  const nums = String(argv[i + 1] || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const bad = nums.filter((n) => !ITEMS.some((it) => String(it.no) === n));
+  if (!nums.length || bad.length) {
+    console.log(`❌ --only 에는 점검 번호를 쉼표로 적어 주세요 (예: --only 18,43). 없는 번호: ${bad.join(', ') || '(비어 있음)'}`);
+    process.exit(1);
+  }
+  return new Set(nums);
+}
+
 // ---------- 실행 ----------
 (async () => {
   const ICON = { ok: '✅', fail: '❌', skip: '⏭' };
+  const only = parseOnly(process.argv.slice(2));
   // mkdtemp: 같은 초에 시작한 다른 점검과 폴더 이름이 겹치지 않게 (이 점검 전용 폴더)
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `${TEMP_PREFIX}${stamp()}-`));
   console.log(`🧪 점검 시작 (임시 폴더: ${tmp})`);
 
-  // 전체 제한 시간 (기본 40분). 넘으면 Electron · exiftool 을 정리하고 실패로 끝내요 (폴더는 원인 확인용으로 남김)
+  // 전체 제한 시간 (기본 15분). 넘으면 Electron · exiftool 을 정리하고 실패로 끝내요 (폴더는 원인 확인용으로 남김)
   const stopWatchdog = startWatchdog();
 
   const tools = await detectTools({}, APP);
@@ -1363,6 +1379,7 @@ function manualReport(p) {
     failed = 0;
     env.full = await pipeline(path.join(tmp, 'full'), env);
     for (const item of ITEMS) {
+      if (only && !only.has(String(item.no))) continue;
       let subs;
       try {
         subs = await item.run(env);
@@ -1388,7 +1405,7 @@ function manualReport(p) {
 
   stopWatchdog();
   const removed = cleanupTempDirs(tmp, failed > 0);
-  console.log(`\n결과: ${failed ? `❌ ${failed}개 항목 실패` : '✅ 모두 통과'}`);
+  console.log(`\n결과: ${failed ? `❌ ${failed}개 항목 실패` : only ? `✅ 고른 항목(${[...only].join(', ')}) 통과 (일부만 돌렸으니 전체는 CI 가 확인)` : '✅ 모두 통과'}`);
   console.log(failed ? `  원인 확인용으로 남긴 폴더: ${tmp}` : '  이번 임시 폴더는 지웠어요');
   if (removed.length) console.log(`  지운 점검 임시 폴더 ${removed.length}개: ${removed.join(', ')}`);
   process.exit(failed ? 1 : 0);
