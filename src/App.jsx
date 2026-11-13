@@ -33,6 +33,8 @@ import CleanView from './components/CleanView.jsx';
 import CleanPanel from './components/CleanPanel.jsx';
 import Toolbar from './components/Toolbar.jsx';
 import UndoBar from './components/UndoBar.jsx';
+import FillBanner from './components/FillBanner.jsx';
+import FillDialog from './components/FillDialog.jsx';
 import { undoneText } from './format.mjs';
 import { EMPTY_SELECTION, filterScope, nextSelection, selectionForMenu, selectionOf, viewMatches } from './selection.mjs';
 
@@ -89,6 +91,8 @@ export default function App() {
   const [lastPin, setLastPin] = useState(null); // 이번 실행에서 지도로 마지막에 넣은 곳 { lat, lng }
   const [justApplied, setJustApplied] = useState(null); // 방금 넣은 묶음 { batchId }. 넣은 직후 알림 줄을 보여 줘요
   const [undoing, setUndoing] = useState(false);
+  const [fillOpen, setFillOpen] = useState(false); // 날짜 없음 채우기 창
+  const [fillUndoing, setFillUndoing] = useState(false);
   const [syncing, setSyncing] = useState(false); // 넣은 직후 새 상태(마지막 묶음)를 받아오는 중. 그동안 되돌리기 버튼을 꺼요
   const [selectingAll, setSelectingAll] = useState(false); // "목록 전체 선택"으로 번호를 받아오는 중
   const [notice, setNotice] = useState(''); // 화면 전환이 거절된 이유 등
@@ -389,6 +393,39 @@ export default function App() {
     }
   };
 
+  // 날짜 없음 채우기: 옮긴 뒤 / 되돌린 뒤에는 목록과 개수를 다시 읽어요
+  const onFillDone = async (r) => {
+    setFillOpen(false);
+    setSelection(EMPTY_SELECTION);
+    const parts = [`${r.moved.toLocaleString('en-US')}장을 날짜 폴더로 옮겼어요.`];
+    if (r.fail) parts.push(`${r.fail.toLocaleString('en-US')}장은 옮기지 못했어요.`);
+    if (r.skipped) parts.push(`${r.skipped.toLocaleString('en-US')}장은 이미 없어서 건너뛰었어요.`);
+    setNotice(parts.join(' ') + ' 잘못 옮겼다면 위의 되돌리기로 한 번에 되돌릴 수 있어요.');
+    setGen((g) => g + 1);
+    await refresh();
+  };
+  const undoFill = async () => {
+    if (fillUndoing) return;
+    setFillUndoing(true);
+    setNotice('');
+    try {
+      const r = await api.fillUndo();
+      const parts = [`${r.restored.toLocaleString('en-US')}장을 원래 자리로 되돌렸어요.`];
+      if (r.fail) parts.push(`${r.fail.toLocaleString('en-US')}장은 원래 자리에 같은 이름이 있어서 그대로 뒀어요.`);
+      if (r.skipped) parts.push(`${r.skipped.toLocaleString('en-US')}장은 옮겨진 파일이 없어서 건너뛰었어요.`);
+      setNotice(parts.join(' '));
+      setSelection(EMPTY_SELECTION);
+    } catch (e) {
+      setNotice(errorText(e));
+    }
+    try {
+      await refresh();
+      setGen((g) => g + 1);
+    } finally {
+      setFillUndoing(false);
+    }
+  };
+
   // ---------- 가운데에 보여 줄 것 ----------
   const importButton = <button type="button" onClick={openImport}>가져오기 화면 열기</button>;
   let center;
@@ -535,6 +572,9 @@ export default function App() {
           onRescan={rescan}
           rescanning={rescanning}
         />
+        {showTools && screen === 'missing' && filter.info === 'noDate' && !suggestOpen && (state.noDate > 0 || !!state.lastFill) && (
+          <FillBanner noDate={state.noDate} lastFill={state.lastFill || null} busy={fillUndoing} disabled={syncing} onOpen={() => setFillOpen(true)} onUndo={undoFill} />
+        )}
         {showAfterUndo && <UndoBar batch={lastBatch} variant="after" busy={undoing} disabled={syncing} onUndo={() => undo(lastBatch.id)} onDismiss={() => setJustApplied(null)} />}
         <div className="center">{center}</div>
       </main>
@@ -570,6 +610,7 @@ export default function App() {
           onClose={closeMenu}
         />
       )}
+      {fillOpen && <FillDialog onClose={() => setFillOpen(false)} onDone={onFillDone} />}
       {dialog && (dialog.mode === 'tagAdd' || dialog.mode === 'tagRemove') && <TagDialog mode={dialog.mode} ids={dialog.ids} onClose={() => setDialog(null)} onApplied={onApplied} />}
       {dialog && dialog.mode !== 'tagAdd' && dialog.mode !== 'tagRemove' && <EditDialog mode={dialog.mode} ids={dialog.ids} source={copySource} prefer={dialog.prefer} startAt={lastPin} onPinChosen={setLastPin} onClose={() => setDialog(null)} onApplied={onApplied} />}
     </div>
