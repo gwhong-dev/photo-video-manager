@@ -10,7 +10,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, session } = r
 const path = require('path');
 const fs = require('fs');
 
-const { ExifTool } = require('./lib/exiftool');
+const { ExifTool, ExifToolPool } = require('./lib/exiftool');
 const { detectTools } = require('./lib/tools');
 const { makePlan, priorKey, readMetaWithKeys, META_TAGS, isVideoPath, NO_DATE_DIR, statusLabelOf, isIssue } = require('./lib/planner');
 
@@ -27,7 +27,7 @@ const { samplePool, sampleView, openSample } = require('./lib/clean-sample');
 const { openFolderOnly } = require('./lib/open-folder');
 const { createLogger, now } = require('./lib/logger');
 const { guardWindow } = require('./lib/window-guard');
-const { writePlanLog, nextTodo, requeueFailed, checkSpace, runBatch } = require('./lib/runner');
+const { writePlanLog, nextTodo, requeueFailed, checkSpace, runBatch, DEFAULT_CONCURRENCY } = require('./lib/runner');
 const { setupGallery, registerScheme } = require('./gallery-main');
 
 // ---------- 상태 ----------
@@ -289,6 +289,7 @@ ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
   if (!v.ok) throw new Error(v.reason);
 
   planning = true;
+  let planEt = null;
   try {
     // 이전 작업에서 변환을 끝낸 원본은 "이미 정리됨"으로 (같은 폴더를 다시 가져와도 _1 복사본이 또 생기지 않게, M4)
     let priorResults = null;
@@ -299,9 +300,13 @@ ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
     } catch (err) {
       priorResults = null; // 못 읽으면 예전처럼 (이름이 겹치면 _1)
     }
-    lastPlan = await makePlan({ source, backupRoot, includeSub }, et, (msg) => send('plan-status', msg), { priorResults });
+    // 미리보기 동안만 exiftool을 여러 개 켜서 파일 정보를 나눠 읽어요 (파일이 많을 때 빨라져요). 끝나면 꺼요
+    planEt = new ExifToolPool(tools.exiftool.path, DEFAULT_CONCURRENCY);
+    lastPlan = await makePlan({ source, backupRoot, includeSub }, planEt, (msg) => send('plan-status', msg), { priorResults });
   } finally {
     planning = false;
+    if (planEt) planEt.close();
+    planEt = null;
   }
   // 새로 처리할 파일이 없어도(전부 중복) 백업에 이미 있는 원본은 정리할 수 있게 개수를 같이 보내요 (실사용 테스트 10-4)
   //   정리 직전에는 지금처럼 cleanTargets 로 지문까지 다시 확인해요
@@ -363,7 +368,9 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
 
   running = true;
   pauseAsked = false;
-  const ctx = { et, magick: tools.magick.path, ffmpeg: tools.ffmpeg.path, ffprobe: tools.ffprobe.path };
+  // 파일 여러 개를 동시에 처리해요 (lib/runner.js). exiftool도 그 수만큼 켜서 줄 서지 않게, 끝나면 꺼요
+  const runEt = tools.exiftool.ok ? new ExifToolPool(tools.exiftool.path, DEFAULT_CONCURRENCY) : et;
+  const ctx = { et: runEt, magick: tools.magick.path, ffmpeg: tools.ffmpeg.path, ffprobe: tools.ffprobe.path };
   try {
     const r = await runBatch({
       job,
@@ -371,11 +378,13 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
       batchSize: n,
       ctx,
       logger,
+      concurrency: DEFAULT_CONCURRENCY,
       shouldPause: () => pauseAsked,
       onProgress: (p) => send('progress', p),
     });
     return { ...r, job: jobInfo() };
   } finally {
+    if (runEt && runEt !== et) runEt.close();
     running = false;
     // 새로 들어온 파일을 갤러리가 다시 읽어요 (오류로 멈춰도 이미 옮긴 파일이 있을 수 있어요).
     //   갤러리 쪽 오류가 가져오기 결과를 바꾸면 안 돼서 여기서 잡고 로그만 남겨요

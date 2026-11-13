@@ -1377,6 +1377,8 @@ const ITEMS = [
   ...require('./check-clean-sample').items,
   // 49번은 점검 동시 실행 · 제한 시간 점검 (scripts/check-parallel.js)
   ...require('./check-parallel').items,
+  // 50번은 가져오기 동시 처리 점검 (scripts/check-speed.js)
+  ...require('./check-speed').items,
 ];
 
 // ---------- 수동 샘플 처리 결과 표 (참고용) ----------
