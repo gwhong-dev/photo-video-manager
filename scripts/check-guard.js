@@ -58,9 +58,9 @@ function killDescendants() {
 }
 
 // 제한 시간(분) 안에 안 끝나면 onTimeout 뒤 자식을 정리하고 종료 코드 1 로 끝내요
-//   PVM_CHECK_TIMEOUT_MIN 환경변수로 바꿀 수 있어요 (기본 40분)
+//   PVM_CHECK_TIMEOUT_MIN 환경변수로 바꿀 수 있어요 (기본 15분)
 function startWatchdog(onTimeout) {
-  const min = Number(process.env.PVM_CHECK_TIMEOUT_MIN) || 40;
+  const min = Number(process.env.PVM_CHECK_TIMEOUT_MIN) || 15;
   const timer = setTimeout(() => {
     console.log(`\n❌ 점검이 제한 시간(${min}분) 안에 끝나지 않아서 멈춰요. 남은 Electron · exiftool 을 정리합니다`);
     try { if (onTimeout) onTimeout(); } catch (e) { /* 무시 */ }
@@ -75,7 +75,7 @@ function startWatchdog(onTimeout) {
 
 // ---------- 점검 임시 폴더 정리 (영구 삭제 예외: 점검이 만든 복사본만) ----------
 // 같은 PC 에서 다른 세션의 점검이 돌고 있을 수 있어서, 남의 폴더는 일정 시간(staleMs, 기본 3시간)이 지난 것만 지워요
-//   (점검 전체 제한 시간이 40분이라, 3시간 넘은 폴더는 끝났거나 죽은 점검의 것)
+//   (점검 전체 제한 시간이 15분이라, 3시간 넘은 폴더는 끝났거나 죽은 점검의 것)
 const TEMP_PREFIX = 'pvm-check-';
 const STALE_MS = 3 * 60 * 60 * 1000;
 const sameDir = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();

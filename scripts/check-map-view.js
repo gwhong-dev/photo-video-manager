@@ -458,9 +458,14 @@ async function mapViewProbe() {
     q.gotoCount = ((await wait(() => document.querySelector('.map-panel .map-count'))) || {}).innerText;
     // 다음 단계(핀 2 누르기)를 위해 처음처럼 연도 탭 · 지도를 두 핀이 다 보이게 되돌려요
     document.querySelector('.leaflet-control-zoom-out').click();
-    for (let i = 0; i < 12; i++) {
-      if (document.querySelectorAll('.place-pin').length >= 2) break;
-      document.querySelector('.leaflet-control-zoom-out').click();
+    // 두 핀이 보이는 상태가 0.8초 동안 그대로일 때까지 (지도가 겹쳐 돌아 느릴 때 움직이는 도중에 지나가지 않게)
+    let steady = 0;
+    for (let i = 0; i < 40 && steady < 3; i++) {
+      if (document.querySelectorAll('.place-pin').length >= 2) steady++;
+      else {
+        steady = 0;
+        document.querySelector('.leaflet-control-zoom-out').click();
+      }
       await new Promise((res) => setTimeout(res, 300));
     }
   }
@@ -486,6 +491,9 @@ async function mapViewProbe() {
   if (!bar) return { ...q, stop: '영역 줄이 없어요' };
   byText('.area-bar button', '지도로 돌아가기').click();
   q.backToMap = !!(await wait(() => document.querySelector('.map-view .place-pin')));
+  // 점검이 같은 PC 에서 겹쳐 돌면 지도가 다시 그려지는 데 더 걸려서, 두 핀이 다 보일 때까지 (최대 5초) 기다린 뒤 0.5초 더 두고 읽어요
+  //   (전에 눌렀던 것이 늦게 다시 실행돼 수원만 남는 문제는 그 0.5초 동안에도 잡혀요)
+  await wait(() => pinTexts() === '1,2', 5000);
   await new Promise((res) => setTimeout(res, 500));
   q.pinsAfterBack = pinTexts(); // 많이 찍은 곳을 눌렀던 것이 다시 실행되면 수원만 보여요 (#56 검증)
 
