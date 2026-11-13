@@ -1326,7 +1326,7 @@ function parseOnly(argv) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `${TEMP_PREFIX}${stamp()}-`));
   console.log(`🧪 점검 시작 (임시 폴더: ${tmp})`);
 
-  // 전체 제한 시간 (기본 40분). 넘으면 Electron · exiftool 을 정리하고 실패로 끝내요 (폴더는 원인 확인용으로 남김)
+  // 전체 제한 시간 (기본 15분). 넘으면 Electron · exiftool 을 정리하고 실패로 끝내요 (폴더는 원인 확인용으로 남김)
   const stopWatchdog = startWatchdog();
 
   const tools = await detectTools({}, APP);
