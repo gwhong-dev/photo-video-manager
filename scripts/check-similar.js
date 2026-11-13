@@ -627,7 +627,6 @@ const items = [
       fs.mkdirSync(ud, { recursive: true });
       fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: copyRoot }), 'utf8');
       const r = await launchCheck(APP, {
-        port: 9339,
         env: { PVM_USER_DATA: ud },
         until: '백업 폴더 다시 읽기', // 갤러리 상태를 받은 뒤 (메뉴가 켜진 뒤)
         untilMs: 30000,
@@ -644,7 +643,6 @@ const items = [
 
       // 38e 사용자 결정 (2026-11-04): "이 묶음은 모두 남기기"를 다음 실행에도 기억 → 그 묶음은 숨기고 다시 보기 버튼
       const r2 = await launchCheck(APP, {
-        port: 9340,
         env: { PVM_USER_DATA: ud },
         until: '백업 폴더 다시 읽기',
         untilMs: 30000,
@@ -661,7 +659,6 @@ const items = [
         r2.errors.length === 0 && Array.isArray(keeps) && keeps.length === 2 && keeps.includes(big) && keeps.includes(small),
         `${JSON.stringify(keeps)} ${r2.errors.join(' / ')}`));
       const r3 = await launchCheck(APP, {
-        port: 9341,
         env: { PVM_USER_DATA: ud },
         until: '백업 폴더 다시 읽기',
         untilMs: 30000,
