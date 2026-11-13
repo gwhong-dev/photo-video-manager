@@ -345,6 +345,7 @@ const ITEMS = [
         const w = (p, s) => (fs.writeFileSync(p, s), p);
         const oldJpg = w(path.join(day, 'old_name.jpg'), 'old jpg');
         const otherJpg = w(path.join(day, 'other.jpg'), 'other jpg');
+        const sameName = w(path.join(day, 'IMG_B.jpg'), 'jpg named like IMG_B'); // 애플 ID 비교와 이름 겹침 확인에 둘 다 걸리는 기존 파일
         const noExt = w(path.join(day, 'same_id.png'), 'png with same id'); // 확장자가 다르면 비교 안 함
         const hSame = w(path.join(src8, 'IMG_A.HEIC'), 'heic A'); // 옛 JPG 와 같은 애플 ID
         const hNew = w(path.join(src8, 'IMG_B.HEIC'), 'heic B'); // 새 사진
@@ -353,12 +354,19 @@ const ITEMS = [
         const metaOf = {
           [keyOf(oldJpg)]: { ContentIdentifier: 'ID-A', ...date },
           [keyOf(otherJpg)]: { ContentIdentifier: 'ID-OTHER', ImageUniqueID: 'UID-C', ...date },
+          [keyOf(sameName)]: { ContentIdentifier: 'ID-B2', ...date },
           [keyOf(noExt)]: { ContentIdentifier: 'ID-B', ...date },
           [keyOf(hSame)]: { ContentIdentifier: 'ID-A', ...date },
           [keyOf(hNew)]: { ContentIdentifier: 'ID-B', ...date },
           [keyOf(hImgUid)]: { ImageUniqueID: 'UID-C', ...date },
         };
-        const fakeEt = { read: async (paths) => paths.map((p) => ({ SourceFile: p, ...(metaOf[keyOf(p)] || {}) })) };
+        const readCount = new Map(); // 기존 결과 파일(백업 폴더)을 몇 번 읽었는지
+        const fakeEt = {
+          read: async (paths) => {
+            for (const p of paths) if (keyOf(p).startsWith(keyOf(bk8))) readCount.set(keyOf(p), (readCount.get(keyOf(p)) || 0) + 1);
+            return paths.map((p) => ({ SourceFile: p, ...(metaOf[keyOf(p)] || {}) }));
+          },
+        };
         const plan8 = await makePlan({ source: src8, backupRoot: bk8, includeSub: true }, fakeEt);
         const by = (name) => plan8.items.find((it) => path.basename(it.src) === name);
         const a = by('IMG_A.HEIC');
@@ -367,6 +375,9 @@ const ITEMS = [
         out.push(sub('8c 애플 ID가 다르거나 확장자가 다르거나 ImageUniqueID만 같으면 건너뛰지 않고 변환',
           by('IMG_B.HEIC').status === 'todo' && by('IMG_C.HEIC').status === 'todo',
           `${by('IMG_B.HEIC').status} ${by('IMG_C.HEIC').status}`));
+        const maxReads = Math.max(0, ...readCount.values());
+        out.push(sub('8c 기존 결과 파일 정보는 애플 ID 비교와 이름 겹침 확인이 같이 써서 한 번만 읽음',
+          readCount.size > 0 && maxReads === 1, `읽은 파일 ${readCount.size}개, 최대 ${maxReads}번`));
       }
       return out;
     },
