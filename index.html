@@ -240,6 +240,7 @@
     let planReady = false;  // 미리보기 끝났는지
     let cleanOnly = false;  // 새로 처리할 파일은 없고 원본 정리만 남았는지 (전부 중복)
     let busy = false;       // 뭔가 하는 중인지
+    let pauseClicked = false; // 이번 실행에서 일시정지를 눌렀는지 (끝난 뒤 원본 확인을 자동으로 할지 정할 때)
 
     // ---------- 도우미 ----------
     const num = (n) => Number(n || 0).toLocaleString('ko-KR');
@@ -405,7 +406,10 @@
         el.style.display = 'none';
         return;
       }
-      el.textContent = `⚠ 고른 폴더가 진행 중인 작업과 달라요. "다음 실행"은 진행 중인 작업(${job.source} → ${job.backupRoot})을 이어서 해요. 새로 고른 폴더로 하려면 "미리보기"를 다시 눌러 주세요 (진행 중인 작업은 취소돼요)`;
+      // 남은 작업이 없으면(원본 정리만 남음) "다음 실행" 버튼이 없고, 미리보기를 누르면 작업이 "취소"가 아니라 "끝나요"
+      el.textContent = job.stats && job.stats.todo
+        ? `⚠ 고른 폴더가 진행 중인 작업과 달라요. "다음 실행"은 진행 중인 작업(${job.source} → ${job.backupRoot})을 이어서 해요. 새로 고른 폴더로 하려면 "미리보기"를 다시 눌러 주세요 (진행 중인 작업은 취소돼요)`
+        : `⚠ 고른 폴더가 진행 중인 작업(원본 정리만 남음, ${job.source} → ${job.backupRoot})과 달라요. "원본 정리"는 진행 중인 작업의 원본을 정리해요. 새로 고른 폴더로 하려면 "미리보기"를 다시 눌러 주세요 (진행 중인 작업은 끝나요)`;
       el.style.display = 'block';
     }
     function resetPlan() {
@@ -575,6 +579,7 @@
       if (space && space.warning && !confirm(`⚠️ ${space.warning}\n\n그래도 실행할까요?`)) return;
 
       setBusy(true, true);
+      pauseClicked = false;
       $('bar').value = 0;
       $('progressText').textContent = '⏳ 시작합니다...';
       setStatus('⏳ 처리 중... (일시정지를 누르면 지금 파일까지만 하고 멈춰요)');
@@ -602,8 +607,11 @@
         renderTable(await api.getRows($('filter').value));
         setBusy(false);
         // 일시정지로 멈췄으면 원본 확인(몇 분 걸림)을 자동으로 시작하지 않아요. 필요하면 위쪽 "원본 정리"로 (2026-11-14 실사용)
-        if (r.paused) setStatus($('status').textContent + '\n🧹 일시정지 중에는 원본 정리 확인을 하지 않아요. 필요하면 위쪽 "원본 정리"를 눌러 주세요');
-        else await askTrash();
+        //   마지막 몇 개를 처리하는 중에 누르면 다 끝나서 paused 가 아닐 수 있어요 → 누른 적이 있으면 똑같이 건너뛰어요
+        if (r.paused || pauseClicked) {
+          // "원본 정리" 버튼은 지울 수 있는 원본이 있을 때만 보여서, 그때만 안내해요
+          if (r.job && r.job.deletable) setStatus($('status').textContent + '\n🧹 일시정지 중에는 원본 정리 확인을 하지 않아요. 필요하면 위쪽 "원본 정리"를 눌러 주세요');
+        } else await askTrash();
         // 원본 정리 안내가 위 글자를 덮어써도, 재생 불가 안내는 끝까지 남겨요
         if (r.broken) setStatus($('status').textContent + `\n⚠ 재생할 수 없는 영상 ${num(r.broken)}개는 백업하지 않고 원본을 남겨 뒀어요. 표의 "⚠ 재생 불가" 줄과 로그에서 확인하세요.`);
         await maybeFinish();
@@ -615,6 +623,7 @@
     }
 
     $('pauseBtn').onclick = async () => {
+      pauseClicked = true;
       await api.pause();
       $('pauseBtn').disabled = true;
       $('pauseBtn').textContent = '⏸ 멈추는 중... (지금 파일까지)';

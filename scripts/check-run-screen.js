@@ -52,7 +52,7 @@ const items = [
       // 55c 화면 코드에 일시정지 때 원본 확인을 건너뛰는 길과 폴더가 바뀌었을 때 안내가 있음 (화면 동작은 PR 앱 확인에서)
       {
         const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-        const ok = /if \(r\.paused\) setStatus\([\s\S]{0,200}else await askTrash\(\)/.test(html) && /id="folderNote"/.test(html) && /function renderFolderNote\(\)/.test(html);
+        const ok = /if \(r\.paused \|\| pauseClicked\) \{[\s\S]{0,400}\} else await askTrash\(\)/.test(html) && /pauseClicked = true;/.test(html) && /id="folderNote"/.test(html) && /function renderFolderNote\(\)/.test(html) && /원본 정리만 남음/.test(html);
         out.push(sub('55c 화면: 일시정지 때 원본 확인 건너뜀, 폴더가 다르면 안내 자리', ok));
       }
       return out;
