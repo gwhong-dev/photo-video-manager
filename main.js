@@ -21,7 +21,7 @@ const cleanReadMeta = (paths) => {
 };
 const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
-const { cleanCandidates, cleanTargets, cleanInfo, cleanOriginals, createHashCache, countHashesFrom } = require('./lib/cleaner');
+const { cleanCandidatesAsync, cleanTargets, cleanInfo, cleanOriginals, createHashCache, countHashesFrom } = require('./lib/cleaner');
 const { createDriveKindOf } = require('./lib/platform');
 const { samplePool, sampleView, openSample } = require('./lib/clean-sample');
 const { openFolderOnly } = require('./lib/open-folder');
@@ -137,17 +137,43 @@ function rowsOf(data, filter) {
   return { rows, total };
 }
 
-function jobInfo() {
-  if (!job) return null;
-  const list = cleanCandidates(job); // 정리할 수 있어 보이는 원본 (정리 직전에 지문까지 다시 확인)
+// 작업 정보. list: 정리할 수 있어 보이는 원본 목록, null 이면 아직 세는 중 (화면에 "세는 중")
+function infoOf(j, list) {
   return {
-    source: job.source,
-    backupRoot: job.backupRoot,
-    createdAt: job.createdAt,
-    stats: jobStats(job),
-    deletable: list.length,
-    deletableBytes: list.reduce((a, it) => a + (it.size || 0), 0),
+    source: j.source,
+    backupRoot: j.backupRoot,
+    createdAt: j.createdAt,
+    stats: jobStats(j),
+    deletable: list ? list.length : null,
+    deletableBytes: list ? list.reduce((a, it) => a + (it.size || 0), 0) : null,
   };
+}
+
+// 작업 정보 + 정리할 수 있어 보이는 원본 개수 (정리 직전에는 지문까지 다시 확인)
+//   개수를 세려면 원본 · 결과 파일 정보를 수만 번 읽어요 → 기다리지 않는 방식으로 (창이 "응답 없음"이 되지 않게, 2026-11-15)
+//   더 새로운 계산이 시작되면 이전 계산은 그만둬요 (infoSeq)
+let infoSeq = 0;
+async function jobInfo() {
+  const j = job;
+  if (!j) return null;
+  const seq = ++infoSeq;
+  const list = await cleanCandidatesAsync(j, { shouldStop: () => seq !== infoSeq });
+  // 그만뒀으면 개수 없이 돌려줘요 (그만두게 한 새 계산이 화면에 개수를 보내요)
+  return infoOf(j, list);
+}
+
+// 처음 켤 때: 화면은 개수를 기다리지 않고 바로 열고, 개수는 다 세면 따로 보내요 ('job-info')
+//   세는 동안 다른 일(실행 · 원본 정리 · 작업 끝내기)이 시작되면 보내지 않아요 (그쪽 결과가 화면을 새로 그려요)
+function sendJobInfoLater() {
+  const j = job;
+  const seqBefore = infoSeq;
+  jobInfo()
+    .then((info) => {
+      if (info && info.deletable != null && job === j && !running && infoSeq === seqBefore + 1) send('job-info', info);
+    })
+    .catch((e) => {
+      try { logger.newLog('startup', `원본 개수 세기 실패 ${e && e.message ? e.message : e}`); } catch (e2) { /* 로그 실패는 무시 */ }
+    });
 }
 
 // ---------- 창 ----------
@@ -231,7 +257,9 @@ const send = (ch, data) => {
 ipcMain.handle('get-state', async () => {
   if (toolsReady) await toolsReady; // 처음 찾기가 아직이면 끝날 때까지 기다려요 (찾는 중에 "없음"으로 보이지 않게)
   if (!tools) await refreshTools();
-  return { settings, tools, job: jobInfo() };
+  if (!job) return { settings, tools, job: null };
+  sendJobInfoLater(); // 정리할 원본 개수는 다 세면 따로 보내요
+  return { settings, tools, job: infoOf(job, null) };
 });
 
 // 도구 다시 찾기
@@ -311,7 +339,7 @@ ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
   }
   // 새로 처리할 파일이 없어도(전부 중복) 백업에 이미 있는 원본은 정리할 수 있게 개수를 같이 보내요 (실사용 테스트 10-4)
   //   정리 직전에는 지금처럼 cleanTargets 로 지문까지 다시 확인해요
-  const cleanable = lastPlan.stats.todo === 0 ? cleanCandidates(lastPlan).length : 0;
+  const cleanable = lastPlan.stats.todo === 0 ? (await cleanCandidatesAsync(lastPlan)).length : 0;
   return { stats: lastPlan.stats, cleanable, ...rowsOf(lastPlan, 'all') };
 });
 
@@ -331,7 +359,7 @@ ipcMain.handle('start-job', async () => {
   lastPlan = null;
   resetCleanCheck(); // 이전 작업의 샘플 후보가 남지 않게
   writePlanLog(job, logger); // 계획 로그 (날짜없음 참고 날짜, 중복, 확인 필요 목록)
-  return jobInfo();
+  return await jobInfo();
 });
 
 // 실행 전 남은 공간 확인 (화면에서 실행 버튼 누르기 전에 물어봐요)
@@ -352,7 +380,10 @@ ipcMain.handle('retry-failed', async () => {
   if (running) throw new Error('이미 실행 중이에요');
   const r = requeueFailed(job, store);
   try { logger.newLog('retry', `# 실패 다시 시도 / ${now()} / 대기로 되돌림 ${r.requeued}개, 임시 파일 정리 ${r.cleaned}개`); } catch (e) { /* 로그 실패는 무시 */ }
-  return { ...r, job: jobInfo() };
+  // 화면은 이어서 바로 실행해요 → 원본 개수를 기다리지 않고 돌려줘요 (몇 분 걸릴 수 있어요)
+  //   실행이 시작되지 않으면(공간 부족 · 취소) 배너가 "세는 중"에 머물지 않게 뒤에서 세어 보내요. 실행이 시작되면 그만둬요
+  sendJobInfoLater();
+  return { ...r, job: infoOf(job, null) };
 });
 
 // 실행: 다음 N개 처리
@@ -368,12 +399,17 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
   if (todo.some((it) => it.kind === 'mov2mp4') && !tools.ffmpeg.ok) throw new Error('FFmpeg이 없어서 MOV를 변환할 수 없어요');
 
   running = true; // 재는 동안 다른 요청이 끼어들지 않게 먼저 세워요
+  infoSeq++; // 처음 켤 때 세던 원본 개수는 그만둬요 (실행이 끝나면 다시 세요)
   pauseAsked = false;
   // PC 메모리가 이미 위험하면 시작하지 않아요 (2026-11-14 밤 탐색기가 30GB 까지 커져 PC 가 멈춘 일, lib/memory-guard.js)
   const memNow = await memGuard.check();
   if (memNow.low) {
-    running = false;
-    return { done: 0, dup: 0, fail: 0, broken: 0, paused: false, handled: 0, stopped: null, memoryLow: lowMessage(memNow.low), job: jobInfo() };
+    // 원본 개수를 다 센 뒤에 "실행 중"을 풀어요 (세는 동안 다른 요청이 끼어들어 계산이 그만둬지지 않게)
+    try {
+      return { done: 0, dup: 0, fail: 0, broken: 0, paused: false, handled: 0, stopped: null, memoryLow: lowMessage(memNow.low), job: await jobInfo() };
+    } finally {
+      running = false;
+    }
   }
   memGuard.start(); // 실행하는 동안 1분마다 다시 재요. 위험해지면 처리 중인 파일까지만 하고 멈춰요
   // 파일 여러 개를 동시에 처리해요 (lib/runner.js). exiftool도 그 수만큼 켜서 줄 서지 않게, 끝나면 꺼요
@@ -391,7 +427,9 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
       onProgress: (p) => send('progress', p),
     });
     const low = memGuard.low();
-    return { ...r, memoryLow: low && r.paused ? lowMessage(low) : null, job: jobInfo() };
+    // 끝난 뒤 원본 개수 세기는 몇 분 걸릴 수 있어요 → 멈춘 것처럼 보이지 않게 알려요 (끝나면 결과 글로 바뀌어요)
+    send('plan-status', `이번 회차 처리 끝. 정리할 수 있는 원본 개수를 세는 중이에요 (파일이 많으면 몇 분 걸려요)`);
+    return { ...r, memoryLow: low && r.paused ? lowMessage(low) : null, job: await jobInfo() };
   } finally {
     memGuard.stop();
     if (runEt && runEt !== et) runEt.close();
@@ -434,6 +472,7 @@ function resetCleanCheck() {
 ipcMain.handle('trash-info', async () => {
   if (running) throw new Error('다른 작업이 끝난 뒤에 해 주세요');
   running = true;
+  infoSeq++; // 처음 켤 때 세던 원본 개수는 그만둬요 (아래 확인이 같은 파일을 다시 읽어요)
   try {
     await refuseIfMemoryLow();
     cleanDriveKindOf = createDriveKindOf();
@@ -441,7 +480,7 @@ ipcMain.handle('trash-info', async () => {
     const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, onProgress: (p) => send('clean-check-progress', p) }) : [];
     cleanSample = samplePool(job, targets);
     // 확인하다 재생 불가를 찾으면 개수가 바뀌어요 → 작업 정보도 새로 보내요
-    return { ...(await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf })), sample: sampleView(cleanSample), job: jobInfo() };
+    return { ...(await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf })), sample: sampleView(cleanSample), job: await jobInfo() };
   } finally {
     running = false;
   }
@@ -469,7 +508,7 @@ ipcMain.handle('trash-originals', async () => {
       driveKindOf: cleanDriveKindOf || createDriveKindOf(), // 확인 창과 같은 판단
       onProgress: (p) => send('trash-progress', p),
     });
-    return { ...r, job: jobInfo() };
+    return { ...r, job: await jobInfo() };
   } finally {
     running = false;
     resetCleanCheck();
@@ -489,6 +528,7 @@ ipcMain.handle('close-job', async (e, reason) => {
   if (running) throw new Error('실행 중에는 할 수 없어요');
   store.close(reason === 'cancel' ? 'cancelled' : 'done');
   job = null;
+  infoSeq++; // 세던 원본 개수도 그만둬요
   resetCleanCheck(); // 끝낸 작업의 샘플 후보가 남지 않게
   return true;
 });
