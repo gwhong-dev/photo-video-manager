@@ -1379,6 +1379,8 @@ const ITEMS = [
   ...require('./check-parallel').items,
   // 52번은 가져오기 동시 처리 점검 (scripts/check-speed.js)
   ...require('./check-speed').items,
+  // 53번은 PC 메모리 지키기 점검 (scripts/check-memory-guard.js)
+  ...require('./check-memory-guard').items,
   // 51번은 한국어 답변 훅 점검 (scripts/check-korean-hook.js)
   ...require('./check-korean-hook').items,
 ];

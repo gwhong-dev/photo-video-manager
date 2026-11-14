@@ -507,7 +507,9 @@
         `· 이번에 최대 ${num(n)}개 처리 (남은 건 다음에 이어서)\n` +
         `· 원본은 그대로 두고, 백업 폴더에 새로 만들어요\n` +
         `· 끝나면 원본 정리 여부를 물어볼게요\n` +
-        `· 기록은 로그 파일로 남아요`
+        `· 기록은 로그 파일로 남아요
+` +
+        `· 실행하는 동안 가져올 폴더 · 백업 폴더의 탐색기 창과 속성 창은 닫아 두세요 (탐색기 메모리가 커져 PC 가 멈출 수 있어요)`
       );
       if (!ok) return;
       try {
@@ -559,6 +561,13 @@
       try {
         const r = await api.runBatch(batchSize());
         setJob(r.job);
+        // PC 메모리가 위험해서 멈췄으면 원본 정리도 하지 않고 안내만 해요 (lib/memory-guard.js)
+        if (r.memoryLow) {
+          setStatus('⚠ ' + r.memoryLow + (r.handled ? `
+이번에 처리한 것: 완료 ${num(r.done)} · 중복 ${num(r.dup)} · 실패 ${num(r.fail)}` : ''));
+          renderTable(await api.getRows($('filter').value));
+          return;
+        }
         if (r.stopped) {
           setStatus('⛔ ' + r.stopped);
           return;
