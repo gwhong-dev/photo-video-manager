@@ -380,7 +380,9 @@ ipcMain.handle('retry-failed', async () => {
   if (running) throw new Error('이미 실행 중이에요');
   const r = requeueFailed(job, store);
   try { logger.newLog('retry', `# 실패 다시 시도 / ${now()} / 대기로 되돌림 ${r.requeued}개, 임시 파일 정리 ${r.cleaned}개`); } catch (e) { /* 로그 실패는 무시 */ }
-  // 화면은 이어서 바로 실행해요 → 원본 개수는 세지 않고(몇 분 걸릴 수 있어요) 실행이 끝날 때 세요
+  // 화면은 이어서 바로 실행해요 → 원본 개수를 기다리지 않고 돌려줘요 (몇 분 걸릴 수 있어요)
+  //   실행이 시작되지 않으면(공간 부족 · 취소) 배너가 "세는 중"에 머물지 않게 뒤에서 세어 보내요. 실행이 시작되면 그만둬요
+  sendJobInfoLater();
   return { ...r, job: infoOf(job, null) };
 });
 
@@ -402,8 +404,12 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
   // PC 메모리가 이미 위험하면 시작하지 않아요 (2026-11-14 밤 탐색기가 30GB 까지 커져 PC 가 멈춘 일, lib/memory-guard.js)
   const memNow = await memGuard.check();
   if (memNow.low) {
-    running = false;
-    return { done: 0, dup: 0, fail: 0, broken: 0, paused: false, handled: 0, stopped: null, memoryLow: lowMessage(memNow.low), job: await jobInfo() };
+    // 원본 개수를 다 센 뒤에 "실행 중"을 풀어요 (세는 동안 다른 요청이 끼어들어 계산이 그만둬지지 않게)
+    try {
+      return { done: 0, dup: 0, fail: 0, broken: 0, paused: false, handled: 0, stopped: null, memoryLow: lowMessage(memNow.low), job: await jobInfo() };
+    } finally {
+      running = false;
+    }
   }
   memGuard.start(); // 실행하는 동안 1분마다 다시 재요. 위험해지면 처리 중인 파일까지만 하고 멈춰요
   // 파일 여러 개를 동시에 처리해요 (lib/runner.js). exiftool도 그 수만큼 켜서 줄 서지 않게, 끝나면 꺼요

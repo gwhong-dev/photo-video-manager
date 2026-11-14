@@ -102,17 +102,23 @@ const items = [
         const asyncIds = (await cleaner.cleanCandidatesAsync(job)).map((it) => it.i).join(',');
         const same = !!syncIds && syncIds === asyncIds;
         const stopped = await cleaner.cleanCandidatesAsync(job, { shouldStop: () => true });
-        // 완료 항목을 4천 번 복사한 큰 작업: 세는 동안 0.02초 타이머가 얼마나 늦어지는지
+        // 완료 항목을 8천 번 복사한 큰 작업: 세는 동안 0.02초 타이머가 얼마나 늦어지는지
+        //   비교 기준: 같은 작업을 동기판으로 셀 때 걸린 시간(그동안은 타이머가 전혀 못 돎). 비동기판 지연은 그 1/3 보다 작아야 해요
+        //   (비동기판이 안에서 동기로 읽게 되돌아가면 지연이 동기판 시간만큼 커져서 걸려요)
+        const COPIES = 8000;
         const done = job.items.filter((it) => it.status === 'done');
         const big = { items: [] };
-        for (let k = 0; k < 4000; k++) for (const it of done) big.items.push({ ...it, i: big.items.length });
+        for (let k = 0; k < COPIES; k++) for (const it of done) big.items.push({ ...it, i: big.items.length });
+        const syncStart = Date.now();
+        cleaner.cleanCandidates(big);
+        const syncMs = Date.now() - syncStart;
         let maxLag = 0;
         let last = Date.now();
         const timer = setInterval(() => { const t = Date.now(); maxLag = Math.max(maxLag, t - last - 20); last = t; }, 20);
         const bigList = await cleaner.cleanCandidatesAsync(big);
         clearInterval(timer);
         const one = done.filter((it) => cleaner.cleanCandidates({ items: [it] }).length).length;
-        const lagOk = maxLag < 1000 && one > 0 && bigList.length === one * 4000;
+        const lagOk = maxLag < Math.max(50, syncMs / 3) && one > 0 && bigList.length === one * COPIES;
         const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
         const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
         const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
@@ -120,7 +126,7 @@ const items = [
         const wired = !/[^.\w]cleanCandidates\(/.test(main) && /sendJobInfoLater\(\);[^\n]*\n\s*return \{ settings, tools, job: infoOf\(job, null\) \}/.test(main) &&
           /onJobInfo: \(cb\) => subscribe\('job-info', cb\)/.test(preload) && /api\.onJobInfo\(/.test(html) && /원본 세는 중/.test(html) && /await cleanCandidatesAsync\(job\)/.test(cleanerSrc);
         out.push(sub('55f 정리할 원본 세기: 같은 결과, 그만두기, 세는 동안 창이 멈추지 않음, 처음 켤 때 기다리지 않음', same && stopped === null && lagOk && wired,
-          `같음 ${same}, 그만둠 ${stopped === null}, 큰 작업 ${bigList.length}개 · 최대 지연 ${maxLag}ms, 연결 ${wired}`));
+          `같음 ${same}, 그만둠 ${stopped === null}, 큰 작업 ${bigList.length}개 · 최대 지연 ${maxLag}ms (동기판 ${syncMs}ms), 연결 ${wired}`));
       }
       return out;
     },
