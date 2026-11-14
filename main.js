@@ -28,6 +28,7 @@ const { openFolderOnly } = require('./lib/open-folder');
 const { createLogger, now } = require('./lib/logger');
 const { guardWindow } = require('./lib/window-guard');
 const { writePlanLog, nextTodo, requeueFailed, checkSpace, runBatch, DEFAULT_CONCURRENCY } = require('./lib/runner');
+const { createMemoryGuard, lowMessage } = require('./lib/memory-guard');
 const { setupGallery, registerScheme } = require('./gallery-main');
 
 // ---------- 상태 ----------
@@ -366,8 +367,13 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
   if (todo.some((it) => it.kind === 'heic2jpg') && !tools.magick.ok) throw new Error('ImageMagick이 없어서 HEIC를 변환할 수 없어요');
   if (todo.some((it) => it.kind === 'mov2mp4') && !tools.ffmpeg.ok) throw new Error('FFmpeg이 없어서 MOV를 변환할 수 없어요');
 
+  // PC 메모리가 이미 위험하면 시작하지 않아요 (2026-11-14 밤 탐색기가 30GB 까지 커져 PC 가 멈춘 일, lib/memory-guard.js)
+  const memNow = await memGuard.check();
+  if (memNow.low) return { done: 0, dup: 0, fail: 0, broken: 0, paused: false, handled: 0, stopped: null, memoryLow: lowMessage(memNow.low), job: jobInfo() };
+
   running = true;
   pauseAsked = false;
+  memGuard.start(); // 실행하는 동안 1분마다 다시 재요. 위험해지면 처리 중인 파일까지만 하고 멈춰요
   // 파일 여러 개를 동시에 처리해요 (lib/runner.js). exiftool도 그 수만큼 켜서 줄 서지 않게, 끝나면 꺼요
   const runEt = tools.exiftool.ok ? new ExifToolPool(tools.exiftool.path, DEFAULT_CONCURRENCY) : et;
   const ctx = { et: runEt, magick: tools.magick.path, ffmpeg: tools.ffmpeg.path, ffprobe: tools.ffprobe.path };
@@ -379,11 +385,13 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
       ctx,
       logger,
       concurrency: DEFAULT_CONCURRENCY,
-      shouldPause: () => pauseAsked,
+      shouldPause: () => pauseAsked || !!memGuard.low(),
       onProgress: (p) => send('progress', p),
     });
-    return { ...r, job: jobInfo() };
+    const low = memGuard.low();
+    return { ...r, memoryLow: low && r.paused ? lowMessage(low) : null, job: jobInfo() };
   } finally {
+    memGuard.stop();
     if (runEt && runEt !== et) runEt.close();
     running = false;
     // 새로 들어온 파일을 갤러리가 다시 읽어요 (오류로 멈춰도 이미 옮긴 파일이 있을 수 있어요).
@@ -397,6 +405,14 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
     }
   }
 });
+
+// PC 메모리 지키기 (lib/memory-guard.js). 실행 중 1분마다, 실행 · 원본 정리 시작 전에 한 번씩 재요
+const memGuard = createMemoryGuard({ logger: () => logger }); // logger 는 앱이 준비된 뒤에 생겨서 그때그때 꺼내 써요
+// 메모리가 위험하면 원본 정리를 시작하지 않아요 (휴지통으로 수천 개를 옮기는 동안 PC 가 멈추지 않게)
+async function refuseIfMemoryLow() {
+  const m = await memGuard.check();
+  if (m.low) throw new Error(lowMessage(m.low));
+}
 
 // 원본 삭제 전 정보 (개수, 용량, 휴지통 경고)
 // 원본 정리 전 정보 (개수, 용량, 드라이브별 방법, 경고)
@@ -415,6 +431,7 @@ function resetCleanCheck() {
 }
 ipcMain.handle('trash-info', async () => {
   if (running) throw new Error('다른 작업이 끝난 뒤에 해 주세요');
+  await refuseIfMemoryLow();
   running = true;
   try {
     cleanDriveKindOf = createDriveKindOf();
@@ -431,6 +448,7 @@ ipcMain.handle('trash-info', async () => {
 // 원본 정리 (하드디스크 → 휴지통 / USB·SD·네트워크 → _정리완료원본으로 이동, 영구 삭제 없음)
 ipcMain.handle('trash-originals', async () => {
   if (running) throw new Error('실행 중에는 할 수 없어요');
+  await refuseIfMemoryLow();
   // 정리하는 동안에는 "실행 중"으로 표시 → 미리보기·새 작업·작업 끝내기를 막아요 (기록이 섞이지 않게)
   running = true;
   try {
