@@ -331,12 +331,13 @@
       if (s.broken) c.appendChild(chip(`⚠ 재생 불가 ${num(s.broken)}`, 'red'));
       c.appendChild(chip(`⏳ 남은 작업 ${num(s.todo)}`, s.todo ? 'orange' : ''));
       if (info.deletable) c.appendChild(chip(`🗑 지울 수 있는 원본 ${num(info.deletable)}개 (${fmtBytes(info.deletableBytes)})`, 'purple'));
+      else if (info.deletable == null) c.appendChild(chip('🗑 지울 수 있는 원본 세는 중')); // 처음 켤 때 · 다시 시도 직후 (다 세면 바뀌어요)
 
       $('nextBtn').style.display = s.todo ? '' : 'none';
       $('nextBtn').textContent = `▶ 다음 ${num(Math.min(batchSize(), s.todo))}개 실행`;
       $('retryBtn').style.display = s.fail ? '' : 'none';
       $('retryBtn').textContent = `🔁 실패한 ${num(s.fail)}개 다시 시도`;
-      $('trashBtn').style.display = info.deletable ? '' : 'none';
+      $('trashBtn').style.display = info.deletable !== 0 ? '' : 'none'; // 세는 중(null)이어도 누를 수 있어요 (누르면 처음부터 확인해요)
       $('finishBtn').style.display = s.todo ? 'none' : '';
       $('cancelBtn').style.display = s.todo ? '' : 'none';
     }
@@ -455,6 +456,10 @@
 
     // ---------- 미리보기 ----------
     api.onPlanStatus((msg) => setStatus(msg));
+    // 처음 켤 때 정리할 원본 개수를 다 세면 배너를 다시 그려요 (다른 일을 하는 중이면 그쪽 결과가 다시 그려요)
+    api.onJobInfo((info) => {
+      if (!busy && job) setJob(info);
+    });
 
     $('previewBtn').onclick = async () => {
       if (!state.source || !state.backupRoot) {
@@ -803,7 +808,8 @@
     }
 
     $('finishBtn').onclick = async () => {
-      if (job.deletable && !confirm('지우지 않은 원본이 있어요. 원본은 그대로 두고 작업을 끝낼까요?')) return;
+      // 아직 세는 중(null)이면 남은 원본이 있을 수 있어서 똑같이 물어봐요
+      if (job.deletable !== 0 && !confirm(job.deletable == null ? '지우지 않은 원본이 있을 수 있어요 (아직 세는 중). 원본은 그대로 두고 작업을 끝낼까요?' : '지우지 않은 원본이 있어요. 원본은 그대로 두고 작업을 끝낼까요?')) return;
       await api.closeJob('done');
       setJob(null);
       setStatus('✅ 작업을 끝냈어요');

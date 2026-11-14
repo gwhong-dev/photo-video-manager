@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld('api', {
   // 진행 상황 받기
   onPlanStatus: (cb) => ipcRenderer.on('plan-status', (e, msg) => cb(msg)),
   onProgress: (cb) => ipcRenderer.on('progress', (e, data) => cb(data)),
+  // 처음 켤 때 정리할 원본 개수를 다 세면 받아요 (수만 개면 몇 분 걸려서 화면은 먼저 열어요)
+  onJobInfo: (cb) => subscribe('job-info', cb),
   onTrashProgress: (cb) => ipcRenderer.on('trash-progress', (e, data) => cb(data)),
   onCleanCheckProgress: (cb) => ipcRenderer.on('clean-check-progress', (e, data) => cb(data)),
 

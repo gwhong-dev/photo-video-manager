@@ -12,6 +12,7 @@ const { makePlan } = require('../lib/planner');
 const { JobStore } = require('../lib/job');
 const { createLogger } = require('../lib/logger');
 const runner = require('../lib/runner');
+const cleaner = require('../lib/cleaner');
 
 const AUTO = path.join(__dirname, '..', 'test', 'samples', 'auto');
 
@@ -21,6 +22,7 @@ const items = [
     name: '실행 화면 안내 (크기 기준 남은 시간)',
     async run(env) {
       const out = [];
+      let ranJob = null; // 55b 에서 끝까지 실행한 작업 (55f 에서 다시 써요)
 
       // 55a 남은 시간: 20초 전에는 개수 기준, 그 뒤에는 처리한 크기 기준
       //   예) 400개 중 100개 처리, 크기는 200GB 중 40GB, 12분 지남 → 개수 기준 36분, 크기 기준 48분
@@ -44,6 +46,7 @@ const items = [
         const total = job.items.filter((it) => it.status === 'todo').reduce((n, it) => n + (it.size || 0), 0);
         const seen = [];
         await runner.runBatch({ job, store, batchSize: 100000, ctx: env.ctx, logger, onProgress: (p) => seen.push(p) });
+        ranJob = job;
         const last = seen[seen.length - 1] || {};
         const ok = seen.length > 0 && last.bytesTotal === total && last.bytesDone === total && last.bytesPerSec >= 0 && seen.every((p) => typeof p.bytesDone === 'number');
         out.push(sub('55b 진행 알림에 처리한 크기 · 전체 크기 · 속도', ok, `알림 ${seen.length}번, 마지막 ${last.bytesDone} / ${last.bytesTotal} (전체 ${total})`));
@@ -89,6 +92,35 @@ const items = [
         const todoAfter = job.items.filter((it) => it.status === 'todo').length;
         const retried = failed.every((i) => job.items[i].status !== 'todo' && job.items[i].status !== 'fail');
         out.push(sub('55e 실패 2개 다시 시도 → 그 2개만 처리, 다른 대기 파일은 그대로', rq.requeued === 2 && retried && todoAfter === todoBefore && todoBefore > 0, `되돌림 ${rq.requeued}, 다시 처리 ${retried}, 대기 ${todoBefore} → ${todoAfter}`));
+      }
+
+      // 55f 정리할 원본 세기를 기다리지 않는 방식으로 (2026-11-15 실사용: 1만 9천 개에서 창이 4분 "응답 없음")
+      //   같은 결과 · 그만두기 · 세는 동안 창(이벤트 루프)이 멈추지 않음 · 화면 연결 확인
+      {
+        const job = ranJob;
+        const syncIds = cleaner.cleanCandidates(job).map((it) => it.i).join(',');
+        const asyncIds = (await cleaner.cleanCandidatesAsync(job)).map((it) => it.i).join(',');
+        const same = !!syncIds && syncIds === asyncIds;
+        const stopped = await cleaner.cleanCandidatesAsync(job, { shouldStop: () => true });
+        // 완료 항목을 4천 번 복사한 큰 작업: 세는 동안 0.02초 타이머가 얼마나 늦어지는지
+        const done = job.items.filter((it) => it.status === 'done');
+        const big = { items: [] };
+        for (let k = 0; k < 4000; k++) for (const it of done) big.items.push({ ...it, i: big.items.length });
+        let maxLag = 0;
+        let last = Date.now();
+        const timer = setInterval(() => { const t = Date.now(); maxLag = Math.max(maxLag, t - last - 20); last = t; }, 20);
+        const bigList = await cleaner.cleanCandidatesAsync(big);
+        clearInterval(timer);
+        const one = done.filter((it) => cleaner.cleanCandidates({ items: [it] }).length).length;
+        const lagOk = maxLag < 1000 && one > 0 && bigList.length === one * 4000;
+        const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+        const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+        const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+        const cleanerSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'cleaner.js'), 'utf8');
+        const wired = !/[^.\w]cleanCandidates\(/.test(main) && /sendJobInfoLater\(\);[^\n]*\n\s*return \{ settings, tools, job: infoOf\(job, null\) \}/.test(main) &&
+          /onJobInfo: \(cb\) => subscribe\('job-info', cb\)/.test(preload) && /api\.onJobInfo\(/.test(html) && /원본 세는 중/.test(html) && /await cleanCandidatesAsync\(job\)/.test(cleanerSrc);
+        out.push(sub('55f 정리할 원본 세기: 같은 결과, 그만두기, 세는 동안 창이 멈추지 않음, 처음 켤 때 기다리지 않음', same && stopped === null && lagOk && wired,
+          `같음 ${same}, 그만둠 ${stopped === null}, 큰 작업 ${bigList.length}개 · 최대 지연 ${maxLag}ms, 연결 ${wired}`));
       }
       return out;
     },
