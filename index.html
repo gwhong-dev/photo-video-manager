@@ -93,6 +93,7 @@
     .t-nodate { background: #f3eefe; color: var(--purple); }
     .t-check { background: #fdeeee; color: var(--red); }
     .muted { color: var(--sub); }
+    .warnline { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: #fff4d6; color: #7a5300; font-size: 13px; line-height: 1.5; }
 
     /* 원본 정리 확인 창 + 🔍 샘플 확인 (CLAUDE.md "화면 디자인" 색과 글꼴) */
     #cleanDialog {
@@ -143,6 +144,7 @@
   <div class="card" id="banner">
     <div><b>📌 진행 중인 작업이 있어요</b> <span class="muted" id="bannerFrom"></span></div>
     <div class="chips" id="bannerChips"></div>
+    <div id="folderNote" class="warnline" style="display:none"></div>
     <div class="row" style="margin-top:10px">
       <button class="primary" id="nextBtn">▶ 이어서 실행</button>
       <button id="retryBtn" style="display:none">🔁 실패한 0개 다시 시도</button>
@@ -311,6 +313,7 @@
     // ---------- 이어하기 배너 ----------
     function setJob(info) {
       job = info;
+      renderFolderNote();
       if (!info) {
         $('banner').style.display = 'none';
         return;
@@ -388,6 +391,22 @@
     function renderPaths() {
       $('srcPath').textContent = state.source || '선택 안 함';
       $('destPath').textContent = state.backupRoot || '선택 안 함';
+      renderFolderNote();
+    }
+    // 진행 중인 작업의 폴더와 지금 고른 폴더가 다르면 알려 줘요
+    //   "다음 실행"은 진행 중 작업(옛 폴더)을 이어서 하고, 새 폴더는 미리보기를 다시 해야 적용돼요 (2026-11-14 실사용: SSD 로 바꾼 줄 알고 20분 돌림)
+    function renderFolderNote() {
+      const el = $('folderNote');
+      if (!el) return;
+      const same = (a, b) => String(a || '').replace(/[\\/]+$/, '').toLowerCase() === String(b || '').replace(/[\\/]+$/, '').toLowerCase();
+      const diffSrc = job && state.source && !same(job.source, state.source);
+      const diffDest = job && state.backupRoot && !same(job.backupRoot, state.backupRoot);
+      if (!diffSrc && !diffDest) {
+        el.style.display = 'none';
+        return;
+      }
+      el.textContent = `⚠ 고른 폴더가 진행 중인 작업과 달라요. "다음 실행"은 진행 중인 작업(${job.source} → ${job.backupRoot})을 이어서 해요. 새로 고른 폴더로 하려면 "미리보기"를 다시 눌러 주세요 (진행 중인 작업은 취소돼요)`;
+      el.style.display = 'block';
     }
     function resetPlan() {
       planReady = false;
@@ -542,7 +561,8 @@
       const pct = Math.floor((handled / p.total) * 100);
       $('progressText').textContent =
         `${pct}%  |  ${num(handled)} / ${num(p.total)}  |  완료 ${num(p.done)} · 중복 ${num(p.dup)} · 실패 ${num(p.fail)} · 재생 불가 ${num(p.broken)}  |  ` +
-        `경과 ${fmtTime(p.elapsedSec)}  |  남은 시간 ${fmtTime(p.remainSec)}  |  ${p.name}`;
+        (p.bytesTotal ? `${fmtBytes(p.bytesDone)} / ${fmtBytes(p.bytesTotal)}  |  ${fmtBytes(p.bytesPerSec)}/s  |  ` : '') +
+        `경과 ${fmtTime(p.elapsedSec)}  |  남은 시간 ${fmtTime(p.remainSec)}${p.bytesTotal ? ' (크기 기준)' : ''}  |  ${p.name}`;
     });
 
     async function runBatch() {
@@ -581,7 +601,9 @@
         );
         renderTable(await api.getRows($('filter').value));
         setBusy(false);
-        await askTrash();
+        // 일시정지로 멈췄으면 원본 확인(몇 분 걸림)을 자동으로 시작하지 않아요. 필요하면 위쪽 "원본 정리"로 (2026-11-14 실사용)
+        if (r.paused) setStatus($('status').textContent + '\n🧹 일시정지 중에는 원본 정리 확인을 하지 않아요. 필요하면 위쪽 "원본 정리"를 눌러 주세요');
+        else await askTrash();
         // 원본 정리 안내가 위 글자를 덮어써도, 재생 불가 안내는 끝까지 남겨요
         if (r.broken) setStatus($('status').textContent + `\n⚠ 재생할 수 없는 영상 ${num(r.broken)}개는 백업하지 않고 원본을 남겨 뒀어요. 표의 "⚠ 재생 불가" 줄과 로그에서 확인하세요.`);
         await maybeFinish();
