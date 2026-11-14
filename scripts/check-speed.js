@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { sub } = require('./check-gallery');
 const { ExifToolPool } = require('../lib/exiftool');
-const { makePlan, readMetaWithKeys, walk } = require('../lib/planner');
+const { makePlan, readMetaWithKeys, walk, createProgress, fmtLeft } = require('../lib/planner');
 const { JobStore } = require('../lib/job');
 const { createLogger } = require('../lib/logger');
 const { probeVideo } = require('../lib/tools');
@@ -161,6 +161,41 @@ const items = [
           const b = await readMetaWithKeys(pool, files, ['DateTimeOriginal', 'Model']);
           const norm = (m) => JSON.stringify([...m.entries()].sort((x, y) => x[0].localeCompare(y[0])));
           out.push(sub('52g exiftool 여러 개로 읽어도 결과 같음', a.size > 0 && norm(a) === norm(b), `${a.size}개 / ${b.size}개`));
+        }
+
+        // 52l 미리보기 진행 표시: 6단계가 차례로 "[n/6단계]" 로 나오고, 숫자 · 남은 시간이 붙음
+        {
+          const msgs = [];
+          const root = path.join(base, 'progress');
+          const source = path.join(root, 'source');
+          fs.cpSync(AUTO, source, { recursive: true, preserveTimestamps: true });
+          fs.mkdirSync(path.join(root, 'backup'), { recursive: true });
+          await makePlan({ source, backupRoot: path.join(root, 'backup'), includeSub: true }, pool, (m) => msgs.push(m));
+          const stages = [...new Set(msgs.map((m) => (m.match(/^\[(\d)\/6단계\]/) || [])[1]).filter(Boolean))];
+          const counted = msgs.some((m) => /^\[2\/6단계\].*\d+ \/ \d+/.test(m)) && msgs.some((m) => /^\[3\/6단계\].*\d+ \/ \d+/.test(m));
+          // 2단계 마지막 글에 "파일 수 / 파일 수" (0.3초 제한에 마지막 숫자가 막히지 않음)
+          const nFiles = fs.readdirSync(source, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).length;
+          const last2 = msgs.filter((m) => m.startsWith('[2/6단계]')).pop() || '';
+          const endShown = last2.includes(`${nFiles} / ${nFiles}`);
+          out.push(sub('52l 미리보기 6단계가 차례로 보이고 2 · 3단계에 몇 / 전체, 2단계 끝 숫자 보임', stages.join(',') === '1,2,3,4,5,6' && counted && endShown, `${stages.join(',')} / ${last2}`));
+          // 가짜 시계: 10초에 1,000개 중 100개 → 남은 900개는 약 90초 → "약 2분"
+          let t = 0;
+          const seen = [];
+          const p = createProgress((m) => seen.push(m), 6, () => t);
+          p.stage(2, '📅 촬영 정보 읽기');
+          t = 10000;
+          p.tick(100, 1000, true);
+          const etaOk = /100 \/ 1,000 \(남은 시간 약 2분\)/.test(seen[seen.length - 1]);
+          // 같은 단계 번호로 새 작업을 시작하면 시간을 다시 재요 (앞 작업 60초가 섞여 "약 39분" 이 나오면 안 됨)
+          p.stage(6, '🔤 이미 있는 파일 정보 읽기');
+          t = 70000;
+          p.tick(3000, 3000, true);
+          p.stage(6, '🔤 겹치는 이름 확인');
+          t = 70300;
+          p.tick(2000, 80000, true);
+          const fresh = !/남은 시간/.test(seen[seen.length - 1]);
+          out.push(sub('52m 남은 시간 계산 (10초에 100/1,000 → 약 2분), 새 작업은 시간을 다시 잼', etaOk && fresh, seen[seen.length - 1]));
+          out.push(sub('52n 남은 시간 표기', fmtLeft(30) === '1분 안' && fmtLeft(5400) === '약 1시간 30분' && fmtLeft(600) === '약 10분', [fmtLeft(30), fmtLeft(600), fmtLeft(5400)].join(' / ')));
         }
 
         // 52h 재생 확인 한 번으로 영상 형식까지 읽음 (MOV→MP4 가 ffprobe 를 다시 켜지 않게)
