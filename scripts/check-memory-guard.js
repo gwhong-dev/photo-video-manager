@@ -60,6 +60,37 @@ const items = [
         out.push(sub('53c 실행 중 메모리 위험 → 멈추고 남은 파일은 대기, 메모리 로그', before.low === null && r.paused && todoLeft > 0 && memLog, `처음 ${before.low}, paused ${r.paused}, 처리 ${r.handled}, 남은 ${todoLeft}, 로그 ${memLog}`));
       }
 
+      // 53e 측정이 실패하면(시간 초과 · 오류 · 숫자 하나만 · 예외) "못 잼"으로 보고 막지 않음
+      //   memory-guard 는 처음 불러올 때 runCmd 를 꺼내 둬서, 가짜 runCmd 를 끼운 뒤 다시 불러와요
+      {
+        const tools = require('../lib/tools');
+        const realRun = tools.runCmd;
+        const key = require.resolve('../lib/memory-guard');
+        const cases = [
+          async () => ({ timedOut: true, code: null, stdout: '' }),
+          async () => ({ code: 1, stdout: '' }),
+          async () => ({ code: 0, stdout: ' 262144000' }),
+          async () => { throw new Error('powershell 없음'); },
+        ];
+        const got = [];
+        try {
+          for (const fake of cases) {
+            tools.runCmd = fake;
+            delete require.cache[key];
+            const mg = require('../lib/memory-guard');
+            got.push(process.platform === 'win32' ? await mg.sampleWindows() : null);
+          }
+        } finally {
+          tools.runCmd = realRun;
+          delete require.cache[key];
+        }
+        const guard = createMemoryGuard({ sample: async () => null });
+        const c = await guard.check();
+        out.push(sub('53e 측정 실패 4가지 → 못 잰 것(null), 실행을 막지 않음', got.every((x) => x === null) && c.low === null, JSON.stringify(got)));
+        // 원본 정리 거절 안내는 "시작하지 않았어요"
+        out.push(sub('53f 원본 정리 거절 안내 글', /원본 정리를 시작하지 않았어요/.test(lowMessage('남은 가상 메모리 1.0GB', 'clean'))));
+      }
+
       // 53d 진짜 측정이 숫자로 나옴 (Windows 에서만)
       if (process.platform === 'win32') {
         const m = await sampleWindows();
