@@ -27,7 +27,8 @@ const items = [
       const early = runner.remainOf(10, 100, 400, 40e9, 200e9);
       const late = runner.remainOf(720, 100, 400, 40e9, 200e9);
       const noSize = runner.remainOf(720, 100, 400, 0, 0);
-      out.push(sub('55a 남은 시간: 처음 20초는 개수 기준, 그 뒤는 크기 기준, 크기를 모르면 개수 기준', Math.round(early) === 30 && Math.round(late) === 2880 && Math.round(noSize) === 2160, `${Math.round(early)} / ${Math.round(late)} / ${Math.round(noSize)}초`));
+      const by = [runner.remainBy(10, 40e9, 200e9), runner.remainBy(720, 40e9, 200e9), runner.remainBy(720, 0, 0)].join(',');
+      out.push(sub('55a 남은 시간: 처음 20초는 개수 기준, 그 뒤는 크기 기준, 크기를 모르면 개수 기준 (표시 이름도 맞음)', Math.round(early) === 30 && Math.round(late) === 2880 && Math.round(noSize) === 2160 && by === 'count,bytes,count', `${Math.round(early)} / ${Math.round(late)} / ${Math.round(noSize)}초, ${by}`));
 
       // 55b 실행 진행 알림에 처리한 크기 · 전체 크기 · 속도가 들어 있음 (마지막 알림은 처리 크기 = 전체 크기)
       {

@@ -562,7 +562,7 @@
       $('progressText').textContent =
         `${pct}%  |  ${num(handled)} / ${num(p.total)}  |  완료 ${num(p.done)} · 중복 ${num(p.dup)} · 실패 ${num(p.fail)} · 재생 불가 ${num(p.broken)}  |  ` +
         (p.bytesTotal ? `${fmtBytes(p.bytesDone)} / ${fmtBytes(p.bytesTotal)}  |  ${fmtBytes(p.bytesPerSec)}/s  |  ` : '') +
-        `경과 ${fmtTime(p.elapsedSec)}  |  남은 시간 ${fmtTime(p.remainSec)}${p.bytesTotal ? ' (크기 기준)' : ''}  |  ${p.name}`;
+        `경과 ${fmtTime(p.elapsedSec)}  |  남은 시간 ${fmtTime(p.remainSec)}${p.remainBy === 'bytes' ? ' (크기 기준)' : ''}  |  ${p.name}`;
     });
 
     async function runBatch() {
