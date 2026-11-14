@@ -45,7 +45,8 @@ const items = [
           try { r = await processItem(it, env.ctx); } catch (e) { err = e.message; }
           const streams = r ? (await runCmd(t.ffprobe.path, ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', r.finalPath])).stdout.split(/\r?\n/).filter((l) => l.trim() === 'audio').length : 0;
           const v = r ? await probeVideo(t.ffprobe.path, r.finalPath) : { ok: false };
-          out.push(sub('54a 소리 트랙 2개 MOV → MP4 완료, 소리 트랙 1개, 재생됨', !!r && r.status === 'done' && streams === 1 && v.ok === true, err || `소리 ${streams}개, 재생 ${v.ok}`));
+          const noted = !!r && /소리 트랙 2개 중 첫 번째만 옮김/.test(r.note || '');
+          out.push(sub('54a 소리 트랙 2개 MOV → MP4 완료, 소리 트랙 1개, 재생됨, 작업 메모에 "첫 번째만 옮김"', !!r && r.status === 'done' && streams === 1 && v.ok === true && noted, err || `소리 ${streams}개, 재생 ${v.ok}, 메모 "${r && r.note}"`));
         }
       }
 
@@ -64,6 +65,25 @@ const items = [
         const left = fs.readdirSync(dir).filter((n) => /__tmp__/.test(n));
         const dims = r ? (await env.et.read([r.finalPath], ['ImageWidth', 'ImageHeight']))[0] : {};
         out.push(sub('54b 그림 3장 든 사진 → 첫 장(80x60)만 JPG 1개, 조각 임시 파일 0개', !!r && r.status === 'done' && dims.ImageWidth === 80 && dims.ImageHeight === 60 && left.length === 0, err || `${dims.ImageWidth}x${dims.ImageHeight}, 남은 임시 ${left.join(',')}`));
+      }
+
+      // 54d 사진 변환이 실패하면 그 파일의 조각 임시 파일을 치움 (시작 전에 남아 있던 조각도). 이름이 비슷한 다른 파일은 그대로
+      if (t.magick.ok) {
+        const multi = path.join(src, 'IMG_2.tif');
+        await runCmd(t.magick.path, ['-size', '80x60', 'xc:red', '-size', '40x30', 'xc:blue', multi]);
+        const dir = path.join(root, 'backup', '2025', '08', '28');
+        fs.mkdirSync(dir, { recursive: true });
+        const dest = path.join(dir, '2025-08-28_100000_IMG_2.jpg');
+        const junk = ['2025-08-28_100000_IMG_2.__tmp__-0.jpg', '2025-08-28_100000_IMG_2.__tmp__-1.jpg'];
+        const keep = ['2025-08-28_100000_IMG_22.__tmp__-0.jpg', '2025-08-28_100000_IMG_2.__tmp__-x.jpg'];
+        for (const n of [...junk, ...keep]) fs.writeFileSync(path.join(dir, n), 'x');
+        // exiftool 쓰기가 실패하는 가짜 ctx → 변환 뒤 정보 복사에서 실패
+        const badEt = { read: env.et.read.bind(env.et), write: async () => { throw new Error('exiftool: 시험 실패'); } };
+        let err = '';
+        try { await processItem({ i: 2, src: multi, kind: 'heic2jpg', converted: true, date: '2025:08:28 10:00:00', dest }, { ...env.ctx, et: badEt }); } catch (e) { err = e.message; }
+        const now = fs.readdirSync(dir);
+        const ok = /시험 실패/.test(err) && junk.every((n) => !now.includes(n)) && keep.every((n) => now.includes(n)) && !now.some((n) => /IMG_2\.__tmp__(\.jpg|-\d+\.jpg)$/.test(n));
+        out.push(sub('54d 사진 변환 실패 → 그 파일의 조각 임시 파일만 치움', ok, `오류 "${err}", 남은 ${now.join(', ')}`));
       }
 
       // 54c 예전 실패가 남긴 조각(-0, -1)을 "실패한 파일 다시 시도"가 치움. 다른 파일 · 결과 파일은 그대로
