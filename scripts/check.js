@@ -1383,6 +1383,8 @@ const ITEMS = [
   ...require('./check-memory-guard').items,
   // 54번은 최신 아이폰 형식 변환 점검 (scripts/check-iphone-formats.js)
   ...require('./check-iphone-formats').items,
+  // 55번은 실행 화면 안내 점검 (scripts/check-run-screen.js)
+  ...require('./check-run-screen').items,
   // 51번은 한국어 답변 훅 점검 (scripts/check-korean-hook.js)
   ...require('./check-korean-hook').items,
 ];

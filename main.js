@@ -457,7 +457,8 @@ ipcMain.handle('trash-originals', async () => {
     // 정리 직전 확인은 줄이지 않아요: 크기 · 열어서 읽기 · 재생 확인은 다시 하고, 지문만 바뀌지 않은 파일은 다시 써요
     const hashOf = cleanHashOf || createHashCache();
     const hashCount = countHashesFrom(hashOf); // 정리 직전 확인에서 지문을 다시 계산한 수 · 다시 쓴 수 → 로그 끝 줄
-    const targets = job ? await cleanTargets(job, { hashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta }) : [];
+    // 정리 직전 확인도 화면에 진행 숫자를 보내요 (몇 분 걸리는데 아무 표시가 없어서, 2026-11-14 실사용)
+    const targets = job ? await cleanTargets(job, { hashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, onProgress: (p) => send('clean-check-progress', p) }) : [];
     const r = await cleanOriginals({
       hashStats: hashCount(),
       job,
