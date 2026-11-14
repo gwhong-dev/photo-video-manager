@@ -52,8 +52,43 @@ const items = [
       // 55c 화면 코드에 일시정지 때 원본 확인을 건너뛰는 길과 폴더가 바뀌었을 때 안내가 있음 (화면 동작은 PR 앱 확인에서)
       {
         const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-        const ok = /if \(r\.paused \|\| pauseClicked\) \{[\s\S]{0,400}\} else await askTrash\(\)/.test(html) && /pauseClicked = true;/.test(html) && /id="folderNote"/.test(html) && /function renderFolderNote\(\)/.test(html) && /원본 정리만 남음/.test(html);
+        const ok = /if \(r\.paused \|\| pauseClicked\) \{[\s\S]{0,400}\} else await offerTrash\(r\.job\)/.test(html) && /pauseClicked = true;/.test(html) && /id="folderNote"/.test(html) && /function renderFolderNote\(\)/.test(html) && /원본 정리만 남음/.test(html);
         out.push(sub('55c 화면: 일시정지 때 원본 확인 건너뜀, 폴더가 다르면 안내 자리', ok));
+      }
+
+      // 55d 회차가 끝나면 원본 확인을 바로 하지 않고 먼저 물어봄, "실패 다시 시도"는 되돌린 개수만 처리 (2026-11-15 실사용)
+      {
+        const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+        const offer = (html.match(/async function offerTrash\(j\) \{[\s\S]*?\n    \}/) || [''])[0];
+        const ask = /if \(!j \|\| !j\.deletable\) return;/.test(offer) && /if \(ok\) await askTrash\(\);/.test(offer) && /confirm\(/.test(offer);
+        const retry = /await runBatch\(r\.requeued\);/.test(html) && /async function runBatch\(n = batchSize\(\)\)/.test(html) && /api\.runBatch\(n\)/.test(html) && /api\.spaceInfo\(n\)/.test(html);
+        // 회차 끝에 askTrash 를 바로 부르는 곳이 없어야 해요 (원본만 남은 작업 · 원본 정리 버튼은 직접 고른 것이라 그대로)
+        const direct = (html.match(/await askTrash\(\)/g) || []).length;
+        out.push(sub('55d 화면: 회차 끝 원본 확인은 먼저 물어봄, 실패 다시 시도는 되돌린 개수만', ask && retry && direct === 3, `물어봄 ${ask}, 다시 시도 ${retry}, askTrash 직접 호출 ${direct}곳`));
+      }
+
+      // 55e 실제 실행: 앞쪽 2개가 실패로 남은 작업에서 "실패 다시 시도"(되돌린 개수만큼 실행) → 그 2개만 처리되고 나머지 대기는 그대로
+      {
+        const root = path.join(env.tmp, 'retry-only');
+        const source = path.join(root, 'source');
+        fs.cpSync(AUTO, source, { recursive: true, preserveTimestamps: true });
+        const backupRoot = path.join(root, 'backup');
+        fs.mkdirSync(backupRoot, { recursive: true });
+        const logger = createLogger(path.join(root, 'logs'));
+        const plan = await makePlan({ source, backupRoot, includeSub: true }, env.et);
+        const store = new JobStore(path.join(root, 'jobs'));
+        const job = store.create(plan);
+        // 첫 회차 3개 처리 → 그중 앞 2개를 실패로 바꿔 둠 (실패한 회차를 흉내)
+        await runner.runBatch({ job, store, batchSize: 3, ctx: env.ctx, logger });
+        const first = job.items.filter((it) => it.status !== 'todo').map((it) => it.i).sort((a, b) => a - b);
+        const failed = first.slice(0, 2);
+        for (const i of failed) store.mark(job, i, { status: 'fail', note: '시험 실패' });
+        const todoBefore = job.items.filter((it) => it.status === 'todo').length;
+        const rq = runner.requeueFailed(job, store);
+        await runner.runBatch({ job, store, batchSize: rq.requeued, ctx: env.ctx, logger });
+        const todoAfter = job.items.filter((it) => it.status === 'todo').length;
+        const retried = failed.every((i) => job.items[i].status !== 'todo' && job.items[i].status !== 'fail');
+        out.push(sub('55e 실패 2개 다시 시도 → 그 2개만 처리, 다른 대기 파일은 그대로', rq.requeued === 2 && retried && todoAfter === todoBefore && todoBefore > 0, `되돌림 ${rq.requeued}, 다시 처리 ${retried}, 대기 ${todoBefore} → ${todoAfter}`));
       }
       return out;
     },
