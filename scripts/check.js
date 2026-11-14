@@ -1381,6 +1381,8 @@ const ITEMS = [
   ...require('./check-speed').items,
   // 53번은 PC 메모리 지키기 점검 (scripts/check-memory-guard.js)
   ...require('./check-memory-guard').items,
+  // 54번은 최신 아이폰 형식 변환 점검 (scripts/check-iphone-formats.js)
+  ...require('./check-iphone-formats').items,
   // 51번은 한국어 답변 훅 점검 (scripts/check-korean-hook.js)
   ...require('./check-korean-hook').items,
 ];
