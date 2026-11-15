@@ -915,12 +915,12 @@ const items = [
         const sceneA = unit(1);
         const sceneB = unit(9);
         const far = ['0f0f0f0f33333333', 'f0f0f0f0cccccccc', '00ff00ff0f0f0f0f', 'ff00ff00f0f0f0f0', '3c3c3c3cc3c3c3c3', 'c3c3c3c33c3c3c3c'];
-        const r = (id, sec, vec, over = {}) => ({ id, name: `${id}.jpg`, takenAt: `2026-01-01T10:00:${String(sec).padStart(2, '0')}`, takenAtSource: 'exif', width: 10, height: 10, size: 1, model: 'iPhone', dhash: far[id % far.length], vec: vec ? A.toInt8(vec) : null, embedModel: vec ? A.MODEL.id : null, ...over });
+        const r = (id, sec, vec, over = {}) => ({ id, name: `${id}.jpg`, takenAt: `2026-01-01T10:00:${String(sec).padStart(2, '0')}`, takenAtSource: 'exif', width: 10, height: 10, size: 1, model: 'iPhone', dhash: far[id % far.length], blur: 0.3, light: 0.5, vec: vec ? A.toInt8(vec) : null, embedModel: vec ? A.MODEL.id : null, ...over });
         const simAB = A.cosine(A.toInt8(sceneA), A.toInt8(sceneB));
         const rows = [r(1, 0, sceneA), r(2, 5, mix(sceneA, sceneB, 0.1)), r(3, 10, sceneB), r(4, 15, mix(sceneB, sceneA, 0.1))];
         const g = S.buildGroups(rows);
-        out.push(sub('56b 장면이 바뀐 곳(유사도 0.78 미만)에서 이어 찍기 사슬이 끊겨 두 묶음, 둘 다 AI 확인 · 처음엔 모두 남김',
-          simAB < S.AI_LINK && JSON.stringify(g.map((x) => x.ids).sort()) === '[[1,2],[3,4]]' && g.every((x) => x.timeOnly && x.aiChecked && x.softIds.length === 2),
+        out.push(sub('56b 장면이 바뀐 곳(유사도 0.78 미만)에서 이어 찍기 사슬이 끊겨 두 묶음, 둘 다 AI 확인, 묶음마다 추천 1장만 남김',
+          simAB < S.AI_LINK && JSON.stringify(g.map((x) => x.ids).sort()) === '[[1,2],[3,4]]' && g.every((x) => x.timeOnly && x.aiChecked && x.softIds.length === 0 && !!x.keepReason),
           `장면 유사도 ${simAB.toFixed(2)}, ${JSON.stringify(g.map((x) => [x.ids, x.aiChecked]))}`));
         const noVec = S.buildGroups([r(1, 0, null), r(2, 5, sceneB), r(3, 10, sceneA)]);
         out.push(sub('56b 한쪽이라도 특징값이 없으면 시간만으로 이어요 (AI 확인 아님)',
@@ -928,7 +928,22 @@ const items = [
         const other = S.buildGroups([r(1, 0, sceneA), r(2, 5, sceneB, { embedModel: 'old-model' })]);
         out.push(sub('56b 모델이 다른 특징값끼리는 비교하지 않고 시간만으로', other.length === 1 && other[0].aiChecked === false, JSON.stringify(other)));
         out.push(sub('56b 묶음 안내: AI 로 확인한 이어 찍기 묶음',
-          V.groupNote({ timeOnly: true, aiChecked: true }) === 'AI 로 같은 장면을 확인한 이어 찍은 사진이라 처음엔 모두 남김' && V.groupNote({ timeOnly: true }) === '이어 찍은 사진이라 처음엔 모두 남김'));
+          V.groupNote({ timeOnly: true, aiChecked: true }) === 'AI 로 같은 장면을 확인한, 1분 안에 이어 찍은 사진' && V.groupNote({ timeOnly: true }) === '1분 안에 이어 찍은 사진'));
+        // 추천 기준 ⑤ AI 대표: 흐림 · 크기 · 선명도가 같으면 다른 사진들과 가장 비슷한(가운데) 사진을 추천
+        const center = mix(sceneA, sceneB, 0.15);
+        const rep = S.pickBest([
+          r(1, 0, sceneA, { blur: 0.3, light: 0.5, size: 9 }),
+          r(2, 1, center, { blur: 0.3, light: 0.5, size: 1 }),
+          r(3, 2, mix(sceneA, sceneB, 0.3), { blur: 0.3, light: 0.5, size: 5 }),
+        ]); // AI 기준 없이 고르면 파일 크기로 1번
+        const repG = S.buildGroups([
+          r(1, 0, sceneA, { blur: 0.3, light: 0.5, size: 9 }),
+          r(2, 1, center, { blur: 0.3, light: 0.5, size: 1 }),
+          r(3, 2, mix(sceneA, sceneB, 0.3), { blur: 0.3, light: 0.5, size: 5 }),
+        ]);
+        out.push(sub('56b 추천: 흐림 · 크기 · 선명도가 같으면 AI 대표(다른 사진과 가장 비슷한 사진)를 파일 크기보다 먼저',
+          repG.length === 1 && repG[0].keepId === 2 && repG[0].keepReason === 'AI 가 본 대표 장면에 가장 가까운 사진' && rep.keep.id === 1,
+          JSON.stringify(repG.map((x) => [x.keepId, x.keepReason]))));
       }
 
       // 56c 모델 받기: 정해진 주소 하나, 크기 · SHA-256 이 맞을 때만 저장 (가짜 인터넷, 작은 가짜 모델)
@@ -966,6 +981,38 @@ const items = [
           A.MODEL.bytes = saved.bytes;
           A.MODEL.sha256 = saved.sha256;
         }
+        // 검증 지적: 받다 끈 임시 파일 · 깨진 모델 · 끌 때 멈추기
+        {
+          const saved2 = { bytes: A.MODEL.bytes, sha256: A.MODEL.sha256 };
+          A.MODEL.bytes = content.length;
+          A.MODEL.sha256 = crypto.createHash('sha256').update(content).digest('hex');
+          try {
+            const b4 = path.join(base, 'dl-sweep');
+            fs.mkdirSync(path.join(b4, 'models'), { recursive: true });
+            const stale = `${A.modelPath(b4)}.tmp-1-1`;
+            fs.writeFileSync(stale, 'x');
+            const other = path.join(b4, 'models', 'keep.txt');
+            fs.writeFileSync(other, 'x');
+            await A.downloadModel({ fetchImpl: fetchOk, base: b4 });
+            out.push(sub('56c 받기 시작할 때 지난번에 끊겨 남은 임시 파일만 치움 (다른 파일은 그대로)', !fs.existsSync(stale) && fs.existsSync(other) && A.modelReady(b4)));
+            const good = await A.verifyModel(b4);
+            fs.writeFileSync(A.modelPath(b4), Buffer.alloc(content.length, 1)); // 크기는 같고 내용이 다름
+            const bad = await A.verifyModel(b4);
+            const moved = fs.readdirSync(path.join(b4, 'models')).filter((n) => n.includes('.broken-'));
+            out.push(sub('56c 모델 파일 확인: 맞으면 참, 내용이 다르면 거짓 + 옆 이름(.broken-)으로 치워 다시 받게', good === true && bad === false && moved.length === 1 && !A.modelReady(b4), JSON.stringify({ good, bad, moved })));
+            const ac = new AbortController();
+            const slow = async (url, init) => ({ ok: true, status: 200, body: new ReadableStream({ start(c) { c.enqueue(new Uint8Array(content.subarray(0, 100))); init.signal.addEventListener('abort', () => c.error(new Error('aborted'))); } }) });
+            const b5 = path.join(base, 'dl-abort');
+            const pr = errOf(() => A.downloadModel({ fetchImpl: slow, base: b5, signal: ac.signal }));
+            setTimeout(() => ac.abort(), 50);
+            const e5 = await pr;
+            const left5 = fs.existsSync(path.join(b5, 'models')) ? fs.readdirSync(path.join(b5, 'models')) : [];
+            out.push(sub('56c 끌 때(signal) 받기를 멈추고 임시 파일을 지움', !!e5 && left5.length === 0, `${e5} ${JSON.stringify(left5)}`));
+          } finally {
+            A.MODEL.bytes = saved2.bytes;
+            A.MODEL.sha256 = saved2.sha256;
+          }
+        }
         out.push(sub('56c 진짜 모델 정보: 89,117,001 바이트, MIT 표기, 받는 곳은 huggingface.co Xenova/clip-vit-base-patch32',
           A.MODEL.bytes === 89117001 && /^[0-9a-f]{64}$/.test(A.MODEL.sha256) && A.MODEL.url.startsWith('https://huggingface.co/Xenova/clip-vit-base-patch32/') && A.MODEL.label.includes('MIT')));
       }
@@ -989,9 +1036,31 @@ const items = [
           JSON.stringify(jobs0) === '["a.jpg","b.jpg"]' && jobs1.length === 0 && p1.total === 2 && p1.done === 2 && JSON.stringify(jobsNew) === '["a.jpg","b.jpg"]',
           JSON.stringify([jobs0, jobs1, p1, jobsNew])));
         out.push(sub('56d 묶기용 줄에 특징값(512바이트)과 모델 이름, 실패는 null',
-          Buffer.isBuffer(rows[0].vec) && rows[0].vec.length === 512 && rows[0].embedModel === 'm1' && rows[1].vec === null && rows[1].embedModel === null, JSON.stringify(rows.map((x) => [x.name, x.vec && x.vec.length, x.embedModel]))));
+          rows[0].vec instanceof Uint8Array && rows[0].vec.length === 512 && rows[0].embedModel === 'm1' && rows[1].vec === null && rows[1].embedModel === null, JSON.stringify(rows.map((x) => [x.name, x.vec && x.vec.length, x.embedModel]))));
         db.resetFailedThumbs('R1');
         out.push(sub('56d 썸네일 다시 만들기를 하면 특징값 실패 기록도 지워져 다시 할 일로', db.embedJobs('R1', 10, 0, 'm1').map((f) => f.name).join() === 'b.jpg'));
+      });
+
+      // 56i 검증 지적: AI 로 나뉜 이어 찍기 묶음도 버리기 확인이 같은 묶음으로 봐요 (나뉜 한 묶음을 다 버리면 거절)
+      await withDb(env, 'similar-ai-discard', async (db) => {
+        const D = require('../lib/similar-discard');
+        const va = A.toInt8(new Float32Array(512).map((_, i) => Math.sin(i * 0.37)));
+        const vb = A.toInt8(new Float32Array(512).map((_, i) => Math.cos(i * 1.91)));
+        const hs = { 'a1.jpg': '0f0f0f0f33333333', 'a2.jpg': 'f0f0f0f0cccccccc', 'b1.jpg': '00ff00ff0f0f0f0f', 'b2.jpg': 'ff00ff00f0f0f0f0' };
+        const names = ['a1.jpg', 'a2.jpg', 'b1.jpg', 'b2.jpg'];
+        db.upsertFiles(names.map((n, k) => row({ root: 'R4', path: `R4/${n}`, name: n, takenDay: '2026-06-06', takenAt: `2026-06-06T10:00:${String(k * 10).padStart(2, '0')}`, model: 'iPhone' })));
+        for (const f of db.hashJobs('R4', 10)) {
+          db.setHash(f.path, f.size, f.mtimeMs, hs[f.name]);
+          db.setBlur(f.path, f.size, f.mtimeMs, 0.3, 0.5);
+          db.setEmbed(f.path, f.size, f.mtimeMs, A.MODEL.id, f.name.startsWith('a') ? va : vb);
+        }
+        const groups = S.buildGroups(db.similarRows('R4'));
+        const id4 = (n) => db.similarRows('R4').find((x) => x.name === n).id;
+        let err = '';
+        try { D.checkDiscard(db, 'R4', [id4('a1.jpg'), id4('a2.jpg')]); } catch (e) { err = e.message; }
+        const ok = D.checkDiscard(db, 'R4', [id4('a2.jpg'), id4('b2.jpg')]);
+        out.push(sub('56i AI 로 장면이 나뉘면 두 묶음, 한 묶음을 다 버리면 거절, 묶음마다 한 장씩은 버릴 수 있음',
+          groups.length === 2 && err === '묶음마다 적어도 한 장은 남겨 주세요' && ok.groups === 2, JSON.stringify({ groups: groups.map((g) => g.ids), err, okGroups: ok.groups })));
       });
 
       // 56e 특징값 만들기 (가짜 세션): 모델이 없으면 아무것도 안 함, 썸네일 실패는 null, 가져오기 중엔 쉼, 끝나면 세션을 닫음
@@ -1033,6 +1102,16 @@ const items = [
           await em.stop();
           const after = await em.run('R1');
           out.push(sub('56e 멈춘 뒤에는 아무것도 안 함', after.made === 0 && loads === 1));
+          // 검증 지적: 모델을 열지 못하면(onnxruntime 을 못 불러옴 등) 회차가 실패로 끝나요 → gallery-main 이 다시 시도하지 않게 표시
+          db.upsertFiles([row({ root: 'R1', path: 'R1/9.jpg', name: '9.jpg' })]);
+          let thrown = '';
+          try {
+            await A.createEmbedder({ db, thumbs, base: b3, inputOf, loadSession: async () => { throw new Error('DLL 을 불러오지 못함'); } }).run('R1');
+          } catch (e) {
+            thrown = e.message;
+          }
+          out.push(sub('56e 모델을 열지 못하면 회차가 오류로 끝남 (특징값을 "실패"로 적지 않아 고친 뒤 다시 만들 수 있음)',
+            thrown.includes('DLL') && db.embedJobs('R1', 10, 0, A.MODEL.id).map((f) => f.name).includes('9.jpg'), thrown));
         } finally {
           A.MODEL.bytes = saved;
         }
