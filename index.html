@@ -227,6 +227,8 @@
     </div>
     <div class="cd-foot">
       <button id="cdLater">나중에 정리하기</button>
+      <!-- 휴지통에 다 담기지 않을 때만 보여요: 그래도 휴지통으로 (먼저 넣은 것부터 비워져 사실상 되살릴 수 없음) -->
+      <button id="cdGoBin" hidden>휴지통으로 옮기기</button>
       <button class="cd-go" id="cdGo">원본 정리하기</button>
     </div>
   </dialog>
@@ -694,24 +696,39 @@
       const weakText = c && c.weak ? ' (exFAT 처럼 변경 시각을 기록하지 않는 디스크라 표본을 늘렸어요)' : '';
       const checkText = c && c.trusted ? ` (쓸 때 기록과 같은 결과 파일 ${num(c.trusted)}개 중 표본 ${num(c.sampled)}개를 끝까지 읽어 확인${weakText}${c.sampleFail ? `, 다른 파일 ${num(c.sampleFail)}개 → 전부 다시 확인함` : ', 모두 같음'})` : '';
       setStatus(`🔍 원본 확인 끝: 정리할 수 있는 원본 ${num(info.count)}개${checkText}`);
+      // 휴지통에 다 담기지 않는 드라이브 (2026-11-15 사용자 결정: 경고 한 줄 대신 고르게)
+      //   휴지통 크기를 넘으면 Windows 가 먼저 넣은 것부터 비워서, 휴지통으로 보내도 대부분은 되살릴 수 없어요
+      const over = info.drives.filter((d) => d.method === 'trash' && d.overflow);
+      const capText = (d) => (d.capBytes ? `약 ${fmtBytes(d.capBytes)}` : '일부');
       const where = info.drives
-        .map((d) => `${d.root} (${d.label}) ${num(d.count)}개 → ${d.method === 'trash' ? '휴지통으로' : '가져올 폴더\\_정리완료원본 으로 이동'}`)
+        .map((d) => {
+          const how = d.method !== 'trash' ? '가져올 폴더\\_정리완료원본 으로 이동' : d.overflow ? '휴지통에 다 안 들어가요 (아래에서 골라요)' : '휴지통으로';
+          return `${d.root} (${d.label}) ${num(d.count)}개 (${fmtBytes(d.bytes)}) → ${how}`;
+        })
         .join('\n');
       let msg =
         `백업 폴더에 저장이 끝난 원본 ${num(info.count)}개 (${fmtBytes(info.bytes)})를 정리할까요?\n\n${where}\n\n` +
         `- 결과 파일이 백업 폴더에 있는 것만 정리해요\n- 실패한 파일, 재생할 수 없는 영상, 확인이 필요한 중복은 남겨 둬요\n- 영구 삭제는 하지 않아요`;
+      if (over.length) {
+        msg +=
+          `\n\n휴지통이 모자란 드라이브(${over.map((d) => d.root).join(', ')})는 둘 중에서 골라요\n` +
+          `- _정리완료원본으로 옮기기: 바로 끝나고 언제든 되돌릴 수 있어요. 디스크 공간은 아직 안 생겨요 (나중에 그 폴더를 직접 지우면 생겨요)\n` +
+          `- 휴지통으로 옮기기: 공간이 생기지만 휴지통에 남는 건 마지막에 넣은 ${over.map(capText).join(', ')}뿐이에요. 나머지는 Windows 가 자동으로 비워서 되살릴 수 없어요`;
+      }
       if (info.warnings.length) msg += '\n\n⚠️ ' + info.warnings.join('\n⚠️ ');
-      if (!(await confirmClean(msg, cleanGoText(info), info.sample))) return;
+      const binText = over.length ? `휴지통으로 옮기기 (${over.map(capText).join(', ')}만 되살릴 수 있음)` : '';
+      const choice = await confirmClean(msg, cleanGoText(info), info.sample, binText);
+      if (!choice) return;
 
       const before = $('status').textContent; // 이번 회차 결과는 남겨 두기
       setBusy(true);
       $('progressBox').style.display = 'block';
       // "확인 끝" 문구가 남아 다시 확인하는 것처럼 보이지 않게 (2026-11-15 실사용)
-      setStatus('🧹 휴지통으로 옮기는 중… 먼저 확인한 파일이 그대로인지만 보고 바로 옮겨요');
+      setStatus('🧹 원본 정리 중… 먼저 확인한 파일이 그대로인지만 보고 바로 옮겨요');
       $('bar').value = 0;
       $('progressText').textContent = '🧹 옮기기 전 마지막 확인…';
       try {
-        const r = await api.trashOriginals();
+        const r = await api.trashOriginals({ binOverflow: choice === 'bin' ? 'trash' : 'move' });
         setJob(r.job);
         setStatus(
           before +
@@ -724,18 +741,23 @@
     }
     // 확인 창: 정리하기 → true, 나중에 정리하기나 Esc → false
     //   🔍 샘플 확인으로 백업 폴더에 남을 결과 파일을 직접 열어 보고 정할 수 있어요
-    function confirmClean(msg, goText, sample) {
+    //   binText: 휴지통이 넘칠 때 "그래도 휴지통" 버튼 글자 (없으면 버튼 숨김)
+    //   돌려주는 값: 'go' (기본 버튼) / 'bin' (그래도 휴지통) / false (나중에)
+    function confirmClean(msg, goText, sample, binText = '') {
       return new Promise((resolve) => {
         const d = $('cleanDialog');
         $('cdMsg').textContent = msg;
         $('cdGo').textContent = goText;
+        $('cdGoBin').hidden = !binText;
+        $('cdGoBin').textContent = binText;
         renderSample(sample);
         const done = (ok) => {
           d.oncancel = null;
           d.close();
           resolve(ok);
         };
-        $('cdGo').onclick = () => done(true);
+        $('cdGo').onclick = () => done('go');
+        $('cdGoBin').onclick = () => done('bin');
         $('cdLater').onclick = () => done(false);
         d.oncancel = (e) => {
           e.preventDefault();
@@ -748,7 +770,8 @@
 
     // 버튼 문구는 결과를 말해요 (모두 휴지통 / 모두 옮기기 / 섞임)
     function cleanGoText(info) {
-      const methods = new Set(info.drives.map((d) => d.method));
+      // 휴지통에 다 담기지 않는 드라이브는 기본이 _정리완료원본으로 옮기기예요 (되돌리기 쉬운 쪽)
+      const methods = new Set(info.drives.map((d) => (d.method === 'trash' && d.overflow ? 'move' : d.method)));
       const n = num(info.count);
       if (methods.size === 1 && methods.has('trash')) return `원본 ${n}개 휴지통으로 옮기기`;
       if (methods.size === 1 && methods.has('move')) return `원본 ${n}개 _정리완료원본으로 옮기기`;

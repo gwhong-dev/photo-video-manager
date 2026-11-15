@@ -464,6 +464,7 @@ let cleanHashOf = null;
 let cleanSample = null; // 🔍 샘플 확인 후보 (확인 창을 띄울 때 만든 정리 대상의 결과 파일들)
 let cleanSigs = null; // 확인 창에서 통과한 원본 · 남길 파일의 서명 → 정리 직전에는 이것이 그대로인지만 봐요
 let cleanJob = null; // 위 서명을 만든 작업 (다른 작업으로 바뀌었으면 쓰지 않아요)
+let cleanOverflowRoots = null; // 확인 창에서 휴지통에 다 담기지 않는다고 나온 드라이브들
 // 정리 확인 창에서 만든 것들 비우기 (정리를 끝냈을 때, 작업을 끝내거나 새로 시작할 때)
 //   지난 작업의 샘플 후보가 남아 있으면 다른 작업의 파일을 열 수 있어서요
 function resetCleanCheck() {
@@ -472,6 +473,7 @@ function resetCleanCheck() {
   cleanSample = null; // 샘플 후보도 다음 확인 창에서 새로
   cleanSigs = null;
   cleanJob = null;
+  cleanOverflowRoots = null;
 }
 ipcMain.handle('trash-info', async () => {
   if (running) throw new Error('다른 작업이 끝난 뒤에 해 주세요');
@@ -490,6 +492,7 @@ ipcMain.handle('trash-info', async () => {
     cleanSample = samplePool(job, targets);
     // 확인하다 재생 불가를 찾으면 개수가 바뀌어요 → 작업 정보도 새로 보내요
     const info = await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf });
+    cleanOverflowRoots = new Set(info.drives.filter((d) => d.method === 'trash' && d.overflow).map((d) => d.root));
     if (stats && stats.sampleFail) info.warnings = [...(info.warnings || []), `표본 검사에서 기록과 다른 결과 파일 ${stats.sampleFail}개를 찾아서 전부 지문으로 다시 확인했어요 (다른 파일은 정리 대상에서 빠졌어요)`];
     return { ...info, check: stats, sample: sampleView(cleanSample), job: await jobInfo() };
   } finally {
@@ -498,7 +501,10 @@ ipcMain.handle('trash-info', async () => {
 });
 
 // 원본 정리 (하드디스크 → 휴지통 / USB·SD·네트워크 → _정리완료원본으로 이동, 영구 삭제 없음)
-ipcMain.handle('trash-originals', async () => {
+//   opts.binOverflow: 휴지통에 다 담기지 않는 드라이브를 어떻게 할지 (2026-11-15 사용자 결정)
+//     'trash' = 그래도 휴지통 (먼저 넣은 것부터 자동으로 비워져 사실상 되살릴 수 없음)
+//     그 밖(없음 포함) = _정리완료원본으로 옮기기 (되돌리기 쉬운 쪽이 기본)
+ipcMain.handle('trash-originals', async (e, opts = {}) => {
   if (running) throw new Error('실행 중에는 할 수 없어요');
   // 정리하는 동안에는 "실행 중"으로 표시 → 미리보기·새 작업·작업 끝내기를 막아요 (기록이 섞이지 않게)
   running = true;
@@ -522,6 +528,7 @@ ipcMain.handle('trash-originals', async () => {
       trash: (p) => shell.trashItem(p),
       driveKindOf: cleanDriveKindOf || createDriveKindOf(), // 확인 창과 같은 판단
       onProgress: (p) => send('trash-progress', p),
+      moveRoots: opts && opts.binOverflow === 'trash' ? null : cleanOverflowRoots,
     });
     return { ...r, job: await jobInfo() };
   } finally {
