@@ -21,7 +21,7 @@ const cleanReadMeta = (paths) => {
 };
 const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
-const { cleanCandidatesAsync, cleanTargets, cleanInfo, cleanOriginals, createHashCache, countHashesFrom } = require('./lib/cleaner');
+const { cleanCandidatesAsync, cleanTargets, recheckTargets, cleanInfo, cleanOriginals, createHashCache, countHashesFrom } = require('./lib/cleaner');
 const { createDriveKindOf } = require('./lib/platform');
 const { samplePool, sampleView, openSample } = require('./lib/clean-sample');
 const { openFolderOnly } = require('./lib/open-folder');
@@ -462,12 +462,16 @@ async function refuseIfMemoryLow() {
 let cleanDriveKindOf = null;
 let cleanHashOf = null;
 let cleanSample = null; // 🔍 샘플 확인 후보 (확인 창을 띄울 때 만든 정리 대상의 결과 파일들)
+let cleanSigs = null; // 확인 창에서 통과한 원본 · 남길 파일의 서명 → 정리 직전에는 이것이 그대로인지만 봐요
+let cleanJob = null; // 위 서명을 만든 작업 (다른 작업으로 바뀌었으면 쓰지 않아요)
 // 정리 확인 창에서 만든 것들 비우기 (정리를 끝냈을 때, 작업을 끝내거나 새로 시작할 때)
 //   지난 작업의 샘플 후보가 남아 있으면 다른 작업의 파일을 열 수 있어서요
 function resetCleanCheck() {
   cleanDriveKindOf = null; // 다음 정리 때는 새로 확인
   cleanHashOf = null; // 지문도 다음 정리 때는 새로 계산
   cleanSample = null; // 샘플 후보도 다음 확인 창에서 새로
+  cleanSigs = null;
+  cleanJob = null;
 }
 ipcMain.handle('trash-info', async () => {
   if (running) throw new Error('다른 작업이 끝난 뒤에 해 주세요');
@@ -477,10 +481,17 @@ ipcMain.handle('trash-info', async () => {
     await refuseIfMemoryLow();
     cleanDriveKindOf = createDriveKindOf();
     cleanHashOf = createHashCache();
-    const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, onProgress: (p) => send('clean-check-progress', p) }) : [];
+    // 쓸 때 기록과 같은 결과 파일은 지문을 다시 읽지 않고, 표본만 끝까지 확인해요 (2026-11-15 결정)
+    const sigs = new Map();
+    let stats = null;
+    const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, sigs, onStats: (s) => (stats = s), onProgress: (p) => send('clean-check-progress', p) }) : [];
+    cleanSigs = sigs;
+    cleanJob = job;
     cleanSample = samplePool(job, targets);
     // 확인하다 재생 불가를 찾으면 개수가 바뀌어요 → 작업 정보도 새로 보내요
-    return { ...(await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf })), sample: sampleView(cleanSample), job: await jobInfo() };
+    const info = await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf });
+    if (stats && stats.sampleFail) info.warnings = [...(info.warnings || []), `표본 검사에서 기록과 다른 결과 파일 ${stats.sampleFail}개를 찾아서 전부 지문으로 다시 확인했어요 (다른 파일은 정리 대상에서 빠졌어요)`];
+    return { ...info, check: stats, sample: sampleView(cleanSample), job: await jobInfo() };
   } finally {
     running = false;
   }
@@ -493,11 +504,15 @@ ipcMain.handle('trash-originals', async () => {
   running = true;
   try {
     await refuseIfMemoryLow();
-    // 정리 직전 확인은 줄이지 않아요: 크기 · 열어서 읽기 · 재생 확인은 다시 하고, 지문만 바뀌지 않은 파일은 다시 써요
     const hashOf = cleanHashOf || createHashCache();
     const hashCount = countHashesFrom(hashOf); // 정리 직전 확인에서 지문을 다시 계산한 수 · 다시 쓴 수 → 로그 끝 줄
-    // 정리 직전 확인도 화면에 진행 숫자를 보내요 (몇 분 걸리는데 아무 표시가 없어서, 2026-11-14 실사용)
-    const targets = job ? await cleanTargets(job, { hashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, onProgress: (p) => send('clean-check-progress', p) }) : [];
+    // 정리 직전 확인: 확인 창에서 통과한 원본 · 남길 파일이 그 뒤로 그대로인지(서명)만 봐요 (2026-11-15 결정)
+    //   확인 창을 거치지 않았으면(다른 작업 등) 지금까지처럼 끝까지 확인해요
+    //   화면에 진행 숫자를 보내요 (2026-11-14 실사용)
+    const progress = (p) => send('clean-check-progress', { ...p, final: true });
+    const targets = !job ? [] : cleanSigs && cleanJob === job
+      ? await recheckTargets(job, cleanSigs, { onProgress: progress })
+      : await cleanTargets(job, { hashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, onProgress: progress });
     const r = await cleanOriginals({
       hashStats: hashCount(),
       job,
