@@ -332,7 +332,7 @@ const ITEMS = [
           const vbase = { ...base, ModifyDate: '2026:01:04 23:19:48+09:00', SubSecTimeOriginal: undefined };
           const vok = (b = {}, a = {}) => cleaner.convertedDupOk({ src: vsrc }, vkeep, async () => new Map([[keyOf(vsrc), { ...vbase, ...a }], [keyOf(vkeep), { ...vbase, ...b }]]));
           const sa = cleaner.secondsApart;
-          out.push(sub('8b 영상은 수정 시각 2초 차이까지 같은 촬영 (3초 · 며칠 차이, 시간대 모양이 다르면 아님). 사진은 1초만 달라도 아님',
+          out.push(sub('8b2 영상은 수정 시각 2초 차이까지 같은 촬영 (3초 · 며칠 차이, 시간대 모양이 다르거나 없는 날짜면 아님, 0.001초는 그대로 같아야 함). 사진은 1초만 달라도 아님',
             (await vok({ ModifyDate: '2026:01:04 23:19:47+09:00' })) && (await vok({ ModifyDate: '2026:01:04 23:19:50+09:00' }))
               && (await vok({ ModifyDate: '2026:01:04 14:19:47Z' }))
               && !(await vok({ ModifyDate: '2026:01:04 23:19:45+09:00' })) && !(await vok({ ModifyDate: '2026:01:12 23:19:48+09:00' }))
@@ -340,7 +340,10 @@ const ITEMS = [
               && !(await vok({ ModifyDate: undefined }))
               && !(await ok({}, { ModifyDate: '2026:01:02 03:04:06' }))
               && sa('2026:01:01 00:00:00', '2025:12:31 23:59:59') === 1 && sa('2026:01:01 00:00:00-01:30', '2026:01:01 01:30:00Z') === 0
-              && sa('nope', '2026:01:01 00:00:00') === Infinity,
+              && sa('nope', '2026:01:01 00:00:00') === Infinity
+              && !(await vok({ SubSecTimeOriginal: '2' }, { SubSecTimeOriginal: '1' }))
+              && sa('2026:02:30 00:00:00', '2026:03:02 00:00:00') === Infinity && sa('2026:01:01 99:99:99', '2026:01:01 00:00:00') === Infinity
+              && sa('2026:01:01 00:00:48.0', '2026:01:01 00:00:50.999') > 2 && sa('2024:02:29 00:00:00', '2024:02:29 00:00:01') === 1,
             `${await vok({ ModifyDate: '2026:01:04 23:19:47+09:00' })} / ${await vok({ ModifyDate: '2026:01:04 23:19:45+09:00' })}`));
         }
         const item = (over) => ({ i: 0, src, status: 'dup', converted: true, dupOf: keep, ...over });
