@@ -409,11 +409,17 @@ const ITEMS = [
               { i: 0, src: path.join(root8, 'gone-twin.HEIC'), status: 'dup', converted: true, sameShot: true, dupOf: keep, trashed: true },
               { i: 1, src, status: 'dup', converted: true, dupOf: keep, note: '같은 파일 (gone-twin.HEIC)' },
               { i: 2, src, status: 'dup', converted: true, dupOf: other },
+              // "확인 필요" 인 같은 촬영 항목은 쌍둥이 근거가 되지 않아요 → other 로 이어진 i:2 는 그대로 후보 아님 (#116 추가 검증 ⚠️)
+              { i: 3, src, status: 'dup', converted: true, sameShot: true, check: true, dupOf: other },
             ] };
             const qs = cleaner.cleanCandidates(twinJob).map((it) => it.i).join(',');
             const qa = (await cleaner.cleanCandidatesAsync(twinJob)).map((it) => it.i).join(',');
-            out.push(sub('8b3 쌍둥이 원본을 따라 같은 촬영 백업 파일로 이어진 변환 중복도 정리 후보 (쌍둥이가 이미 정리돼도), 같은 촬영 쌍둥이가 없으면 아님',
-              qs === '1' && qa === '1', `빠른 확인 ${qs} / 비동기 ${qa}`));
+            // 쌍둥이 후보도 정리 직전 확인(애플 ID · 날짜 · 가로세로)을 거쳐요: 날짜가 다르면 정리 안 함
+            const twinStrict = await cleaner.cleanTargets(twinJob, { readMeta: reader({}, { DateTimeOriginal: '2020:01:01 00:00:00' }) });
+            const twinOk = await cleaner.cleanTargets(twinJob, { readMeta: reader({}, {}) });
+            out.push(sub('8b3 쌍둥이 원본을 따라 같은 촬영 백업 파일로 이어진 변환 중복도 정리 후보 (쌍둥이가 이미 정리돼도), 같은 촬영 쌍둥이가 없거나 "확인 필요"면 아님, 정리 직전 확인은 그대로',
+              qs === '1' && qa === '1' && twinStrict.length === 0 && twinOk.map((it) => it.i).join(',') === '1',
+              `빠른 확인 ${qs} / 비동기 ${qa} / 날짜 다름 ${twinStrict.length} / 같음 ${twinOk.map((it) => it.i).join(',')}`));
           }
           out.push(sub('8b3 잠깐 못 읽은 것(정보가 비어 옴 · 남길 파일 읽기 오류)은 기록하지 않고 배너 후보에 그대로',
             emptyMeta.t.length === 0 && !emptyMeta.it.cleanSkip && emptyMeta.again === 1 && bt.length === 0 && !bj.items[0].cleanSkip && cleaner.cleanCandidates(bj).length === 1,
