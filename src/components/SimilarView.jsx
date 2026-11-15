@@ -1,6 +1,7 @@
 // 파일 위치: src/components/SimilarView.jsx
 // 역할: "비슷한 사진" 화면 (단계 4, docs/개발개요-v3.md 4-2)
-//   묶음마다 사진을 늘어놓고, 처음에는 가장 큰 사진 한 장만 "남김", 나머지는 "버림"으로 표시해요
+//   묶음마다 사진을 늘어놓고, 처음에는 추천 1장(흐리지 않음 → 노출 → 크기 → 선명함 → 파일 크기 순)만 "남김", 나머지는 "버림"으로 표시해요
+//   추천 사진에는 "추천" 표시, 묶음 제목 아래에 까닭 한 줄 (2026-11-16 사용자 결정)
 //   사진을 누르면 오른쪽 패널에 크게 보이고, 사진 아래 표시 버튼으로 남김과 버림을 바꿔요 (묶음마다 한 장은 꼭 남아요)
 //   아래 버튼 → 확인 창(몇 장이 휴지통으로, 몇 장이 _정리완료원본 폴더로 가는지) → 옮기기. 영구 삭제는 안 해요
 //   남김/버림 표시에만 색연필 빨강을 써요 (CLAUDE.md 화면 디자인)
@@ -11,7 +12,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { formatCount, formatTakenAt } from '../format.mjs';
-import { aiConfirmLabel, aiConfirmLines, aiLine, discardIds, discardLabel, groupDiscardIds, groupNote, groupReviewLabel, keepAll, markOf, pinMarks, previewLines, progressText, pruneOverrides, resultText, reviewLabel, toggleMark } from '../similar-view.mjs';
+import { aiConfirmLabel, aiConfirmLines, aiLine, discardIds, discardLabel, groupDiscardIds, groupNote, groupReviewLabel, keepAll, markOf, pinMarks, previewLines, progressText, pruneOverrides, recommendText, resultText, reviewLabel, toggleMark } from '../similar-view.mjs';
 import EmptyState from './EmptyState.jsx';
 
 const PAGE = 30; // 한 번에 보여 주는 묶음 수
@@ -75,7 +76,7 @@ function AiBar({ onNotice, onChanged }) {
 }
 
 // 사진 한 칸: 사진을 누르면 크게 보기, 아래 버튼으로 남김과 버림 바꾸기
-function SimilarCell({ file, mark, focused, onFocus, onToggle, disabled }) {
+function SimilarCell({ file, mark, best, focused, onFocus, onToggle, disabled }) {
   const [broken, setBroken] = useState(false);
   const keep = mark === 'keep';
   const size = file.width && file.height ? `${file.width}×${file.height}` : '';
@@ -87,6 +88,7 @@ function SimilarCell({ file, mark, focused, onFocus, onToggle, disabled }) {
           : <img src={`pvm://thumb/${file.id}`} alt="" loading="lazy" draggable="false" onError={() => setBroken(true)} />}
         {!keep && <span className="similar-x" aria-hidden="true" />}
         {file.blurry && <span className="similar-blur">흐림</span>}
+        {best && <span className="similar-best">추천</span>}
       </button>
       <button type="button" className="similar-mark" aria-pressed={keep} aria-label={`${file.name} ${keep ? '남김, 누르면 버림으로' : '버림, 누르면 남김으로'}`} disabled={disabled} onClick={() => onToggle(file.id)}>
         {keep ? '남김' : '버림'}
@@ -236,6 +238,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
         {groups.slice(0, shown).map((g) => {
           const gone = groupDiscardIds(g, overrides).length;
           const note = groupNote(g);
+          const why = recommendText(g);
           return (
           <div className="similar-group" key={g.ids.join(',')}>
             <div className="similar-head">
@@ -251,9 +254,11 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
                 )}
               </span>
             </div>
+            {why && <p className="similar-why">{why}</p>}
             <div className="similar-grid">
               {g.files.map((f) => (
-                <SimilarCell key={f.id} file={f} mark={markOf(g, f.id, overrides)} focused={focusId === f.id} onFocus={onFocus} onToggle={(id) => toggle(g, id)} disabled={busy} />
+                <SimilarCell key={f.id} file={f} mark={markOf(g, f.id, overrides)} best={f.id === g.keepId} focused
+={focusId === f.id} onFocus={onFocus} onToggle={(id) => toggle(g, id)} disabled={busy} />
               ))}
             </div>
           </div>

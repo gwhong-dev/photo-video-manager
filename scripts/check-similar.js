@@ -355,14 +355,16 @@ const items = [
       {
         // 지문끼리 서로 멀어서 ①②로는 안 묶이는 사진들 (실제 안경 사진 5장처럼 dHash 로는 못 가림)
         const far = ['0f0f0f0f33333333', 'f0f0f0f0cccccccc', '00ff00ff0f0f0f0f', 'ff00ff00f0f0f0f0', '3c3c3c3cc3c3c3c3', 'c3c3c3c33c3c3c3c', '55aa55aa55aa55aa'];
-        const r = (id, takenAt, over = {}) => ({ id, name: `${id}.jpg`, takenAt, takenAtSource: 'exif', width: 100, height: 100, size: 1000, model: 'iPhone 15 Pro', dhash: far[id % far.length], ...over });
+        const r = (id, takenAt, over = {}) => ({ id, name: `${id}.jpg`, takenAt, takenAtSource: 'exif', width: 100, height: 100, size: 1000, model: 'iPhone 15 Pro', dhash: far[id % far.length], blur: 0.3, light: 0.5, ...over });
         // 실제 예 (G: 2026-10-23): 17:08, 19:05 한 장씩 + 22:24:57 부터 2 · 4 · 11 · 15초 간격 5장
         const day = [r(1, '2026-10-23T17:08:20'), r(2, '2026-10-23T19:05:36'), r(3, '2026-10-23T22:24:57'), r(4, '2026-10-23T22:24:59'), r(5, '2026-10-23T22:25:03'), r(6, '2026-10-23T22:25:14'), r(7, '2026-10-23T22:25:29')];
         const g = S.buildGroups(day);
         out.push(sub('36j 안경 사진 5장(2 · 4 · 11 · 15초 간격)은 한 묶음, 17:08 · 19:05 사진은 안 들어옴',
           g.length === 1 && g[0].ids.join() === '3,4,5,6,7', JSON.stringify(g)));
-        out.push(sub('36j 이어 찍기로만 묶인 묶음은 timeOnly, 모든 사진이 softIds (처음엔 모두 남김)',
-          g.length === 1 && g[0].timeOnly === true && g[0].softIds.join() === '3,4,5,6,7', JSON.stringify(g)));
+        out.push(sub('36j 이어 찍기로만 묶인 묶음은 timeOnly, 추천 1장만 남김 (정보가 다 있으면 softIds 없음, 2026-11-16 결정 변경)',
+          g.length === 1 && g[0].timeOnly === true && g[0].softIds.length === 0 && g[0].keepId === 3 && !!g[0].keepReason, JSON.stringify(g)));
+        const unknown = S.buildGroups(day.map((x) => (x.id === 6 ? { ...x, blur: null } : x)));
+        out.push(sub('36j 흐림 점수가 아직 없는 사진은 처음엔 남김(softIds)', unknown.length === 1 && unknown[0].softIds.join() === '6', JSON.stringify(unknown)));
         out.push(sub('36j 60초 넘게 떨어지면 안 묶음, 사슬로는 이어짐 (0 · 50 · 100초)',
           S.buildGroups([r(1, '2026-01-01T10:00:00'), r(2, '2026-01-01T10:01:01')]).length === 0
             && S.buildGroups([r(1, '2026-01-01T10:00:00'), r(2, '2026-01-01T10:00:50'), r(3, '2026-01-01T10:01:40')]).map((x) => x.ids.join()).join('|') === '1,2,3'));
@@ -381,15 +383,41 @@ const items = [
         const A = '0f0f0f0f33333333';
         const An = '0f0f0f0f33333330';
         const mix = S.buildGroups([r(1, '2026-01-01T10:00:00', { dhash: A, width: 400, height: 300 }), r(2, '2026-01-01T10:00:02', { dhash: An }), r(3, '2026-01-01T10:00:32', { dhash: 'f0f0f0f0cccccccc' })]);
-        out.push(sub('36j ① 묶음에 이어 찍은 사진이 붙으면: 남길 사진 그대로, 버림 후보도 그대로, 새로 붙은 사진만 처음엔 남김',
-          mix.length === 1 && mix[0].ids.join() === '1,2,3' && mix[0].keepId === 1 && mix[0].softIds.join() === '3' && mix[0].timeOnly === false, JSON.stringify(mix)));
+        out.push(sub('36j ① 묶음에 이어 찍은 사진이 붙으면 한 묶음, 추천 1장(가장 큰 사진)만 남김',
+          mix.length === 1 && mix[0].ids.join() === '1,2,3' && mix[0].keepId === 1 && mix[0].softIds.length === 0 && mix[0].timeOnly === false && mix[0].keepReason === '가장 큰 사진', JSON.stringify(mix)));
         // ① 묶음 두 개가 이어 찍기로 이어지면 한 묶음, 두 묶음의 남길 사진은 둘 다 처음엔 남김
         const B = 'f0f0f0f0cccccccc';
         const Bn = 'f0f0f0f0cccccccd';
         const two = S.buildGroups([r(1, '2026-01-01T10:00:00', { dhash: A, width: 400, height: 300 }), r(2, '2026-01-01T10:00:01', { dhash: An }), r(3, '2026-01-01T10:00:40', { dhash: B, width: 300, height: 200 }), r(4, '2026-01-01T10:00:41', { dhash: Bn })]);
         const keepsFirst = two.length === 1 ? two[0].ids.filter((id) => id === two[0].keepId || two[0].softIds.includes(id)) : [];
-        out.push(sub('36j ① 묶음 두 개가 이어지면 한 묶음, 두 남길 사진(1, 3)은 처음엔 남김, 2 · 4 는 버림 후보',
-          two.length === 1 && two[0].keepId === 1 && keepsFirst.join() === '1,3', JSON.stringify(two)));
+        out.push(sub('36j ① 묶음 두 개가 이어지면 한 묶음, 추천 1장(1)만 남김',
+          two.length === 1 && two[0].keepId === 1 && keepsFirst.join() === '1', JSON.stringify(two)));
+
+        // 36n 추천 1장 고르기 (2026-11-16 사용자 결정): 흐리지 않음 → 노출 → 정보 → 크기 → 선명함 → 파일 크기 → 먼저 찍음
+        const q = (id, over) => r(id, `2026-02-02T10:00:0${id}`, over);
+        // 실제 안경 5장의 값 (흐림 · 크기는 G: 실측, 앞 3장 선명 · 뒤 2장 흐림)
+        const glasses = [
+          q(1, { blur: 0.337, light: 0.6, width: 3024, height: 4032, size: 1936755 }),
+          q(2, { blur: 0.315, light: 0.6, width: 3024, height: 4032, size: 2041156 }),
+          q(3, { blur: 0.346, light: 0.6, width: 3024, height: 4032, size: 1760173 }),
+          q(4, { blur: 0.64, light: 0.55, width: 3024, height: 4032, size: 1435666 }),
+          q(5, { blur: 0.685, light: 0.6, width: 3024, height: 4032, size: 1234299 }),
+        ];
+        const gb = S.pickBest(glasses);
+        out.push(sub('36n 안경 5장: 흐린 2장을 빼고 선명도 차이가 작은 3장 중 파일이 가장 큰 IMG_82411(2번)',
+          gb.keep.id === 2 && gb.reason === '흐린 사진 2장을 빼고 파일이 가장 큰 사진', JSON.stringify({ id: gb.keep.id, reason: gb.reason })));
+        const dark = S.pickBest([q(1, { light: 0.05, size: 9999 }), q(2, { light: 0.5 }), q(3, { light: 0.52 })]);
+        out.push(sub('36n 묶음 가운데 밝기에서 크게 벗어난(너무 어두운) 사진은 뒤로', dark.keep.id === 2 && dark.reason.startsWith('너무 어둡거나 밝은 사진 1장을 빼고'), JSON.stringify({ id: dark.keep.id, reason: dark.reason })));
+        const night = S.pickBest([q(1, { light: 0.06 }), q(2, { light: 0.07, size: 2000 })]);
+        out.push(sub('36n 모두 어두운 밤 사진이면 노출로 빼지 않음 (파일 크기로)', night.keep.id === 2 && night.reason === '파일이 가장 큰 사진', JSON.stringify({ id: night.keep.id, reason: night.reason })));
+        const copies = S.pickBest([q(1, { width: 1536, height: 2048, blur: 0.28, size: 900000 }), q(2, { width: 3024, height: 4032, blur: 0.33, size: 2500000 })]);
+        out.push(sub('36n 줄인 사본보다 원본(가로×세로가 큰 것)을 추천 (썸네일 선명도 작은 차이보다 먼저)', copies.keep.id === 2 && copies.reason === '가장 큰 사진', JSON.stringify({ id: copies.keep.id, reason: copies.reason })));
+        const sharper = S.pickBest([q(1, { blur: 0.42, size: 5000 }), q(2, { blur: 0.30 })]);
+        out.push(sub('36n 같은 크기면 흐림 점수가 0.03 넘게 낮은 쪽이 추천 ("가장 선명한 사진")', sharper.keep.id === 2 && sharper.reason === '가장 선명한 사진', JSON.stringify({ id: sharper.keep.id, reason: sharper.reason })));
+        const info = S.pickBest([q(1, { blur: null, width: 4000, height: 3000 }), q(2, {})]);
+        out.push(sub('36n 흐림 점수가 없는 사진보다 정보가 다 있는 사진을 추천', info.keep.id === 2, JSON.stringify({ id: info.keep.id, reason: info.reason })));
+        const allBlur = S.pickBest([q(1, { blur: 0.7 }), q(2, { blur: 0.6, size: 2000 })]);
+        out.push(sub('36n 모두 흐리면 흐림으로 빼지 않고 다음 기준으로', allBlur.keep.id === 2 && !allBlur.reason.includes('빼고'), JSON.stringify({ id: allBlur.keep.id, reason: allBlur.reason })));
         // 6만 장 중 절반이 이어 찍기여도 빠르게
         const many = [];
         let t = Date.UTC(2020, 0, 1) / 1000;
@@ -539,10 +567,13 @@ const items = [
           JSON.stringify(V.groupDiscardIds(g, both)) === '[2,3]' && JSON.stringify(V.groupDiscardIds(g, all)) === '[]'
             && V.groupReviewLabel(2) === '이 묶음에서 버릴 2장 옮기기' && V.groupReviewLabel(0) === '',
           JSON.stringify(V.groupDiscardIds(g, both))));
-        const t = { ids: [4, 5, 6], keepId: 4, softIds: [4, 5, 6], keptIds: [], timeOnly: true };
-        out.push(sub('37i 이어 찍기 묶음: 처음엔 모두 남김, 버릴 것 없음, 안내 문구',
-          [4, 5, 6].every((id) => V.markOf(t, id, new Map()) === 'keep') && V.groupDiscardIds(t, V.pinMarks([t], new Map())).length === 0
-            && V.groupNote(t) === '이어 찍은 사진이라 처음엔 모두 남김' && V.groupNote(g) === ''));
+        const t = { ids: [4, 5, 6], keepId: 5, keepReason: '흐린 사진 1장을 빼고 가장 선명한 사진', softIds: [], keptIds: [], timeOnly: true };
+        out.push(sub('37i 이어 찍기 묶음: 추천 1장만 남김, 나머지 2장은 버림 후보, 안내 · 추천 까닭 문구',
+          V.markOf(t, 5, new Map()) === 'keep' && V.markOf(t, 4, new Map()) === 'discard' && JSON.stringify(V.groupDiscardIds(t, V.pinMarks([t], new Map()))) === '[4,6]'
+            && V.groupNote(t) === '1분 안에 이어 찍은 사진' && V.groupNote(g) === ''
+            && V.recommendText(t) === '추천 1장: 흐린 사진 1장을 빼고 가장 선명한 사진. 나머지를 버릴지, 다른 사진을 남길지, 여러 장 남길지 골라 주세요.' && V.recommendText(g) === '',
+          V.recommendText(t)));
+
         out.push(sub('37i 가져오기 중이면 "가져오기가 끝나면 이어서" 안내',
           V.progressText({ total: 10, done: 3, waiting: true }) === '사진 지문 3 / 10장. 가져오기가 끝나면 이어서 만들어요.', V.progressText({ total: 10, done: 3, waiting: true })));
       }
