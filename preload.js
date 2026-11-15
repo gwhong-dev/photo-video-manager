@@ -30,7 +30,8 @@ contextBridge.exposeInMainWorld('api', {
 
   // 원본 정리 / 작업 끝내기
   trashInfo: () => ipcRenderer.invoke('trash-info'),
-  trashOriginals: () => ipcRenderer.invoke('trash-originals'),
+  // opts.binOverflow: 휴지통이 모자란 드라이브를 'trash'(그래도 휴지통) 또는 'move'(_정리완료원본으로)
+  trashOriginals: (opts) => ipcRenderer.invoke('trash-originals', { binOverflow: opts && opts.binOverflow === 'trash' ? 'trash' : 'move' }),
   // 🔍 샘플 확인: 다시 뽑기, 크게 열기 (경로 없이 번호로만)
   cleanSample: () => ipcRenderer.invoke('clean-sample'),
   openCleanSample: (key) => ipcRenderer.invoke('clean-sample-open', key),

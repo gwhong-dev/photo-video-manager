@@ -966,6 +966,43 @@ const ITEMS = [
         out.push(sub('12q 설정이 5%보다 작으면 설정을 넘을 때 경고', smaller.length === 1 && smaller[0].includes('설정'), smaller.join(' / ') || '경고 없음'));
         const unknown = await warn(async () => null, small);
         out.push(sub('12q 설정을 모르면 5%로 계산', unknown.length === 1 && unknown[0].includes('약 5%'), unknown.join(' / ') || '경고 없음'));
+
+        // 12q2 휴지통에 다 담기지 않으면 드라이브에 표시 → 화면에서 _정리완료원본 / 휴지통 을 고름 (2026-11-15 사용자 결정)
+        //      실사용: I: 748GB 를 휴지통(48.6GB)으로 보내 대부분 되살릴 수 없게 됨 (경고 한 줄뿐이었음)
+        const driveOf = async (recycleOf, statfs, binUsedOf) => (await cleaner.cleanInfo(c.job, targets, { driveKindOf: async () => 'fixed', recycleOf, statfs, binUsedOf })).drives[0];
+        const dOver = await driveOf(async () => ({ maxBytes: 50, nuke: false }), big, async () => 0);
+        const dFit = await driveOf(async () => ({ maxBytes: 300, nuke: false }), small, async () => 0);
+        const dUsed = await driveOf(async () => ({ maxBytes: 150, nuke: false }), small, async () => 100); // 이미 든 것 + 이번 것이 넘침
+        const dGuess = await driveOf(async () => null, small, async () => 0); // 설정 모름 → 5% 짐작
+        out.push(sub('12q2 휴지통이 넘치면 overflow 와 남을 크기(설정, 모르면 5% 짐작), 들어가면 overflow 아님',
+          dOver.overflow === true && dOver.capBytes === 50 && dFit.overflow === false && dUsed.overflow === true && dGuess.overflow === true && dGuess.capBytes === 50,
+          JSON.stringify([dOver, dFit, dUsed, dGuess].map((d) => [d.overflow, d.capBytes]))));
+      }
+
+      // 12q3 휴지통이 모자라 "_정리완료원본으로 옮기기"를 고른 드라이브는 휴지통을 쓰지 않음, 고르지 않은 드라이브는 그대로 휴지통
+      if (!cleaner || !cleaner.cleanOriginals) {
+        out.push(missing('12q3 휴지통이 모자라면 옮기기'));
+      } else {
+        const c = makeCase('12q3');
+        const trashed = [];
+        const fixed = async () => 'fixed';
+        // 앱과 같은 길로: 확인 창 정보(cleanInfo)에서 넘친 드라이브를 모아(overflowRootsOf) 정리에 넘겨요 (#115 검증 ⚠️)
+        const overInfo = await cleaner.cleanInfo(c.job, [{ ...c.job.items[0], size: 100 }], { driveKindOf: fixed, recycleOf: async () => ({ maxBytes: 0, nuke: false }), binUsedOf: async () => 0 });
+        const roots = cleaner.overflowRootsOf(overInfo);
+        const lower = new Set([...roots].map((x) => x.toLowerCase())); // 드라이브 이름 대소문자가 달라도 같게 봐요
+        const r = await cleaner.cleanOriginals({ job: c.job, store: c.store, targets: [c.job.items[0]], logger: c.logger, trash: async (p) => trashed.push(p), driveKindOf: fixed, moveRoots: roots });
+        const log = fs.readFileSync(r.logPath, 'utf8');
+        const moved = c.job.items[0].movedTo;
+        const c2 = makeCase('12q3b');
+        const trashed2 = [];
+        const r2 = await cleaner.cleanOriginals({ job: c2.job, store: c2.store, targets: [c2.job.items[0]], logger: c2.logger, trash: async (p) => trashed2.push(p), driveKindOf: fixed, moveRoots: new Set(['Z:\\']) });
+        const c3 = makeCase('12q3c');
+        const trashed3 = [];
+        const r3 = await cleaner.cleanOriginals({ job: c3.job, store: c3.store, targets: [c3.job.items[0]], logger: c3.logger, trash: async (p) => trashed3.push(p), driveKindOf: fixed, moveRoots: lower });
+        out.push(sub('12q3 확인 창에서 넘친 드라이브는 휴지통 대신 _정리완료원본으로 (로그에 "휴지통이 모자라 고른 대로", 드라이브 이름 대소문자 무관), 다른 드라이브는 그대로 휴지통',
+          roots.size === 1 && r.moved === 1 && trashed.length === 0 && moved && fs.existsSync(moved) && /_정리완료원본/.test(moved) && /휴지통이 모자라 고른 대로/.test(log)
+            && r3.moved === 1 && trashed3.length === 0 && r2.trashed === 1 && trashed2.length === 1,
+          `넘친 드라이브 [${[...roots]}], 옮김 ${r.moved} 휴지통 ${trashed.length} / 소문자 ${r3.moved} / 다른 드라이브 휴지통 ${trashed2.length}`));
       }
 
       // 12r 휴지통이 "바로 제거"로 설정된 드라이브 → 휴지통에 보내지 않고 이동 (영구 삭제 방지)
