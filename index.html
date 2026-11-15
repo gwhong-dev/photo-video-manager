@@ -691,7 +691,8 @@
       }
       // 확인 요약: 기록을 믿은 결과 파일 수와 표본 검사 결과
       const c = info.check;
-      const checkText = c && c.trusted ? ` (쓸 때 기록과 같은 결과 파일 ${num(c.trusted)}개 중 표본 ${num(c.sampled)}개를 끝까지 읽어 확인${c.sampleFail ? `, 다른 파일 ${num(c.sampleFail)}개 → 전부 다시 확인함` : ', 모두 같음'})` : '';
+      const weakText = c && c.weak ? ' (exFAT 처럼 변경 시각을 기록하지 않는 디스크라 표본을 늘렸어요)' : '';
+      const checkText = c && c.trusted ? ` (쓸 때 기록과 같은 결과 파일 ${num(c.trusted)}개 중 표본 ${num(c.sampled)}개를 끝까지 읽어 확인${weakText}${c.sampleFail ? `, 다른 파일 ${num(c.sampleFail)}개 → 전부 다시 확인함` : ', 모두 같음'})` : '';
       setStatus(`🔍 원본 확인 끝: 정리할 수 있는 원본 ${num(info.count)}개${checkText}`);
       const where = info.drives
         .map((d) => `${d.root} (${d.label}) ${num(d.count)}개 → ${d.method === 'trash' ? '휴지통으로' : '가져올 폴더\\_정리완료원본 으로 이동'}`)

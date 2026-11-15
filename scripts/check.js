@@ -1392,6 +1392,7 @@ const ITEMS = [
           `대상 ${r1.t.length}, 지문 ${r1.h.seen.length}번, ${JSON.stringify(r1.stats)}`));
 
         // 2) 표본 밖 파일 하나를 같은 크기로 덮어쓰고 수정 시각을 되돌림 → 서명이 달라져 그 파일만 지문 → 다르니 정리 안 함
+        //    (NTFS 기준: 변경 시각(ctime)이 바뀌어서 잡혀요. 점검 임시 폴더는 %TEMP% = NTFS. exFAT 는 변경 시각이 없어 다르게 다뤄요)
         const f50 = j1.items[50].finalPath;
         const st50 = fs.statSync(f50);
         fs.writeFileSync(f50, 'RESULT-050');
@@ -1429,6 +1430,38 @@ const ITEMS = [
         const vNo = await cleaner.cleanTargets(await vItem(false), { ffprobe: null });
         out.push(sub('12z 영상은 만든 직후 재생 확인을 통과한 기록이 있어야 기록을 믿음 (없으면 재생 확인, 도구가 없으면 남김)',
           vYes.length === 1 && vNo.length === 0, `기록 있음 ${vYes.length}, 없음 ${vNo.length}`));
+
+        // 5-1) exFAT 처럼 변경 시각을 기록하지 않는 디스크 (같은 드라이브 파일의 ctime 이 모두 한 값) → 표본 5% (최대 3,000)
+        //      점검 임시 폴더는 NTFS 라서, 서명의 변경 시각 칸을 한 값으로 바꾸는 가짜 서명 읽기로 흉내 내요
+        {
+          const big = path.join(dir, 'weak');
+          fs.mkdirSync(big, { recursive: true });
+          const flat = async (p) => {
+            const s = await fileSig(p);
+            if (!s) return s;
+            const parts = s.split('|');
+            parts[2] = '1240428288000000000'; // G: 에서 실측한 exFAT 값
+            return parts.join('|');
+          };
+          const M = 1000;
+          const mk = async (sigFn) => {
+            const items = [];
+            for (let i = 0; i < M; i++) {
+              const src = path.join(big, `s${i}.jpg`);
+              const fin = path.join(big, `r${String(i).padStart(4, '0')}.jpg`);
+              if (!fs.existsSync(src)) fs.writeFileSync(src, `s${i}`);
+              if (!fs.existsSync(fin)) fs.writeFileSync(fin, `r${String(i).padStart(4, '0')}`);
+              items.push({ i, src, status: 'done', finalPath: fin, resultHash: await cleaner.hashFile(fin), resultSig: await sigFn(fin) });
+            }
+            return { source: big, backupRoot: big, items };
+          };
+          const rw = await run(await mk(flat), { sigOf: flat });
+          const rs = await run(await mk(fileSig));
+          out.push(sub('12z 변경 시각이 없는 디스크(exFAT)는 표본 5%(최대 3,000), 보통 디스크는 1%(최소 30)',
+            rw.stats.weak === M && rw.h.seen.length === 50 && rw.t.length === M && rs.stats.weak === 0 && rs.h.seen.length === 30 && rs.t.length === M
+              && cleaner.sampleSize(58670, true) === 2934 && cleaner.sampleSize(100000, true) === 3000 && cleaner.sampleSize(100, true) === 30,
+            `exFAT 흉내: 표본 ${rw.h.seen.length}, weak ${rw.stats.weak} / 보통: 표본 ${rs.h.seen.length}, weak ${rs.stats.weak}`));
+        }
 
         // 6) 정리 직전 확인: 확인 창 뒤로 바뀐 원본 · 결과 파일, 없어진 결과 파일, 이미 정리한 항목은 빠지고 나머지는 지문 없이 통과
         const j6 = await makeJob();
