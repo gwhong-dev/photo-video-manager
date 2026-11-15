@@ -43,6 +43,7 @@ const { buildSuggestions } = require('./lib/location-suggest');
 const { createSkips } = require('./lib/suggest-skips');
 const { createMapNet, roundCoord, roundCity } = require('./lib/map-net');
 const { buildGroups, createHasher, isBlurry } = require('./lib/similar');
+const ai = require('./lib/similar-ai');
 const { checkDiscard, discardInfo, discardFiles } = require('./lib/similar-discard');
 const { createDriveKindOf } = require('./lib/platform');
 const { historyFromJobs, planFill, toFillPreview, runFill, undoFill, lastFillRun } = require('./lib/fill-nodate');
@@ -699,9 +700,85 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
         try {
           send('gallery:similar-progress', similarProgress(root));
           if (again && again.root === rootNow()) startHashing(again.root, again.mode);
+          else if (root === rootNow()) startEmbedding(root, mode); // 지문 다음에 AI 특징값 (모델을 받았을 때만)
         } catch (e) { /* 끄는 중 */ }
       });
   }
+
+  // ---------- PC 안 AI 특징값 (④, lib/similar-ai.js) ----------
+  //   모델은 사용자가 화면 확인 창에서 "받기"를 누를 때만 받아요 (gallery:ai-download). 앱이 스스로 받지 않아요
+  //   특징값은 지문처럼 뒤에서 만들고, 가져오기 중에는 쉬어요. 다 만들면 화면이 목록을 다시 받아요
+  const embedder = db && thumbs ? ai.createEmbedder({ db, thumbs, base }) : null;
+  let embedding = false;
+  let embedAgain = null;
+  const aiInfo = { downloading: false, got: 0, error: '' }; // 받기 상태 (화면 표시용)
+  const aiProgress = (root) => {
+    const ready = ai.modelReady(base);
+    const p = ready && root ? db.embedProgress(root, ai.MODEL.id) : { total: 0, done: 0 };
+    return { model: ready ? 'ready' : aiInfo.downloading ? 'downloading' : 'none', bytes: ai.MODEL.bytes, got: aiInfo.got, error: aiInfo.error, ...p, embedding, waiting: embedding && busy() };
+  };
+  const sendAi = (root) => {
+    try { send('gallery:ai-progress', aiProgress(root)); } catch (e) { /* 끄는 중 */ }
+  };
+  function startEmbedding(root, mode = 'full') {
+    if (!embedder || !root || closed || !ai.modelReady(base)) return;
+    if (embedding) {
+      if (!embedAgain || embedAgain.root !== root || mode === 'full') embedAgain = { root, mode };
+      return;
+    }
+    const p = db.embedProgress(root, ai.MODEL.id);
+    if (p.done >= p.total) return;
+    embedding = true;
+    sendAi(root);
+    embedder.run(root, () => sendAi(root), { readyOnly: mode === 'bg', isBusy: busy })
+      .catch((e) => {
+        aiInfo.error = 'AI 특징값을 만들지 못했어요. 오류 로그를 확인해 주세요.';
+        errorLog('AI 특징값 만들기', e);
+      })
+      .finally(() => {
+        embedding = false;
+        const again = embedAgain;
+        embedAgain = null;
+        if (closed) return;
+        sendAi(root);
+        if (again && again.root === rootNow()) startEmbedding(again.root, again.mode);
+      });
+  }
+
+  // AI 상태 → { model: 'none'|'downloading'|'ready', bytes, got, error, total, done, embedding, waiting }
+  ipcMain.handle('gallery:ai-state', () => aiProgress(rootNow()));
+
+  // AI 모델 받기 (화면 확인 창에서 누른 뒤에만). 정해진 주소 하나 · SHA-256 확인 (lib/similar-ai.js)
+  ipcMain.handle('gallery:ai-download', async () => {
+    if (ai.modelReady(base)) return aiProgress(rootNow());
+    if (aiInfo.downloading) throw new Error('이미 받는 중이에요');
+    aiInfo.downloading = true;
+    aiInfo.got = 0;
+    aiInfo.error = '';
+    sendAi(rootNow());
+    const log = (() => {
+      try { return logger.newLog('ai-model', `AI 모델 받기 ${now()}`); } catch (e) { return null; }
+    })();
+    try {
+      if (log) log.write(`받는 곳: ${ai.MODEL.url} (${ai.MODEL.bytes} 바이트, ${ai.MODEL.label})`);
+      await ai.downloadModel({
+        fetchImpl: (...a) => mapFetch(...a),
+        base,
+        onProgress: (got) => { aiInfo.got = got; sendAi(rootNow()); },
+      });
+      if (log) log.write('받기 끝, SHA-256 맞음');
+    } catch (e) {
+      aiInfo.error = e.message;
+      if (log) log.write(`받기 실패: ${e.message}`);
+      throw e;
+    } finally {
+      aiInfo.downloading = false;
+      sendAi(rootNow());
+    }
+    const root = rootNow();
+    if (root) startEmbedding(root, 'full');
+    return aiProgress(root);
+  });
 
   // "이 묶음은 모두 남기기"를 누른 사진 (다음 실행에도 기억해요, 2026-11-04 사용자 결정). DB를 새로 만들어도 남게 경로로 적어요
   const similarKeeps = createSkips(path.join(base, 'similar-keeps.json'), { onError: errorLog, label: '모두 남긴 사진 목록' });
@@ -718,6 +795,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     const kept = similarKeeps.paths();
     let hiddenKept = 0;
     const groups = [];
+    startEmbedding(root, 'full');
     for (const g of buildGroups(rows)) {
       const keptIds = g.ids.filter((id) => kept.has(byId.get(id).path));
       if (keptIds.length === g.ids.length) {
@@ -1017,6 +1095,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       try {
 
         if (hasher) hasher.stop().catch(() => {});
+        if (embedder) embedder.stop().catch(() => {});
+
         if (thumbs) thumbs.stop().catch(() => {});
       } catch (e) { /* 끄는 중이라 무시 */ }
       try {

@@ -11,10 +11,68 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { formatCount, formatTakenAt } from '../format.mjs';
-import { discardIds, discardLabel, groupDiscardIds, groupNote, groupReviewLabel, keepAll, markOf, pinMarks, previewLines, progressText, pruneOverrides, resultText, reviewLabel, toggleMark } from '../similar-view.mjs';
+import { aiConfirmLabel, aiConfirmLines, aiLine, discardIds, discardLabel, groupDiscardIds, groupNote, groupReviewLabel, keepAll, markOf, pinMarks, previewLines, progressText, pruneOverrides, resultText, reviewLabel, toggleMark } from '../similar-view.mjs';
 import EmptyState from './EmptyState.jsx';
 
 const PAGE = 30; // 한 번에 보여 주는 묶음 수
+
+// PC 안 AI 비교 한 줄: 모델이 없으면 "받기" 버튼 → 확인 창(어디서 · 얼마나 · 무엇을 보내지 않는지) → 받기
+//   모델은 이 확인 창에서 누를 때만 받아요 (2026-11-16 사용자 결정). 받은 뒤에는 특징값 만드는 진행만 보여요
+function AiBar({ onNotice, onChanged }) {
+  const [state, setState] = useState(null);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const wasEmbedding = useRef(false);
+  useEffect(() => {
+    let alive = true;
+    api.aiState().then((s) => { if (alive) setState(s); }).catch(() => {});
+    let off = () => {};
+    try {
+      off = api.onAiProgress((s) => {
+        setState(s);
+        // 특징값을 다 만들면 묶음이 바뀔 수 있어서 목록을 다시 받아요
+        if (wasEmbedding.current && !s.embedding) onChanged();
+        wasEmbedding.current = !!s.embedding;
+      });
+    } catch (e) { /* electron 밖 */ }
+    return () => { alive = false; off(); };
+  }, [onChanged]);
+  const line = aiLine(state);
+  if (!line.text) return null;
+  const download = async () => {
+    setBusy(true);
+    try {
+      setState(await api.aiDownload());
+      setAsking(false);
+    } catch (e) {
+      setAsking(false);
+      onNotice(errorText(e));
+      try { setState(await api.aiState()); } catch (e2) { /* 그대로 */ }
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <span className="similar-ai">{line.text}</span>
+      {line.button && <button type="button" className="link-button" disabled={busy} onClick={() => setAsking(true)}>{line.button}</button>}
+      {asking && (
+        <div className="dialog-backdrop">
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="ai-confirm-title">
+            <h2 id="ai-confirm-title" className="dialog-title">AI 모델 받기</h2>
+            <div className="dialog-pick similar-confirm">
+              {aiConfirmLines(state).map((l) => <p key={l}>{l}</p>)}
+            </div>
+            <div className="dialog-foot">
+              <button type="button" disabled={busy} onClick={() => setAsking(false)}>그만두기</button>
+              <button type="button" className="primary" disabled={busy} onClick={download}>{busy ? '받는 중' : aiConfirmLabel(state)}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 // 사진 한 칸: 사진을 누르면 크게 보기, 아래 버튼으로 남김과 버림 바꾸기
 function SimilarCell({ file, mark, focused, onFocus, onToggle, disabled }) {
@@ -166,6 +224,8 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
       <div className="similar-top">
         <span>묶음 {formatCount(groups.length)}개, 버릴 사진 {formatCount(ids.length)}장</span>
         {progress && <span>{progress}</span>}
+        <AiBar onNotice={onNotice} onChanged={load} />
+
         {data.hiddenKept > 0 && (
           <button type="button" className="link-button" disabled={busy} onClick={showKept}>
             모두 남기기로 한 묶음 {formatCount(data.hiddenKept)}개 다시 보기

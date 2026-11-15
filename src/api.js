@@ -48,6 +48,9 @@ export const api = {
   previewDiscard: (ids) => gallery().previewDiscard(ids),
   discardSimilar: (ids) => gallery().discardSimilar(ids),
   onSimilarProgress: (cb) => gallery().onSimilarProgress(cb),
+  aiState: () => gallery().aiState(),
+  aiDownload: () => gallery().aiDownload(),
+  onAiProgress: (cb) => gallery().onAiProgress(cb),
   // 날짜 없음 채우기 (_날짜없음 → 앨범 정보 날짜의 날짜 폴더)
   fillPreview: () => gallery().fillPreview(),
   fillRun: (token) => gallery().fillRun(token),
