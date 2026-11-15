@@ -686,16 +686,19 @@
       // 확인하다 재생 불가 영상을 찾았으면 배너와 표에 바로 보여줘요
       const brokenBefore = job ? job.stats.broken : 0;
       setJob(info.job);
-      if (info.job && info.job.stats.broken !== brokenBefore) renderTable(await api.getRows($('filter').value));
+      // 규칙에 걸려 남긴 원본이 있으면 목록 메모에 까닭이 생겨요 → 표도 새로 그려요 (개선 12)
+      const skippedNow = (info.check && info.check.skipped) || 0;
+      const skipText = skippedNow ? `\n🧹 백업 파일과 정보가 달라 원본 ${num(skippedNow)}개는 남겼어요. 까닭은 목록 메모에 있어요 (다음부터 "지울 수 있는 원본" 에서 빠져요)` : '';
+      if ((info.job && info.job.stats.broken !== brokenBefore) || skippedNow) renderTable(await api.getRows($('filter').value));
       if (!info.count) {
-        setStatus('정리할 원본이 없어요 (결과 파일이 확인된 원본만 정리해요)');
+        setStatus('정리할 원본이 없어요 (결과 파일이 확인된 원본만 정리해요)' + skipText);
         return;
       }
       // 확인 요약: 기록을 믿은 결과 파일 수와 표본 검사 결과
       const c = info.check;
       const weakText = c && c.weak ? ' (exFAT 처럼 변경 시각을 기록하지 않는 디스크라 표본을 늘렸어요)' : '';
       const checkText = c && c.trusted ? ` (쓸 때 기록과 같은 결과 파일 ${num(c.trusted)}개 중 표본 ${num(c.sampled)}개를 끝까지 읽어 확인${weakText}${c.sampleFail ? `, 다른 파일 ${num(c.sampleFail)}개 → 전부 다시 확인함` : ', 모두 같음'})` : '';
-      setStatus(`🔍 원본 확인 끝: 정리할 수 있는 원본 ${num(info.count)}개${checkText}`);
+      setStatus(`🔍 원본 확인 끝: 정리할 수 있는 원본 ${num(info.count)}개${checkText}${skipText}`);
       // 휴지통에 다 담기지 않는 드라이브 (2026-11-15 사용자 결정: 경고 한 줄 대신 고르게)
       //   휴지통 크기를 넘으면 Windows 가 먼저 넣은 것부터 비워서, 휴지통으로 보내도 대부분은 되살릴 수 없어요
       const over = info.drives.filter((d) => d.method === 'trash' && d.overflow);

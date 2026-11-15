@@ -355,6 +355,40 @@ const ITEMS = [
         out.push(sub('8b 정리 대상: 애플 ID로 같은 촬영이 된 변환 중복만 후보, 정리 직전에 정보를 다시 읽어 맞을 때만 (못 읽으면 남김)',
           quick.join(',') === '0,1,0' && strictNo.length === 0 && strictYes.length === 1 && strictDiff.length === 0,
           `${quick.join(',')} / ${strictNo.length} ${strictYes.length} ${strictDiff.length}`));
+
+        // 8b3 개선 12 (2026-11-15 실사용): 규칙에 걸려 남기는 원본은 까닭을 작업 기록에 남기고 배너 후보에서 뺌
+        //     실사용: 배너에 "지울 수 있는 원본 256개" 가 계속 보이는데 누르면 매번 0개 (수정 시각 다른 영상 224 · 백업이 더 큰 사진 30 · 영상 2)
+        {
+          const fakeStore = { mark: (j, i, patch) => Object.assign(j.items[i], patch) };
+          const logs = createLogger(path.join(root8, 'logs-8b3'));
+          const run = async (it, readMeta) => {
+            const j = jobOf(it);
+            const t = await cleaner.cleanTargets(j, { readMeta, store: fakeStore, logger: logs });
+            return { t, it, again: cleaner.cleanCandidates(j).length };
+          };
+          const dimsBig = await run(item({ sameShot: true }), reader({ ImageWidth: 1536, ImageHeight: 2048 }, {}));
+          const modDiff = await run(item({ sameShot: true }), reader({}, { ModifyDate: '2026:03:02 21:52:00' }));
+          const noRead = await run(item({ sameShot: true }), async () => { throw new Error('exiftool 없음'); });
+          const same = await run(item({ sameShot: true }), reader({}, {}));
+          const logText = fs.readdirSync(path.join(root8, 'logs-8b3')).map((n) => fs.readFileSync(path.join(root8, 'logs-8b3', n), 'utf8')).join('\n');
+          out.push(sub('8b3 규칙에 걸린 원본은 까닭을 남기고(가로 · 세로 백업이 더 큼, 수정 시각) 배너 후보에서 빠짐. 정보를 못 읽은 것 · 통과한 것은 남기지 않음, 로그에 남김 줄',
+            dimsBig.t.length === 0 && /가로 · 세로가 달라 남김.*백업이 더 큼/.test(dimsBig.it.cleanSkip || '') && dimsBig.again === 0
+              && modDiff.t.length === 0 && /수정 시각이 달라 남김/.test(modDiff.it.cleanSkip || '') && modDiff.again === 0
+              && noRead.t.length === 0 && !noRead.it.cleanSkip && noRead.again === 1
+              && same.t.length === 1 && !same.it.cleanSkip
+              && /\t남김\t/.test(logText) && /규칙에 걸려 남긴 원본 2개|규칙에 걸려 남긴 원본 1개/.test(logText),
+            `크기: ${dimsBig.it.cleanSkip} / 수정: ${modDiff.it.cleanSkip} / 못 읽음: ${noRead.it.cleanSkip || '없음'} (후보 ${noRead.again})`));
+          // 일반 중복: 크기는 같은데 내용이 다르면 남기고 까닭 기록, 정리 대상이 아닌 항목(확인 필요)은 건드리지 않음
+          const ps = path.join(root8, 'plain-src.jpg');
+          const pk = path.join(root8, 'plain-keep.jpg');
+          fs.writeFileSync(ps, 'AAAA');
+          fs.writeFileSync(pk, 'BBBB');
+          const pj = { items: [{ i: 0, src: ps, status: 'dup', dupOf: pk }] };
+          const pt = await cleaner.cleanTargets(pj, { store: fakeStore, logger: logs });
+          out.push(sub('8b3 일반 중복이 크기는 같고 내용(지문)이 다르면 남기고 까닭 기록, 배너 후보에서 빠짐',
+            pt.length === 0 && /내용\(지문\)이 달라 남김/.test(pj.items[0].cleanSkip || '') && cleaner.cleanCandidates(pj).length === 0,
+            pj.items[0].cleanSkip || '기록 없음'));
+        }
       }
       // 8c 변환할 파일은 같은 날짜 폴더의 기존 결과와 이름이 달라도 애플 ID가 같으면 이미 있음 (exiftool 은 가짜로 바꿔 끼움)
       {
