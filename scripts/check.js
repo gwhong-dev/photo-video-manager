@@ -323,6 +323,29 @@ const ITEMS = [
             && !(await ok({ ContentIdentifier: undefined, ImageUniqueID: 'SAME' }, { ContentIdentifier: undefined, ImageUniqueID: 'SAME' }))
             && !(await ok({}, { SubSecTimeOriginal: '456' })) && !(await ok({}, { ModifyDate: '2026:05:05 00:00:00' }))
             && !(await cleaner.convertedDupOk({ src }, keep, async () => { throw new Error('exiftool 없음'); }))));
+        // 개선 10 (2026-11-15 실사용): MOV → MP4 변환 중복은 수정 시각이 1~2초 어긋나서 정리에서 빠졌어요
+        {
+          const vsrc = path.join(root8, 'IMG_2.MOV');
+          const vkeep = path.join(root8, 'kept.mp4');
+          fs.writeFileSync(vsrc, 'mov bytes');
+          fs.writeFileSync(vkeep, 'mp4 bytes, different size');
+          const vbase = { ...base, ModifyDate: '2026:01:04 23:19:48+09:00', SubSecTimeOriginal: undefined };
+          const vok = (b = {}, a = {}) => cleaner.convertedDupOk({ src: vsrc }, vkeep, async () => new Map([[keyOf(vsrc), { ...vbase, ...a }], [keyOf(vkeep), { ...vbase, ...b }]]));
+          const sa = cleaner.secondsApart;
+          out.push(sub('8b2 영상은 수정 시각 2초 차이까지 같은 촬영 (3초 · 며칠 차이, 시간대 모양이 다르거나 없는 날짜면 아님, 0.001초는 그대로 같아야 함). 사진은 1초만 달라도 아님',
+            (await vok({ ModifyDate: '2026:01:04 23:19:47+09:00' })) && (await vok({ ModifyDate: '2026:01:04 23:19:50+09:00' }))
+              && (await vok({ ModifyDate: '2026:01:04 14:19:47Z' }))
+              && !(await vok({ ModifyDate: '2026:01:04 23:19:45+09:00' })) && !(await vok({ ModifyDate: '2026:01:12 23:19:48+09:00' }))
+              && !(await vok({ ModifyDate: '2026:01:04 23:19:47' })) && !(await vok({ ModifyDate: '0000:00:00 00:00:00' }))
+              && !(await vok({ ModifyDate: undefined }))
+              && !(await ok({}, { ModifyDate: '2026:01:02 03:04:06' }))
+              && sa('2026:01:01 00:00:00', '2025:12:31 23:59:59') === 1 && sa('2026:01:01 00:00:00-01:30', '2026:01:01 01:30:00Z') === 0
+              && sa('nope', '2026:01:01 00:00:00') === Infinity
+              && !(await vok({ SubSecTimeOriginal: '2' }, { SubSecTimeOriginal: '1' }))
+              && sa('2026:02:30 00:00:00', '2026:03:02 00:00:00') === Infinity && sa('2026:01:01 99:99:99', '2026:01:01 00:00:00') === Infinity
+              && sa('2026:01:01 00:00:48.0', '2026:01:01 00:00:50.999') > 2 && sa('2024:02:29 00:00:00', '2024:02:29 00:00:01') === 1,
+            `${await vok({ ModifyDate: '2026:01:04 23:19:47+09:00' })} / ${await vok({ ModifyDate: '2026:01:04 23:19:45+09:00' })}`));
+        }
         const item = (over) => ({ i: 0, src, status: 'dup', converted: true, dupOf: keep, ...over });
         const jobOf = (it) => ({ items: [it] });
         const quick = [item({}), item({ sameShot: true }), item({ sameShot: true, check: true })].map((it) => cleaner.cleanCandidates(jobOf(it)).length);
