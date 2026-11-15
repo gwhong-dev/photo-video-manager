@@ -647,7 +647,10 @@
     api.onCleanCheckProgress((p) => {
       $('bar').max = p.total;
       $('bar').value = p.done;
-      $('progressText').textContent = `🔍 원본 확인 중… (${num(p.done)}/${num(p.total)})`;
+      // final: "휴지통으로 옮기기"를 누른 뒤의 마지막 확인 (파일이 그대로인지만 봐요)
+      $('progressText').textContent = p.final
+        ? `🧹 옮기기 전 마지막 확인: 파일이 그대로인지만 봐요… (${num(p.done)}/${num(p.total)})`
+        : `🔍 원본 확인 중… (${num(p.done)}/${num(p.total)})`;
     });
 
     // 회차가 끝났을 때: 원본 확인(결과 파일 다시 읽기, 오래 걸림)을 바로 하지 않고 먼저 물어봐요
@@ -657,7 +660,7 @@
       if (!j || !j.deletable) return;
       const ok = confirm(
         `원본 정리를 위해 백업 결과를 확인할까요?\n\n` +
-        `· 지울 수 있는 원본 ${num(j.deletable)}개 (${fmtBytes(j.deletableBytes)})의 결과 파일을 다시 읽어요. 많으면 오래 걸려요\n` +
+        `· 지울 수 있는 원본 ${num(j.deletable)}개 (${fmtBytes(j.deletableBytes)})의 결과 파일을 확인해요. 쓸 때 기록과 같은 파일은 다시 읽지 않아서 보통 몇 분이에요 (옛 작업 기록은 오래 걸려요)\n` +
         `· 원본을 지우지 않을 거면 "취소" (가져올 폴더가 복사본일 때 등)\n` +
         `· 나중에 위쪽 "원본 정리" 버튼으로 언제든 할 수 있어요`
       );
@@ -667,7 +670,7 @@
 
     async function askTrash() {
       // 확인하는 동안: 예전 문구 지우기, 버튼 막기, 진행 막대 보이기 (멈춘 것처럼 보이지 않게)
-      setStatus('🔍 원본 확인 중… 결과 파일이 멀쩡한지 하나씩 확인하고 있어요 (영상이 많으면 1분 넘게 걸려요)');
+      setStatus('🔍 원본 확인 중… 쓸 때 기록과 같은 결과 파일은 다시 읽지 않고, 일부(표본)만 끝까지 읽어 맞춰 봐요');
       setBusy(true);
       $('progressBox').style.display = 'block';
       $('bar').value = 0;
@@ -686,7 +689,10 @@
         setStatus('정리할 원본이 없어요 (결과 파일이 확인된 원본만 정리해요)');
         return;
       }
-      setStatus(`🔍 원본 확인 끝: 정리할 수 있는 원본 ${num(info.count)}개`);
+      // 확인 요약: 기록을 믿은 결과 파일 수와 표본 검사 결과
+      const c = info.check;
+      const checkText = c && c.trusted ? ` (쓸 때 기록과 같은 결과 파일 ${num(c.trusted)}개 중 표본 ${num(c.sampled)}개를 끝까지 읽어 확인${c.sampleFail ? `, 다른 파일 ${num(c.sampleFail)}개 → 전부 다시 확인함` : ', 모두 같음'})` : '';
+      setStatus(`🔍 원본 확인 끝: 정리할 수 있는 원본 ${num(info.count)}개${checkText}`);
       const where = info.drives
         .map((d) => `${d.root} (${d.label}) ${num(d.count)}개 → ${d.method === 'trash' ? '휴지통으로' : '가져올 폴더\\_정리완료원본 으로 이동'}`)
         .join('\n');
@@ -699,6 +705,10 @@
       const before = $('status').textContent; // 이번 회차 결과는 남겨 두기
       setBusy(true);
       $('progressBox').style.display = 'block';
+      // "확인 끝" 문구가 남아 다시 확인하는 것처럼 보이지 않게 (2026-11-15 실사용)
+      setStatus('🧹 휴지통으로 옮기는 중… 먼저 확인한 파일이 그대로인지만 보고 바로 옮겨요');
+      $('bar').value = 0;
+      $('progressText').textContent = '🧹 옮기기 전 마지막 확인…';
       try {
         const r = await api.trashOriginals();
         setJob(r.job);

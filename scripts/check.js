@@ -1342,6 +1342,124 @@ const ITEMS = [
         const r = await cleaner.cleanOriginals({ job: c.job, store: c.store, targets: [c.job.items[0]], logger: c.logger, trash: async (p) => trashed.push(p), driveKindOf: async () => 'unknown' });
         out.push(sub('12f 드라이브 종류 모름 → 이동', trashed.length === 0 && r.moved === 1, `휴지통 ${trashed.length}번, 이동 ${r.moved}개`));
       }
+
+      // 12z 확인 수준 (2026-11-15 사용자 결정): 쓸 때 기록과 서명이 같은 결과 파일은 지문을 다시 읽지 않고 표본만 확인
+      //     실사용: 6만 개 750GB 를 다시 읽는 데 4~5시간 + 정리 직전에 영상 2만여 개 재생 확인을 또 함
+      if (!cleaner || !cleaner.recheckTargets) {
+        out.push(missing('12z 기록이 같으면 표본만 지문 확인'));
+      } else {
+        const { fileSig } = require('../lib/paths');
+        const N = 100;
+        const dir = path.join(root, '12z');
+        const source = path.join(dir, 'source');
+        const backup = path.join(dir, 'backup');
+        fs.mkdirSync(source, { recursive: true });
+        fs.mkdirSync(backup, { recursive: true });
+        // 완료 항목 N개: 쓸 때처럼 지문 · 서명을 기록
+        const makeJob = async (sig = true) => {
+          const items = [];
+          for (let i = 0; i < N; i++) {
+            const name = `p${String(i).padStart(3, '0')}.jpg`;
+            const src = path.join(source, name);
+            const fin = path.join(backup, name);
+            fs.writeFileSync(src, `src-${i}`);
+            fs.writeFileSync(fin, `result-${String(i).padStart(3, '0')}`);
+            items.push({ i, src, status: 'done', finalPath: fin, resultHash: await cleaner.hashFile(fin), resultSig: sig ? await fileSig(fin) : undefined });
+          }
+          return { source, backupRoot: backup, items };
+        };
+        const counting = () => {
+          const seen = [];
+          const f = async (p) => (seen.push(path.basename(p)), cleaner.hashFile(p));
+          f.seen = seen;
+          return f;
+        };
+        const first30 = (l, n) => l.slice(0, n); // 표본을 앞에서부터 (점검이 늘 같게)
+        const run = async (job, opts = {}) => {
+          const h = counting();
+          let stats = null;
+          const sigs = new Map();
+          const t = await cleaner.cleanTargets(job, { hashOf: h, pickSample: first30, onStats: (s) => (stats = s), sigs, ...opts });
+          return { t, h, stats, sigs };
+        };
+
+        // 1) 아무도 건드리지 않음 → 표본 30개(최소)만 지문, 100개 모두 정리 대상
+        const j1 = await makeJob();
+        const r1 = await run(j1);
+        out.push(sub('12z 기록과 서명이 같으면 표본(1%, 최소 30개)만 지문을 읽고 모두 정리 대상',
+          r1.t.length === N && r1.h.seen.length === 30 && r1.stats.trusted === N && r1.stats.sampled === 30 && r1.stats.sampleFail === 0 && !r1.stats.deep
+            && cleaner.sampleSize(58670) === 500 && cleaner.sampleSize(5000) === 50 && cleaner.sampleSize(10) === 10,
+          `대상 ${r1.t.length}, 지문 ${r1.h.seen.length}번, ${JSON.stringify(r1.stats)}`));
+
+        // 2) 표본 밖 파일 하나를 같은 크기로 덮어쓰고 수정 시각을 되돌림 → 서명이 달라져 그 파일만 지문 → 다르니 정리 안 함
+        const f50 = j1.items[50].finalPath;
+        const st50 = fs.statSync(f50);
+        fs.writeFileSync(f50, 'RESULT-050');
+        fs.utimesSync(f50, st50.atime, st50.mtime);
+        const r2 = await run(j1);
+        out.push(sub('12z 쓴 뒤 바뀐 결과 파일(같은 크기 · 수정 시각 되돌림)은 서명이 달라 지문으로 확인하고 정리 안 함',
+          r2.t.length === N - 1 && !r2.t.includes(j1.items[50]) && r2.h.seen.length === 31 && r2.h.seen.includes('p050.jpg'),
+          `대상 ${r2.t.length}, 지문 ${r2.h.seen.length}번`));
+
+        // 3) 표본 하나가 서명은 같은데 지문이 다름 (디스크가 몰래 망가뜨린 경우를 기록값으로 흉내) → 전부 지문으로
+        const j3 = await makeJob();
+        j3.items[0].resultHash = 'deadbeef';
+        const logs3 = createLogger(path.join(dir, 'logs3'));
+        const r3 = await run(j3, { logger: logs3 });
+        const log3 = fs.readdirSync(path.join(dir, 'logs3')).map((n) => fs.readFileSync(path.join(dir, 'logs3', n), 'utf8')).join('\n');
+        out.push(sub('12z 표본에서 하나라도 다르면 전부 지문으로 확인 (다른 파일은 빼고), 로그에 표본불일치 · 요약',
+          r3.t.length === N - 1 && !r3.t.includes(j3.items[0]) && r3.h.seen.length === N && r3.stats.sampleFail === 1 && r3.stats.deep
+            && /표본불일치/.test(log3) && /전부 지문으로 확인함/.test(log3),
+          `대상 ${r3.t.length}, 지문 ${r3.h.seen.length}번, ${JSON.stringify(r3.stats)}`));
+
+        // 4) 꼼꼼히(deep) · 서명 기록이 없는 옛 작업 → 지금까지처럼 전부 지문
+        const r4 = await run(await makeJob(), { deep: true });
+        const r5 = await run(await makeJob(false));
+        out.push(sub('12z 꼼꼼히 확인 · 서명 기록이 없는 옛 작업 기록은 전부 지문으로',
+          r4.t.length === N && r4.h.seen.length === N && r5.t.length === N && r5.h.seen.length === N && r5.stats.trusted === 0,
+          `꼼꼼히 ${r4.h.seen.length}번, 옛 기록 ${r5.h.seen.length}번`));
+
+        // 5) 영상: 만든 직후 재생 확인 기록이 있으면 다시 확인 안 함, 없으면 재생 확인 필요 (도구 없으면 남김)
+        const v = path.join(backup, 'v.mp4');
+        fs.writeFileSync(v, 'video-bytes');
+        const vsrc = path.join(source, 'v.mov');
+        fs.writeFileSync(vsrc, 'mov');
+        const vItem = async (playable) => ({ source, backupRoot: backup, items: [{ i: 0, src: vsrc, status: 'done', finalPath: v, resultHash: await cleaner.hashFile(v), resultSig: await fileSig(v), resultPlayable: playable }] });
+        const vYes = await cleaner.cleanTargets(await vItem(true), { ffprobe: null });
+        const vNo = await cleaner.cleanTargets(await vItem(false), { ffprobe: null });
+        out.push(sub('12z 영상은 만든 직후 재생 확인을 통과한 기록이 있어야 기록을 믿음 (없으면 재생 확인, 도구가 없으면 남김)',
+          vYes.length === 1 && vNo.length === 0, `기록 있음 ${vYes.length}, 없음 ${vNo.length}`));
+
+        // 6) 정리 직전 확인: 확인 창 뒤로 바뀐 원본 · 결과 파일, 없어진 결과 파일, 이미 정리한 항목은 빠지고 나머지는 지문 없이 통과
+        const j6 = await makeJob();
+        const r6 = await run(j6);
+        fs.writeFileSync(j6.items[3].finalPath, 'changed-after-check');
+        fs.appendFileSync(j6.items[4].src, '+');
+        fs.rmSync(j6.items[5].finalPath);
+        j6.items[6].trashed = true;
+        let progress = 0;
+        const again = await cleaner.recheckTargets(j6, r6.sigs, { onProgress: (p) => (progress = p.done) });
+        const gone = [3, 4, 5, 6].filter((i) => again.includes(j6.items[i]));
+        const ordered = again.every((it, k) => k === 0 || again[k - 1].i < it.i);
+        out.push(sub('12z 정리 직전 확인은 서명만 봄: 확인 창 뒤로 바뀐 원본 · 결과, 없어진 결과, 이미 정리한 것은 빠짐',
+          again.length === N - 4 && gone.length === 0 && ordered && progress === N,
+          `통과 ${again.length}, 빠져야 할 것 중 남은 것 [${gone}]`));
+
+        // 7) 실제 가져오기: 결과 파일 서명 · 영상 재생 확인을 기록하고, 그 작업의 원본 정리는 표본만 지문
+        const p7 = await pipeline(path.join(root, '12z-run'), env, { manual: false });
+        const done7 = p7.job.items.filter((it) => it.status === 'done');
+        let sigOk = 0;
+        for (const it of done7) if (it.resultSig && it.resultSig === (await fileSig(it.finalPath))) sigOk++;
+        const vids = done7.filter((it) => /\.mp4$/i.test(it.finalPath));
+        const playOk = vids.filter((it) => it.resultPlayable).length;
+        // 완료 항목만 정리 대상으로 (중복은 남길 파일 지문을 따로 읽어서 숫자가 섞여요)
+        const onlyDone = { ...p7.job, items: p7.job.items.map((it) => (it.status === 'done' ? it : { ...it, status: 'skip' })) };
+        const h7 = counting();
+        const t7 = await cleaner.cleanTargets(onlyDone, { hashOf: h7, ffprobe: env.ctx.ffprobe });
+        out.push(sub('12z 실제 가져오기: 완료 파일마다 서명 기록 · 영상은 재생 확인 기록, 원본 정리는 표본만 지문',
+          done7.length > 0 && sigOk === done7.length && vids.length > 0 && playOk === vids.length && h7.seen.length === cleaner.sampleSize(done7.length) && t7.length === done7.length,
+          `완료 ${done7.length}, 서명 맞음 ${sigOk}, 영상 ${vids.length} 중 재생 기록 ${playOk}, 정리 대상 ${t7.length}, 지문 ${h7.seen.length}번`));
+      }
       return out;
     },
   },
