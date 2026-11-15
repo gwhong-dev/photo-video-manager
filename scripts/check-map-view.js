@@ -468,6 +468,8 @@ async function mapViewProbe() {
       }
       await new Promise((res) => setTimeout(res, 300));
     }
+    // 끝내 못 줄였으면 까닭을 바로 알 수 있게 멈춰요 (창이 숨김이면 지도 움직임이 멈춰요. launch-check.js 의 AWAKE_FLAGS 참고)
+    if (steady < 3) return { ...q, stop: `두 핀이 다 보이게 줄이지 못했어요 (창 상태 ${document.visibilityState})` };
   }
 
   // 핀 2 누르기 → 패널
