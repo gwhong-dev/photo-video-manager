@@ -983,20 +983,26 @@ const ITEMS = [
       if (!cleaner || !cleaner.cleanOriginals) {
         out.push(missing('12q3 휴지통이 모자라면 옮기기'));
       } else {
-        const { realRootOf } = cleaner;
         const c = makeCase('12q3');
         const trashed = [];
         const fixed = async () => 'fixed';
-        const r = await cleaner.cleanOriginals({ job: c.job, store: c.store, targets: [c.job.items[0]], logger: c.logger, trash: async (p) => trashed.push(p), driveKindOf: fixed, moveRoots: new Set([realRootOf(c.job.items[0].src)]) });
+        // 앱과 같은 길로: 확인 창 정보(cleanInfo)에서 넘친 드라이브를 모아(overflowRootsOf) 정리에 넘겨요 (#115 검증 ⚠️)
+        const overInfo = await cleaner.cleanInfo(c.job, [{ ...c.job.items[0], size: 100 }], { driveKindOf: fixed, recycleOf: async () => ({ maxBytes: 0, nuke: false }), binUsedOf: async () => 0 });
+        const roots = cleaner.overflowRootsOf(overInfo);
+        const lower = new Set([...roots].map((x) => x.toLowerCase())); // 드라이브 이름 대소문자가 달라도 같게 봐요
+        const r = await cleaner.cleanOriginals({ job: c.job, store: c.store, targets: [c.job.items[0]], logger: c.logger, trash: async (p) => trashed.push(p), driveKindOf: fixed, moveRoots: roots });
         const log = fs.readFileSync(r.logPath, 'utf8');
         const moved = c.job.items[0].movedTo;
         const c2 = makeCase('12q3b');
         const trashed2 = [];
         const r2 = await cleaner.cleanOriginals({ job: c2.job, store: c2.store, targets: [c2.job.items[0]], logger: c2.logger, trash: async (p) => trashed2.push(p), driveKindOf: fixed, moveRoots: new Set(['Z:\\']) });
-        out.push(sub('12q3 고른 드라이브는 휴지통 대신 _정리완료원본으로 (로그에 "휴지통이 모자라 고른 대로"), 다른 드라이브는 그대로 휴지통',
-          r.moved === 1 && trashed.length === 0 && moved && fs.existsSync(moved) && /_정리완료원본/.test(moved) && /휴지통이 모자라 고른 대로/.test(log)
-            && r2.trashed === 1 && trashed2.length === 1,
-          `옮김 ${r.moved} 휴지통 ${trashed.length} / 다른 드라이브 휴지통 ${trashed2.length}`));
+        const c3 = makeCase('12q3c');
+        const trashed3 = [];
+        const r3 = await cleaner.cleanOriginals({ job: c3.job, store: c3.store, targets: [c3.job.items[0]], logger: c3.logger, trash: async (p) => trashed3.push(p), driveKindOf: fixed, moveRoots: lower });
+        out.push(sub('12q3 확인 창에서 넘친 드라이브는 휴지통 대신 _정리완료원본으로 (로그에 "휴지통이 모자라 고른 대로", 드라이브 이름 대소문자 무관), 다른 드라이브는 그대로 휴지통',
+          roots.size === 1 && r.moved === 1 && trashed.length === 0 && moved && fs.existsSync(moved) && /_정리완료원본/.test(moved) && /휴지통이 모자라 고른 대로/.test(log)
+            && r3.moved === 1 && trashed3.length === 0 && r2.trashed === 1 && trashed2.length === 1,
+          `넘친 드라이브 [${[...roots]}], 옮김 ${r.moved} 휴지통 ${trashed.length} / 소문자 ${r3.moved} / 다른 드라이브 휴지통 ${trashed2.length}`));
       }
 
       // 12r 휴지통이 "바로 제거"로 설정된 드라이브 → 휴지통에 보내지 않고 이동 (영구 삭제 방지)

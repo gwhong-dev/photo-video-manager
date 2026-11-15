@@ -21,7 +21,7 @@ const cleanReadMeta = (paths) => {
 };
 const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
-const { cleanCandidatesAsync, cleanTargets, recheckTargets, cleanInfo, cleanOriginals, createHashCache, countHashesFrom } = require('./lib/cleaner');
+const { cleanCandidatesAsync, cleanTargets, recheckTargets, overflowRootsOf, cleanInfo, cleanOriginals, createHashCache, countHashesFrom } = require('./lib/cleaner');
 const { createDriveKindOf } = require('./lib/platform');
 const { samplePool, sampleView, openSample } = require('./lib/clean-sample');
 const { openFolderOnly } = require('./lib/open-folder');
@@ -492,7 +492,7 @@ ipcMain.handle('trash-info', async () => {
     cleanSample = samplePool(job, targets);
     // 확인하다 재생 불가를 찾으면 개수가 바뀌어요 → 작업 정보도 새로 보내요
     const info = await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf });
-    cleanOverflowRoots = new Set(info.drives.filter((d) => d.method === 'trash' && d.overflow).map((d) => d.root));
+    cleanOverflowRoots = overflowRootsOf(info);
     if (stats && stats.sampleFail) info.warnings = [...(info.warnings || []), `표본 검사에서 기록과 다른 결과 파일 ${stats.sampleFail}개를 찾아서 전부 지문으로 다시 확인했어요 (다른 파일은 정리 대상에서 빠졌어요)`];
     return { ...info, check: stats, sample: sampleView(cleanSample), job: await jobInfo() };
   } finally {
@@ -519,6 +519,13 @@ ipcMain.handle('trash-originals', async (e, opts = {}) => {
     const targets = !job ? [] : cleanSigs && cleanJob === job
       ? await recheckTargets(job, cleanSigs, { onProgress: progress })
       : await cleanTargets(job, { hashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, onProgress: progress });
+    // 휴지통이 모자란 드라이브: 사용자가 "휴지통으로"를 직접 고른 때만 휴지통, 아니면 _정리완료원본으로
+    //   확인 창을 거치지 않았으면(넘친 드라이브를 모름) 지금 다시 계산해서 안전한 쪽(옮기기)으로 막아요 (#115 검증 ⚠️)
+    let moveRoots = null;
+    if (!(opts && opts.binOverflow === 'trash')) {
+      moveRoots = cleanOverflowRoots;
+      if (!moveRoots) moveRoots = overflowRootsOf(await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf || createDriveKindOf() }));
+    }
     const r = await cleanOriginals({
       hashStats: hashCount(),
       job,
@@ -528,7 +535,7 @@ ipcMain.handle('trash-originals', async (e, opts = {}) => {
       trash: (p) => shell.trashItem(p),
       driveKindOf: cleanDriveKindOf || createDriveKindOf(), // 확인 창과 같은 판단
       onProgress: (p) => send('trash-progress', p),
-      moveRoots: opts && opts.binOverflow === 'trash' ? null : cleanOverflowRoots,
+      moveRoots,
     });
     return { ...r, job: await jobInfo() };
   } finally {
