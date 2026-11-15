@@ -402,6 +402,85 @@ const ITEMS = [
         out.push(sub('8c 기존 결과 파일 정보는 애플 ID 비교와 이름 겹침 확인이 같이 써서 한 번만 읽음',
           readCount.size > 0 && maxReads === 1, `읽은 파일 ${readCount.size}개, 최대 ${maxReads}번`));
       }
+      // 8d 개선 11 (2026-11-15 실사용): 백업에는 같은 촬영의 작은 사본(공유 앨범 축소본)만 있으면 원본을 가져와요
+      //    실제 기록: HEIC 4032x3024 원본이 1536x2048 사본 때문에 중복으로 빠짐, 라이브 포토 영상 1920x1440 vs 960x720
+      {
+        const { keyOf, biggerShot } = require('../lib/planner');
+        const { processItem } = require('../lib/processor');
+        const root8 = path.join(env.tmp, 'bigger-original');
+        const src8 = path.join(root8, 'source');
+        const bk8 = path.join(root8, 'backup');
+        const day = path.join(bk8, '2026', '01', '02');
+        fs.mkdirSync(src8, { recursive: true });
+        fs.mkdirSync(day, { recursive: true });
+        const w = (p, s) => (fs.writeFileSync(p, s), p);
+        const date = { DateTimeOriginal: '2026:01:02 03:04:05' };
+        const big = { ImageWidth: 4032, ImageHeight: 3024 };
+        const small = { ImageWidth: 1536, ImageHeight: 2048 };
+        const metaOf = {};
+        const put = (p, m) => ((metaOf[keyOf(p)] = { ...date, ...m }), p);
+        // 백업에 있는 것
+        const sOther = put(w(path.join(day, 'shared_copy.jpg'), 's1'), { ContentIdentifier: 'ID-S1', ...small }); // 이름 다른 작은 사본
+        const sSame = put(w(path.join(day, '2026-01-02_030405_IMG_S2.jpg'), 's2'), { ContentIdentifier: 'ID-S2', ...small }); // 이름 같은 작은 사본
+        const eq = put(w(path.join(day, 'eq.jpg'), 'e'), { ContentIdentifier: 'ID-E', ImageWidth: 3024, ImageHeight: 4032 }); // 크기 같음 (세로)
+        const bigger = put(w(path.join(day, 'bigger.jpg'), 'l'), { ContentIdentifier: 'ID-L', ...big }); // 백업이 더 큼
+        const nodim = put(w(path.join(day, 'nodim.jpg'), 'u'), { ContentIdentifier: 'ID-U' }); // 크기 모름
+        put(w(path.join(day, 'a_two_small.jpg'), 't1'), { ContentIdentifier: 'ID-T', ...small });
+        const twoBig = put(w(path.join(day, 'two_big.jpg'), 't2'), { ContentIdentifier: 'ID-T', ...big }); // 작은 것 · 큰 것 둘 다 있음
+        const vSmall = put(w(path.join(day, 'clip.mp4'), 'v'), { ContentIdentifier: 'ID-V', ImageWidth: 960, ImageHeight: 720 });
+        // 가져올 원본
+        put(w(path.join(src8, 'IMG_S1.HEIC'), 'h1'), { ContentIdentifier: 'ID-S1', ...big });
+        put(w(path.join(src8, 'IMG_S2.HEIC'), 'h2'), { ContentIdentifier: 'ID-S2', ...big });
+        put(w(path.join(src8, 'IMG_E.HEIC'), 'he'), { ContentIdentifier: 'ID-E', ...big });
+        put(w(path.join(src8, 'IMG_L.HEIC'), 'hl'), { ContentIdentifier: 'ID-L', ...small });
+        put(w(path.join(src8, 'IMG_U.HEIC'), 'hu'), { ContentIdentifier: 'ID-U', ...big });
+        put(w(path.join(src8, 'IMG_T.HEIC'), 'ht'), { ContentIdentifier: 'ID-T', ...big });
+        put(w(path.join(src8, 'IMG_V.MOV'), 'hv'), { ContentIdentifier: 'ID-V', ImageWidth: 1920, ImageHeight: 1440 });
+        // 진짜 exiftool 처럼 달라고 한 태그만 돌려줘요 (가로 · 세로를 읽지 않게 되돌리면 잡히게, #113 검증 ⚠️)
+        const tagKey = (t) => t.replace(/^.*:/, '').replace(/#$/, '');
+        const fakeEt = {
+          read: async (paths, tags) => paths.map((p) => {
+            const m = metaOf[keyOf(p)] || {};
+            const o = { SourceFile: p };
+            for (const t of tags || []) if (m[tagKey(t)] != null) o[tagKey(t)] = m[tagKey(t)];
+            return o;
+          }),
+        };
+        const plan8 = await makePlan({ source: src8, backupRoot: bk8, includeSub: true }, fakeEt);
+        const by = (name) => plan8.items.find((it) => path.basename(it.src) === name);
+        const st = (name) => `${name}:${by(name).status}/${by(name).dupOf ? path.basename(by(name).dupOf) : '-'}/${by(name).name}`;
+        out.push(sub('8d 백업에 같은 촬영의 작은 사본만 있으면 원본을 가져옴 (이름 다른 사본 · 이름 같은 사본은 _1 · 라이브 포토 영상)',
+          by('IMG_S1.HEIC').status === 'todo' && by('IMG_S1.HEIC').note.includes(`작은 사본만 있어서 가져와요 (${path.basename(sOther)})`)
+            && by('IMG_S2.HEIC').status === 'todo' && by('IMG_S2.HEIC').name === '2026-01-02_030405_IMG_S2_1.jpg'
+            && by('IMG_V.MOV').status === 'todo' && by('IMG_V.MOV').note.includes(path.basename(vSmall)),
+          ['IMG_S1.HEIC', 'IMG_S2.HEIC', 'IMG_V.MOV'].map(st).join(' ')));
+        out.push(sub('8d 크기가 같거나(돌린 것 포함) 백업이 더 크거나 크기를 모르면 지금처럼 중복, 작은 것 · 큰 것이 다 있으면 큰 것의 중복',
+          by('IMG_E.HEIC').status === 'dup' && by('IMG_E.HEIC').dupOf === eq
+            && by('IMG_L.HEIC').status === 'dup' && by('IMG_L.HEIC').dupOf === bigger
+            && by('IMG_U.HEIC').status === 'dup' && by('IMG_U.HEIC').dupOf === nodim
+            && by('IMG_T.HEIC').status === 'dup' && by('IMG_T.HEIC').dupOf === twoBig,
+          ['IMG_E.HEIC', 'IMG_L.HEIC', 'IMG_U.HEIC', 'IMG_T.HEIC'].map(st).join(' ')));
+        // 실행 직전 확인: 그 자리에 같은 촬영이 생겼어도 원본이 더 크면 중복으로 끝내지 않고 _1 자리를 잡아요
+        const runAt = async (srcMeta) => {
+          const claimed = [];
+          const it = { src: path.join(src8, 'IMG_S2.HEIC'), dest: sSame, kind: 'heic2jpg', converted: true, meta: srcMeta };
+          let r;
+          try {
+            r = await processItem(it, { et: fakeEt, claim: (c) => (claimed.push(path.basename(c)), true) });
+          } catch (e) {
+            r = { status: 'error' }; // 변환 도구가 없어서 그 뒤에서 멈춰도 괜찮아요 (자리 잡기까지만 봐요)
+          }
+          return { r, claimed };
+        };
+        const runBig = await runAt({ ContentIdentifier: 'ID-S2', ...big });
+        const runEq = await runAt({ ContentIdentifier: 'ID-S2', ...small });
+        out.push(sub('8d 실행 직전 확인: 원본이 더 크면 중복으로 끝내지 않고 _1 자리, 크기가 같으면 지금처럼 중복',
+          runBig.r.status !== 'dup' && runBig.claimed.includes('2026-01-02_030405_IMG_S2_1.jpg') && runEq.r.status === 'dup',
+          `${runBig.r.status} [${runBig.claimed}] / ${runEq.r.status}`));
+        out.push(sub('8d 화소 비교: 가로×세로 곱 (돌린 것 같음), 하나라도 모르면 크다고 보지 않음',
+          biggerShot(big, small) && !biggerShot(small, big) && !biggerShot(big, { ImageWidth: 3024, ImageHeight: 4032 })
+            && !biggerShot(big, {}) && !biggerShot({}, small) && !biggerShot(big, null) && biggerShot({ ImageWidth: '1920', ImageHeight: '1440' }, { ImageWidth: 960, ImageHeight: 720 })));
+      }
       return out;
     },
   },
