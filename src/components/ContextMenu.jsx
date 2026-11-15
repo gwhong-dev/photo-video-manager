@@ -1,17 +1,19 @@
 // 파일 위치: src/components/ContextMenu.jsx
 // 역할: 사진 칸을 우클릭했을 때 뜨는 작은 메뉴 (설계서 8절)
 //   항목: 날짜와 위치 복사 (한 장일 때만) / N장에 붙여넣기 (복사한 값이 있을 때만) / N장에 날짜 직접 넣기 / N장 위치 지도에서 고르기
-//         / N장에 태그 붙이기 / N장에서 태그 떼기
+//         / N장에 태그 붙이기 / N장에서 태그 떼기 / N장 휴지통으로 옮기기
 //   바깥을 누르거나 Esc를 누르거나 창 크기, 스크롤이 바뀌면 닫혀요. 창 끝에서 잘리지 않게 위치를 맞춰요
 //   메뉴가 어떤 사진에 대한 것인지(선택)는 App이 알고 있어서, 여기서는 눌렀다고 알리기만 해요
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { formatCount } from '../format.mjs';
+import { trashMenuLabel } from '../trash-view.mjs';
 
 const EDGE = 8; // 창 가장자리에서 띄울 거리
 
 // at = { x, y } 우클릭한 자리, count = 선택한 장수, canCopy = 복사할 수 있는지(한 장일 때), hasCopy = 복사해 둔 값이 있는지
-export default function ContextMenu({ at, count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, onClose }) {
+//   onTrash = 고른 사진을 휴지통으로 (확인 창을 거쳐요, 2026-11-16). 없으면 항목을 안 그려요
+export default function ContextMenu({ at, count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, onTrash, onClose }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: at.x, top: at.y });
 
@@ -75,6 +77,7 @@ export default function ContextMenu({ at, count, canCopy, hasCopy, onCopy, onPas
       <button type="button" role="menuitem" onClick={onMap}>{n}장 위치 지도에서 고르기</button>
       <button type="button" role="menuitem" onClick={onTagAdd}>{n}장에 태그 붙이기</button>
       <button type="button" role="menuitem" onClick={onTagRemove}>{n}장에서 태그 떼기</button>
+      {onTrash && <button type="button" role="menuitem" className="trash-button" onClick={onTrash}>{trashMenuLabel(count)}</button>}
     </div>
   );
 }

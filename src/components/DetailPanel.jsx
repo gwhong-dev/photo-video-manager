@@ -10,6 +10,7 @@ import React, { useEffect, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { formatBytes, formatCoords, formatCount, formatDuration, formatTakenAt } from '../format.mjs';
 import { PreviewNote, usePreviewNote } from './PreviewNote.jsx';
+import { trashMenuLabel } from '../trash-view.mjs';
 
 const SOURCE_TEXT = { exif: '사진 파일에서 읽음', filename: '파일 이름에서 읽음', manual: '내가 넣은 값' };
 const LOCATION_SOURCE_TEXT = { exif: '사진 파일에서 읽음', manual: '내가 넣은 값' };
@@ -31,7 +32,8 @@ function Row({ label, children, sub }) {
 }
 
 // 값 넣기 버튼들: 우클릭 메뉴와 같은 일을 해요. count = 고른 장수
-function Actions({ count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove }) {
+//   onTrash: 고른 사진을 휴지통으로 (확인 창을 거쳐요, 2026-11-16). 없으면 버튼을 안 그려요
+function Actions({ count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, onTrash }) {
   const n = formatCount(count);
   return (
     <div className="panel-actions">
@@ -41,6 +43,7 @@ function Actions({ count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap, on
       <button type="button" onClick={onMap}>{n}장 위치 지도에서 고르기</button>
       <button type="button" onClick={onTagAdd}>{n}장에 태그 붙이기</button>
       <button type="button" onClick={onTagRemove}>{n}장에서 태그 떼기</button>
+      {onTrash && <button type="button" className="trash-button" onClick={onTrash} title="Delete 키로도 열 수 있어요">{trashMenuLabel(count)}</button>}
     </div>
   );
 }
@@ -141,10 +144,10 @@ function Preview({ file }) {
 // selectedId = 자세히 보여 줄 사진, count = 고른 장수, copySource = 복사해 둔 값 (없으면 null)
 // onCopy / onPaste / onDirect / onMap / onTagAdd / onTagRemove = 버튼을 눌렀을 때 (우클릭 메뉴와 같은 일)
 // readOnly = 사진 정보만 보여 줘요 (위치 제안 화면). 값 넣기 버튼과 복사한 값 칸을 그리지 않아요
-export default function DetailPanel({ selectedId, gen, count = 0, copySource = null, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, readOnly = false }) {
+export default function DetailPanel({ selectedId, gen, count = 0, copySource = null, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, onTrash, readOnly = false }) {
   const { file, error } = useFileInfo(selectedId, gen);
   const actions = readOnly ? null : (
-    <Actions count={count} canCopy={count === 1} hasCopy={!!copySource} onCopy={onCopy} onPaste={onPaste} onDirect={onDirect} onMap={onMap} onTagAdd={onTagAdd} onTagRemove={onTagRemove} />
+    <Actions count={count} canCopy={count === 1} hasCopy={!!copySource} onCopy={onCopy} onPaste={onPaste} onDirect={onDirect} onMap={onMap} onTagAdd={onTagAdd} onTagRemove={onTagRemove} onTrash={count > 0 ? onTrash : undefined} />
   );
 
   let body;

@@ -1745,6 +1745,8 @@ const ITEMS = [
   ...require('./check-iphone-formats').items,
   // 55번은 실행 화면 안내 점검 (scripts/check-run-screen.js)
   ...require('./check-run-screen').items,
+  // 56번은 갤러리에서 고른 사진 휴지통으로 옮기기 점검 (scripts/check-gallery-trash.js)
+  ...require('./check-gallery-trash').items,
   // 51번은 한국어 답변 훅 점검 (scripts/check-korean-hook.js)
   ...require('./check-korean-hook').items,
 ];

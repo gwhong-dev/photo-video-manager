@@ -35,6 +35,8 @@ import Toolbar from './components/Toolbar.jsx';
 import UndoBar from './components/UndoBar.jsx';
 import FillBanner from './components/FillBanner.jsx';
 import FillDialog from './components/FillDialog.jsx';
+import TrashDialog from './components/TrashDialog.jsx';
+import { deleteKeyOpens } from './trash-view.mjs';
 import { undoneText } from './format.mjs';
 import { EMPTY_SELECTION, filterScope, nextSelection, selectionForMenu, selectionOf, viewMatches } from './selection.mjs';
 
@@ -92,6 +94,7 @@ export default function App() {
   const [justApplied, setJustApplied] = useState(null); // 방금 넣은 묶음 { batchId }. 넣은 직후 알림 줄을 보여 줘요
   const [undoing, setUndoing] = useState(false);
   const [fillOpen, setFillOpen] = useState(false); // 날짜 없음 채우기 창
+  const [trashIds, setTrashIds] = useState(null); // 휴지통으로 옮기기 확인 창에 담은 사진 번호 (열 때의 선택 그대로, 2026-11-16)
   const [fillUndoing, setFillUndoing] = useState(false);
   const [syncing, setSyncing] = useState(false); // 넣은 직후 새 상태(마지막 묶음)를 받아오는 중. 그동안 되돌리기 버튼을 꺼요
   const [selectingAll, setSelectingAll] = useState(false); // "목록 전체 선택"으로 번호를 받아오는 중
@@ -393,6 +396,35 @@ export default function App() {
     }
   };
 
+  // 고른 사진 휴지통으로 (2026-11-16 사용자 결정: 사진첩에서 보다가 필요 없는 건 바로 지우기)
+  //   갤러리 · 정보 없는 사진 화면에서만. 열 때 고른 번호를 그대로 담아서, 창이 열린 동안 선택이 바뀌어도 대상은 같아요
+  const trashScreen = screen === 'gallery' || screen === 'missing';
+  const openTrash = () => {
+    setCellMenuAt(null);
+    if (!trashScreen || suggestOpen || selection.ids.size === 0) return;
+    setNotice('');
+    setTrashIds([...selection.ids]);
+  };
+  const onTrashDone = async (text) => {
+    setTrashIds(null);
+    setSelection(EMPTY_SELECTION);
+    setNotice(text);
+    setGen((g) => g + 1);
+    await refresh();
+  };
+  // Delete 키로 확인 창 열기 (글 쓰는 칸 · 다른 창이 열려 있으면 안 열어요)
+  useEffect(() => {
+    const onKey = (e) => {
+      const open = !!(dialog || fillOpen || trashIds || cellMenuAt);
+      if (!deleteKeyOpens(e.key, document.activeElement, open)) return;
+      if (!trashScreen || suggestOpen || selection.ids.size === 0) return;
+      e.preventDefault();
+      openTrash();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
+
   // 날짜 없음 채우기: 옮긴 뒤 / 되돌린 뒤에는 목록과 개수를 다시 읽어요
   const onFillDone = async (r) => {
     setFillOpen(false);
@@ -593,6 +625,7 @@ export default function App() {
           onMap={() => openDialog('map')}
           onTagAdd={() => openDialog('tagAdd')}
           onTagRemove={() => openDialog('tagRemove')}
+          onTrash={trashScreen && !suggestOpen ? openTrash : undefined}
         />
       )}
       {showTools && cellMenuAt && selection.ids.size > 0 && (
@@ -607,10 +640,12 @@ export default function App() {
           onMap={() => openDialog('map')}
           onTagAdd={() => openDialog('tagAdd')}
           onTagRemove={() => openDialog('tagRemove')}
+          onTrash={trashScreen && !suggestOpen ? openTrash : undefined}
           onClose={closeMenu}
         />
       )}
       {fillOpen && <FillDialog onClose={() => setFillOpen(false)} onDone={onFillDone} />}
+      {trashIds && <TrashDialog ids={trashIds} onClose={() => setTrashIds(null)} onDone={onTrashDone} />}
       {dialog && (dialog.mode === 'tagAdd' || dialog.mode === 'tagRemove') && <TagDialog mode={dialog.mode} ids={dialog.ids} onClose={() => setDialog(null)} onApplied={onApplied} />}
       {dialog && dialog.mode !== 'tagAdd' && dialog.mode !== 'tagRemove' && <EditDialog mode={dialog.mode} ids={dialog.ids} source={copySource} prefer={dialog.prefer} startAt={lastPin} onPinChosen={setLastPin} onClose={() => setDialog(null)} onApplied={onApplied} />}
     </div>

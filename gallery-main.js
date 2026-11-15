@@ -43,7 +43,7 @@ const { buildSuggestions } = require('./lib/location-suggest');
 const { createSkips } = require('./lib/suggest-skips');
 const { createMapNet, roundCoord, roundCity } = require('./lib/map-net');
 const { buildGroups, createHasher } = require('./lib/similar');
-const { checkDiscard, discardInfo, discardFiles } = require('./lib/similar-discard');
+const { checkDiscard, checkSelected, discardInfo, discardFiles } = require('./lib/similar-discard');
 const { createDriveKindOf } = require('./lib/platform');
 const { historyFromJobs, planFill, toFillPreview, runFill, undoFill, lastFillRun } = require('./lib/fill-nodate');
 const { isTagKind, normalizeTagEdit, planTagEdit, toTagPreview } = require('./lib/manual-tags');
@@ -754,6 +754,40 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
           db.setMissing(r.done, 1);
         } catch (err) {
           errorLog('비슷한 사진 사라짐 표시', err);
+        }
+      }
+      send('gallery:library-changed');
+      return { trashed: r.trashed, moved: r.moved, fail: r.fail, pairs: r.pairs, pairFail: r.pairFail, logFail: r.logFail, logName: path.basename(r.logPath || '') };
+    } finally {
+      discarding = false;
+    }
+  });
+
+  // ---------- 갤러리에서 고른 사진 휴지통으로 (2026-11-16 사용자 결정) ----------
+  //   사진첩에서 보다가 필요 없는 건 바로 지울 수 있게. 고른 사진 · 영상을 확인 창(trash-preview)을 보고 누를 때만 옮겨요 (trash-selected)
+  //   옮기는 방법 · 로그 · 라이브 포토 짝 영상은 비슷한 사진 버리기와 같아요 (lib/similar-discard.js). 묶음 조건만 없어요
+  //   영구 삭제는 안 해요: 휴지통, 휴지통이 없는 드라이브면 백업 폴더\_정리완료원본
+  ipcMain.handle('gallery:trash-preview', async (e, ids) => {
+    const root = editReady();
+    const { files } = checkSelected(db, root, ids);
+    const info = await discardInfo(files, { driveKindOf: makeDriveKindOf() });
+    return { ...info, canTrash: typeof trash === 'function' };
+  });
+  ipcMain.handle('gallery:trash-selected', async (e, ids) => {
+    const root = editReady();
+    if (discarding || filling) throw new Error('이미 옮기는 중이에요');
+    if (library && library.isScanning()) throw new Error('백업 폴더를 읽는 중이에요. 끝난 뒤 다시 눌러 주세요');
+    const { files } = checkSelected(db, root, ids);
+    discarding = true;
+    try {
+      const noTrash = async () => { throw new Error('휴지통을 쓸 수 없어요'); };
+      const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: makeDriveKindOf(), logger, logKind: 'gallery-trash', logTitle: '갤러리에서 휴지통으로' });
+      // DB에 적다가 실패해도 옮긴 결과는 알려요 (다음에 백업 폴더를 읽으면 "사라짐"으로 맞춰져요)
+      if (r.done.length) {
+        try {
+          db.setMissing(r.done, 1);
+        } catch (err) {
+          errorLog('갤러리 휴지통 사라짐 표시', err);
         }
       }
       send('gallery:library-changed');
