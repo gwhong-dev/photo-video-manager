@@ -46,6 +46,16 @@ async function launchCheck(appDir, opts = {}) {
   }
 }
 
+// 점검 창이 다른 창에 가려져도 화면이 쉬지 않게 하는 Chromium 옵션 (점검 때만, 앱 자체에는 안 넣어요)
+//   가려진 창은 Chromium 이 "안 보임"으로 여겨 그리기(requestAnimationFrame)를 멈추고 타이머를 1초 간격으로 늦춰요.
+//   그러면 지도 확대 · 축소 움직임이 끝나지 않아 점검 43c 가 가끔 실패했어요 (2026-11-16, 창이 가려진 판만 실패)
+const AWAKE_FLAGS = [
+  '--disable-backgrounding-occluded-windows',
+  '--disable-renderer-backgrounding',
+  '--disable-background-timer-throttling',
+  '--disable-features=CalculateNativeWinOcclusion', // Windows 가 창 가림을 계산해 숨김 처리하는 기능 자체를 꺼요
+];
+
 // until: 화면 글자에 이 글이 나올 때까지 더 기다려요 (최대 untilMs). probe: 화면에서 더 읽고 싶은 값(자바스크립트 식)
 // clickText: until 을 기다린 뒤 이 글자가 든 버튼 하나를 눌러요. clickUntil: 누른 뒤 화면 글자에 이 글이 나올 때까지 기다려요 (최대 untilMs)
 //   결과의 clicked 는 버튼을 찾아 눌렀는지예요 (clickText 를 안 주면 undefined)
@@ -56,7 +66,7 @@ async function launchOnce(appDir, { port: portOpt, waitMs = 4000, env = {}, exe:
   // 포트는 실행마다 빈 것을 골라요 (같은 PC 에서 점검이 동시에 돌아도 안 부딪히게). port 를 직접 주면 그 값을 써요
   const port = portOpt || (await freePort());
   const exe = exeOverride || path.join(appDir, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
-  const child = spawn(exe, ['.', `--remote-debugging-port=${port}`], { cwd: appDir, env: { ...process.env, ...env } });
+  const child = spawn(exe, ['.', `--remote-debugging-port=${port}`, ...AWAKE_FLAGS], { cwd: appDir, env: { ...process.env, ...env } });
   trackChild(child);
   let mainOut = '';
   child.stdout.on('data', (d) => (mainOut += d));
