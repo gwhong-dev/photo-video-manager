@@ -400,6 +400,21 @@ const ITEMS = [
           fs.writeFileSync(bk, '');
           const bj = { items: [{ i: 0, src: bs, status: 'dup', dupOf: bk }] };
           const bt = await cleaner.cleanTargets(bj, { store: fakeStore, logger: logs });
+          // 쌍둥이 원본(내용이 똑같은 다른 원본)을 따라 같은 촬영 백업 파일로 이어진 변환 중복도 후보 (2026-11-15 실사용 53개)
+          //   쌍둥이는 이미 정리돼도(trashed) 이어 준 백업 파일은 같은 촬영으로 봐요. 그런 쌍둥이가 없는 백업 파일이면 후보 아님
+          {
+            const other = path.join(root8, 'other-keep.jpg');
+            fs.writeFileSync(other, 'other jpg');
+            const twinJob = { items: [
+              { i: 0, src: path.join(root8, 'gone-twin.HEIC'), status: 'dup', converted: true, sameShot: true, dupOf: keep, trashed: true },
+              { i: 1, src, status: 'dup', converted: true, dupOf: keep, note: '같은 파일 (gone-twin.HEIC)' },
+              { i: 2, src, status: 'dup', converted: true, dupOf: other },
+            ] };
+            const qs = cleaner.cleanCandidates(twinJob).map((it) => it.i).join(',');
+            const qa = (await cleaner.cleanCandidatesAsync(twinJob)).map((it) => it.i).join(',');
+            out.push(sub('8b3 쌍둥이 원본을 따라 같은 촬영 백업 파일로 이어진 변환 중복도 정리 후보 (쌍둥이가 이미 정리돼도), 같은 촬영 쌍둥이가 없으면 아님',
+              qs === '1' && qa === '1', `빠른 확인 ${qs} / 비동기 ${qa}`));
+          }
           out.push(sub('8b3 잠깐 못 읽은 것(정보가 비어 옴 · 남길 파일 읽기 오류)은 기록하지 않고 배너 후보에 그대로',
             emptyMeta.t.length === 0 && !emptyMeta.it.cleanSkip && emptyMeta.again === 1 && bt.length === 0 && !bj.items[0].cleanSkip && cleaner.cleanCandidates(bj).length === 1,
             `빈 정보: ${emptyMeta.it.cleanSkip || '기록 없음'} (후보 ${emptyMeta.again}) / 읽기 오류: ${bj.items[0].cleanSkip || '기록 없음'}`));
