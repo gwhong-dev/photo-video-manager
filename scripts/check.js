@@ -357,7 +357,7 @@ const ITEMS = [
           `${quick.join(',')} / ${strictNo.length} ${strictYes.length} ${strictDiff.length}`));
 
         // 8b3 개선 12 (2026-11-15 실사용): 규칙에 걸려 남기는 원본은 까닭을 작업 기록에 남기고 배너 후보에서 뺌
-        //     실사용: 배너에 "지울 수 있는 원본 256개" 가 계속 보이는데 누르면 매번 0개 (수정 시각 다른 영상 224 · 백업이 더 큰 사진 30 · 영상 2)
+        //     실사용: 배너에 "지울 수 있는 원본 256개" 가 계속 보이는데 누르면 매번 0개 (수정 시각 다른 영상 225 · 백업이 더 큰 사진 30 · 영상 1)
         {
           const fakeStore = { mark: (j, i, patch) => Object.assign(j.items[i], patch) };
           const logs = createLogger(path.join(root8, 'logs-8b3'));
@@ -388,6 +388,21 @@ const ITEMS = [
           out.push(sub('8b3 일반 중복이 크기는 같고 내용(지문)이 다르면 남기고 까닭 기록, 배너 후보에서 빠짐',
             pt.length === 0 && /내용\(지문\)이 달라 남김/.test(pj.items[0].cleanSkip || '') && cleaner.cleanCandidates(pj).length === 0,
             pj.items[0].cleanSkip || '기록 없음'));
+
+          // 잠깐 못 읽은 경우는 기록하지 않음 (#116 검증 ⚠️): 다음에 다시 확인해야 해요
+          //   ① 변환 중복인데 exiftool 이 한쪽 정보를 비워 돌려줌 (형식 오류 파일은 { SourceFile } 만 와요)
+          const emptyMeta = await run(item({ sameShot: true }), async () => new Map([[keyOf(src), { SourceFile: src }], [keyOf(keep), { ...base }]]));
+          //   ② 일반 중복인데 남길 파일 확인(resultOk)이 실패 (잠김 · 0바이트 등) → 기록 안 함
+          //      두 파일을 0바이트로: 크기는 같아 후보가 되지만 resultOk 가 false (전에는 "내용이 달라" 로 영영 남았어요)
+          const bs = path.join(root8, 'busy-src.jpg');
+          const bk = path.join(root8, 'busy-keep.jpg');
+          fs.writeFileSync(bs, '');
+          fs.writeFileSync(bk, '');
+          const bj = { items: [{ i: 0, src: bs, status: 'dup', dupOf: bk }] };
+          const bt = await cleaner.cleanTargets(bj, { store: fakeStore, logger: logs });
+          out.push(sub('8b3 잠깐 못 읽은 것(정보가 비어 옴 · 남길 파일 읽기 오류)은 기록하지 않고 배너 후보에 그대로',
+            emptyMeta.t.length === 0 && !emptyMeta.it.cleanSkip && emptyMeta.again === 1 && bt.length === 0 && !bj.items[0].cleanSkip && cleaner.cleanCandidates(bj).length === 1,
+            `빈 정보: ${emptyMeta.it.cleanSkip || '기록 없음'} (후보 ${emptyMeta.again}) / 읽기 오류: ${bj.items[0].cleanSkip || '기록 없음'}`));
         }
       }
       // 8c 변환할 파일은 같은 날짜 폴더의 기존 결과와 이름이 달라도 애플 ID가 같으면 이미 있음 (exiftool 은 가짜로 바꿔 끼움)
