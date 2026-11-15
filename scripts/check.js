@@ -413,14 +413,23 @@ const ITEMS = [
         put(w(path.join(src8, 'IMG_U.HEIC'), 'hu'), { ContentIdentifier: 'ID-U', ...big });
         put(w(path.join(src8, 'IMG_T.HEIC'), 'ht'), { ContentIdentifier: 'ID-T', ...big });
         put(w(path.join(src8, 'IMG_V.MOV'), 'hv'), { ContentIdentifier: 'ID-V', ImageWidth: 1920, ImageHeight: 1440 });
-        const fakeEt = { read: async (paths) => paths.map((p) => ({ SourceFile: p, ...(metaOf[keyOf(p)] || {}) })) };
+        // 진짜 exiftool 처럼 달라고 한 태그만 돌려줘요 (가로 · 세로를 읽지 않게 되돌리면 잡히게, #113 검증 ⚠️)
+        const tagKey = (t) => t.replace(/^.*:/, '').replace(/#$/, '');
+        const fakeEt = {
+          read: async (paths, tags) => paths.map((p) => {
+            const m = metaOf[keyOf(p)] || {};
+            const o = { SourceFile: p };
+            for (const t of tags || []) if (m[tagKey(t)] != null) o[tagKey(t)] = m[tagKey(t)];
+            return o;
+          }),
+        };
         const plan8 = await makePlan({ source: src8, backupRoot: bk8, includeSub: true }, fakeEt);
         const by = (name) => plan8.items.find((it) => path.basename(it.src) === name);
         const st = (name) => `${name}:${by(name).status}/${by(name).dupOf ? path.basename(by(name).dupOf) : '-'}/${by(name).name}`;
         out.push(sub('8d 백업에 같은 촬영의 작은 사본만 있으면 원본을 가져옴 (이름 다른 사본 · 이름 같은 사본은 _1 · 라이브 포토 영상)',
-          by('IMG_S1.HEIC').status === 'todo' && /작은 사본/.test(by('IMG_S1.HEIC').note)
+          by('IMG_S1.HEIC').status === 'todo' && by('IMG_S1.HEIC').note.includes(`작은 사본만 있어서 가져와요 (${path.basename(sOther)})`)
             && by('IMG_S2.HEIC').status === 'todo' && by('IMG_S2.HEIC').name === '2026-01-02_030405_IMG_S2_1.jpg'
-            && by('IMG_V.MOV').status === 'todo' && fs.existsSync(sOther) && fs.existsSync(sSame) && fs.existsSync(vSmall),
+            && by('IMG_V.MOV').status === 'todo' && by('IMG_V.MOV').note.includes(path.basename(vSmall)),
           ['IMG_S1.HEIC', 'IMG_S2.HEIC', 'IMG_V.MOV'].map(st).join(' ')));
         out.push(sub('8d 크기가 같거나(돌린 것 포함) 백업이 더 크거나 크기를 모르면 지금처럼 중복, 작은 것 · 큰 것이 다 있으면 큰 것의 중복',
           by('IMG_E.HEIC').status === 'dup' && by('IMG_E.HEIC').dupOf === eq
