@@ -1,8 +1,8 @@
 // 파일 위치: src/similar-view.mjs
 // 역할: "비슷한 사진" 화면의 계산 (React 없이 점검할 수 있게 따로 둬요. 점검 37)
 //   표시: 묶음마다 처음에는 keepId 한 장만 "남김", 나머지는 "버림"
-//     예외로 처음부터 "남김": 지문 없이 시간만으로 들어온 사진과 60초 이어 찍기로 들어온 사진(softIds), 전에 "모두 남기기"를 누른 사진(keptIds)
-//     이어 찍기로만 묶인 묶음(timeOnly)은 모든 사진이 softIds 라 처음엔 모두 남김이에요 (2026-11-16 사용자 결정)
+//     keepId = 추천 1장 (lib/similar.js pickBest, 까닭은 keepReason). 나머지는 처음엔 버림 (2026-11-16 사용자 결정: 정리의 목적은 버리기)
+//     예외로 처음부터 "남김": 지문이나 흐림 점수가 아직 없는 사진(softIds), 전에 "모두 남기기"를 누른 사진(keptIds)
 //   화면에 보인 묶음은 그 표시를 overrides(Map<id, 'keep'|'discard'>)에 고정해요 (pinMarks)
 //     → 목록을 다시 받아 keepId가 바뀌어도 사용자가 본 표시는 그대로예요
 //     → 버릴 번호는 고정된 "버림"만 세요. 아직 화면에 안 보인 묶음의 사진은 버리지 않아요
@@ -83,8 +83,15 @@ export function groupReviewLabel(n) {
 
 // 묶음 제목 옆 설명: 이어 찍기로만 묶인 묶음은 처음엔 모두 남김이라고 알려요
 export function groupNote(group) {
-  return group && group.timeOnly ? '이어 찍은 사진이라 처음엔 모두 남김' : '';
+  return group && group.timeOnly ? '1분 안에 이어 찍은 사진' : '';
 }
+
+// 추천 까닭 한 줄 (묶음 제목 아래)
+export function recommendText(group) {
+  if (!group || !group.keepReason) return '';
+  return `추천 1장: ${group.keepReason}. 나머지를 버릴지, 다른 사진을 남길지, 여러 장 남길지 골라 주세요.`;
+}
+
 
 // 목록을 다시 받았을 때: 지금 목록에 없는 사진의 기록은 지워요
 export function pruneOverrides(groups, overrides) {
