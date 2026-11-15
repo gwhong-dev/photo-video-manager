@@ -423,7 +423,10 @@ button.primary:disabled { background: var(--panel); color: var(--sub); border-co
 .similar-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
 .similar-head .panel-heading { margin: 0; color: var(--text); font-size: 14px; }
 .similar-count { color: var(--faint); font-size: 13px; }
-.similar-head .link-button { margin-left: auto; }
+.similar-head-actions { margin-left: auto; display: flex; align-items: baseline; gap: 8px; }
+.similar-group-go { font-size: 13px; padding: 4px 12px; }
+/* 흐림: 경고 노랑 · 색연필 빨강은 쓰지 않아요 (CLAUDE.md 화면 디자인). 썸네일 왼쪽 위 작은 글자 */
+.similar-blur { position: absolute; left: 6px; top: 6px; padding: 1px 6px; border-radius: 4px; background: rgba(51, 50, 47, 0.85); color: var(--text); font-size: 12px; pointer-events: none; }
 .similar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px 8px; }
 .similar-cell { position: relative; min-width: 0; }
 .similar-cell .cell { width: 100%; }
