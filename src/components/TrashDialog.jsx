@@ -6,7 +6,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
-import { trashLabel, trashLines } from '../trash-view.mjs';
+import { trashHint, trashLabel, trashLines } from '../trash-view.mjs';
 import { resultText } from '../similar-view.mjs';
 
 // ids = 열 때 고른 사진 번호들, onClose() = 그만두기, onDone(알림 글) = 옮긴 뒤
@@ -27,17 +27,24 @@ export default function TrashDialog({ ids, onClose, onDone }) {
     return () => { alive = false; };
   }, [ids]);
 
-  // 열리면 그만두기에 초점, Esc 로 닫기 (옮기는 중에는 안 닫혀요)
+  // 열리면 그만두기에 초점, Esc 로 닫기 (옮기는 중에는 안 닫혀요). 닫히면 열기 전 자리로 초점을 돌려줘요
+  //   한 번만 걸어요: App 이 다시 그릴 때마다(폴더 읽기 진행 등) 초점이 "그만두기"로 튀지 않게 (#119 검증 ⚠️)
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
+    const opener = document.activeElement;
     if (cancelRef.current) cancelRef.current.focus();
     const onKey = (e) => {
       if (e.key !== 'Escape' || busyRef.current) return;
       e.stopPropagation();
-      onClose();
+      closeRef.current();
     };
     document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      if (opener && opener !== document.body && opener.isConnected && typeof opener.focus === 'function') opener.focus();
+    };
+  }, []);
 
   const go = async () => {
     if (busyRef.current) return;
@@ -61,7 +68,7 @@ export default function TrashDialog({ ids, onClose, onDone }) {
         <div className="dialog-pick similar-confirm">
           {!info && !error && <p className="panel-hint">확인하는 중이에요</p>}
           {info && trashLines(info).map((l) => <p key={l}>{l}</p>)}
-          {info && <p className="panel-hint">사진 파일은 지우지 않아요. 휴지통에서 되살릴 수 있어요.</p>}
+          {info && <p className="panel-hint">{trashHint(info)}</p>}
           {error && <p className="panel-hint" role="alert">{error}</p>}
         </div>
         <div className="dialog-foot">

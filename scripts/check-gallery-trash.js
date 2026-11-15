@@ -53,6 +53,26 @@ const items = [
             && video.files.length === 1 && video.files[0].path === 'R1/c.mov',
           JSON.stringify({ one: one.files[0].pair, withPair: withPair.files[0].pair, both: both.files.map((f) => f.pair) })));
 
+        // 짝 영상만 고르면 영상만 (#119 검증 ⚠️)
+        const onlyVideo = D.checkSelected(db, 'R1', [idOf('b.mp4')]);
+        // 같은 이름 사진 둘(d.jpg · d.heic)과 짝 영상 d.mov: 하나만 고르면 짝 영상은 안 옮김(다른 사진의 짝일 수 있음),
+        //   둘 다 고르면 번호가 작은 한 장에만 짝 영상이 붙고 siblings 에 다른 한 장 (기존 비슷한 사진 규칙)
+        db.upsertFiles([
+          row({ root: 'R1', path: 'R1/d.jpg', name: 'd.jpg', takenAt: '2026-03-01T10:00:00', takenDay: '2026-03-01' }),
+          row({ root: 'R1', path: 'R1/d.heic', name: 'd.heic', takenAt: '2026-03-01T10:00:00', takenDay: '2026-03-01' }),
+          row({ root: 'R1', path: 'R1/d.mov', name: 'd.mov', mediaType: 'video', takenAt: '2026-03-01T10:00:01', takenDay: '2026-03-01', durationSec: 2 }),
+        ]);
+        const dRows = db.similarRows('R1');
+        const dId = (n) => dRows.find((x) => x.name === n).id;
+        const dOne = D.checkSelected(db, 'R1', [dId('d.jpg')]);
+        const dBoth = D.checkSelected(db, 'R1', [dId('d.jpg'), dId('d.heic')]);
+        const withPairs = dBoth.files.filter((f) => f.pair);
+        out.push(sub('56a 짝 영상만 고르면 영상만, 같은 이름 사진 둘 중 하나만 고르면 짝 영상은 그대로, 둘 다 고르면 한 장에만 짝 영상(다른 한 장은 siblings)',
+          onlyVideo.files.length === 1 && onlyVideo.files[0].path === 'R1/b.mp4' && onlyVideo.files[0].pair === null
+            && dOne.files[0].pair === null
+            && withPairs.length === 1 && withPairs[0].pair.path === 'R1/d.mov' && withPairs[0].pair.siblings.length === 1,
+          JSON.stringify({ onlyVideo: onlyVideo.files.map((f) => [f.path, f.pair]), dOne: dOne.files[0].pair, dBoth: dBoth.files.map((f) => f.pair && f.pair.siblings) })));
+
         db.setMissing(['R1/a.jpg'], 1);
         out.push(sub('56a 사라진 파일, 다른 백업 폴더의 사진, 빈 목록, 같은 번호 두 번, 이상한 번호는 거절',
           !!err([idOf('a.jpg')]) && !!err([zId]) && !!err([]) && !!err(null) && !!err([idOf('b.jpg'), idOf('b.jpg')]) && !!err(['x']) && !!err([0]),
@@ -108,6 +128,13 @@ const items = [
             && V.trashLabel({ count: 3, trash: 3, move: 0 }) === '3장 휴지통으로 옮기기' && V.trashLabel({ count: 2, trash: 0, move: 2 }) === '2장 정리완료원본 폴더로 옮기기'
             && V.trashLabel({ count: 0 }) === '' && V.trashMenuLabel(1234) === '1,234장 휴지통으로 옮기기',
           lines.join(' | ')));
+        // 안내 한 줄은 어디서 되살릴 수 있는지 사실대로 (#119 검증 ⚠️: 전부 _정리완료원본이거나 휴지통이 넘쳐도 "휴지통에서 되살릴 수 있어요" 였음)
+        out.push(sub('56c 확인 창 안내: 휴지통만 / _정리완료원본만 / 섞임 / 휴지통 주의가 있을 때 각각 맞는 글',
+          V.trashHint({ count: 2, trash: 2, move: 0 }).includes('휴지통에서 되살릴 수 있어요')
+            && V.trashHint({ count: 2, trash: 0, move: 2 }).includes('_정리완료원본 폴더에서 되돌릴 수 있어요')
+            && V.trashHint({ count: 2, trash: 1, move: 1 }).includes('휴지통이나 _정리완료원본')
+            && V.trashHint({ count: 2, trash: 2, move: 0, warnings: ['넘어요'] }).includes('위의 주의를 먼저')
+            && V.trashHint({ count: 0 }) === ''));
         const el = (tagName, extra = {}) => ({ tagName, ...extra });
         out.push(sub('56c Delete 키는 격자에서만 창을 열고, 글 쓰는 칸 · 다른 창이 열려 있으면 안 엶 (Backspace 는 안 엶)',
           V.deleteKeyOpens('Delete', el('BUTTON'), false) && V.deleteKeyOpens('Delete', el('DIV'), false) && V.deleteKeyOpens('Delete', null, false)

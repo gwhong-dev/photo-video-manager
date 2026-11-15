@@ -24,6 +24,16 @@ export function trashLines(info) {
   return lines;
 }
 
+// 확인 창 아래 안내 한 줄: 어디서 되살릴 수 있는지 사실대로 (#119 검증 ⚠️)
+//   휴지통 용량 주의가 있으면 휴지통에서 다 되살릴 수 없을 수 있어서 위의 주의를 먼저 보라고 해요
+export function trashHint(info) {
+  if (!info || !info.count) return '';
+  if ((info.warnings || []).length) return '사진 파일은 지우지 않아요. 위의 주의를 먼저 확인해 주세요.';
+  if (info.trash === 0) return '사진 파일은 지우지 않아요. _정리완료원본 폴더에서 되돌릴 수 있어요.';
+  if (info.move > 0) return '사진 파일은 지우지 않아요. 휴지통이나 _정리완료원본 폴더에서 되돌릴 수 있어요.';
+  return '사진 파일은 지우지 않아요. 휴지통에서 되살릴 수 있어요.';
+}
+
 // 메뉴 · 패널 버튼 글자
 export function trashMenuLabel(n) {
   return `${count(n)}장 휴지통으로 옮기기`;
