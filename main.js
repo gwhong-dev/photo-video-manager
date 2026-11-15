@@ -131,7 +131,8 @@ function rowsOf(data, filter) {
       renamed: it.renamed,
       noDate: it.relDir === NO_DATE_DIR,
       check: !!it.check,
-      note: it.note || (it.refDate ? `참고 날짜 ${it.refDate}` : ''),
+      // 원본 정리에서 규칙에 걸려 남긴 까닭이 있으면 메모 앞에 보여요 (개선 12)
+      note: [it.cleanSkip ? `🧹 원본 정리 안 함: ${it.cleanSkip}` : '', it.note || (it.refDate ? `참고 날짜 ${it.refDate}` : '')].filter(Boolean).join(' / '),
     };
   });
   return { rows, total };
