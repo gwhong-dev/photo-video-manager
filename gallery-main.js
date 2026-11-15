@@ -280,7 +280,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       // 비슷한 사진 지문 · 흐림 점수를 뒤에서 미리 만들어요: 썸네일이 있는 사진부터 바로, 썸네일 백그라운드가 끝나면 한 번 더
       startHashing(root, 'bg');
       Promise.resolve(thumbs.startBackground(root))
-        .then(() => { if (root === rootNow()) startHashing(root, 'bg'); })
+        .then(() => { if (!closed && root === rootNow()) startHashing(root, 'bg'); })
         .catch((e) => errorLog('썸네일 뒤 지문 만들기', e));
     }
     return result;
@@ -673,28 +673,32 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   //   파일 경로는 화면에 주지 않아요. 버리기는 미리보기(similar-preview)를 보고 사용자가 누를 때만 (similar-discard)
   const hasher = db && thumbs ? createHasher({ db, thumbs }) : null;
   let hashing = false;
-  let hashAgain = null; // 도는 동안 또 부탁받은 방식 ('full'이 'bg'보다 앞서요)
+  let hashAgain = null; // 도는 동안 또 부탁받은 것 { root, mode } ('full'이 'bg'보다 앞서요. 다른 폴더 부탁은 새것으로)
+  let closed = false; // 프로그램을 끄는 중 (DB 를 닫은 뒤에 새로 시작하지 않게)
   let discarding = false;
-  const similarProgress = (root) => ({ ...db.hashProgress(root), hashing, waiting: hashing && busy() });
+  const withState = (p) => ({ ...p, hashing, waiting: hashing && busy() });
+  const similarProgress = (root) => withState(db.hashProgress(root));
   function startHashing(root, mode = 'full') {
-    if (!hasher || !root) return;
+    if (!hasher || !root || closed) return;
     if (hashing) {
-      if (mode === 'full' || !hashAgain) hashAgain = mode;
+      if (!hashAgain || hashAgain.root !== root || mode === 'full') hashAgain = { root, mode };
       return;
     }
     const p = db.hashProgress(root);
     if (p.done >= p.total) return;
     hashing = true;
-    send('gallery:similar-progress', similarProgress(root));
-    hasher.run(root, () => send('gallery:similar-progress', similarProgress(root)), { readyOnly: mode === 'bg', isBusy: busy })
+    send('gallery:similar-progress', withState(p));
+    // 진행 알림은 hasher 가 잰 값을 그대로 써요 (다시 조회하지 않게)
+    hasher.run(root, (q) => send('gallery:similar-progress', withState(q)), { readyOnly: mode === 'bg', isBusy: busy })
       .catch((e) => errorLog('비슷한 사진 지문 만들기', e))
       .finally(() => {
         hashing = false;
         const again = hashAgain;
         hashAgain = null;
+        if (closed) return;
         try {
           send('gallery:similar-progress', similarProgress(root));
-          if (again && root === rootNow()) startHashing(root, again);
+          if (again && again.root === rootNow()) startHashing(again.root, again.mode);
         } catch (e) { /* 끄는 중 */ }
       });
   }
@@ -1009,7 +1013,9 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     },
     // 프로그램을 끌 때: 진행 중인 FFmpeg를 기다리지 않고 멈추라고만 하고 DB를 닫아요
     close() {
+      closed = true;
       try {
+
         if (hasher) hasher.stop().catch(() => {});
         if (thumbs) thumbs.stop().catch(() => {});
       } catch (e) { /* 끄는 중이라 무시 */ }
