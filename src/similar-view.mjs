@@ -2,10 +2,13 @@
 // 역할: "비슷한 사진" 화면의 계산 (React 없이 점검할 수 있게 따로 둬요. 점검 37)
 //   표시: 묶음마다 처음에는 keepId 한 장만 "남김", 나머지는 "버림"
 //     keepId = 추천 1장 (lib/similar.js pickBest, 까닭은 keepReason). 나머지는 처음엔 버림 (2026-11-16 사용자 결정: 정리의 목적은 버리기)
-//     예외로 처음부터 "남김": 지문이나 흐림 점수가 아직 없는 사진(softIds), 전에 "모두 남기기"를 누른 사진(keptIds)
-//   화면에 보인 묶음은 그 표시를 overrides(Map<id, 'keep'|'discard'>)에 고정해요 (pinMarks)
-//     → 목록을 다시 받아 keepId가 바뀌어도 사용자가 본 표시는 그대로예요
-//     → 버릴 번호는 고정된 "버림"만 세요. 아직 화면에 안 보인 묶음의 사진은 버리지 않아요
+//     예외로 처음부터 "남김": 지문도 AI 특징값도 없는 사진(softIds), 전에 "모두 남기기"를 누른 사진(keptIds)
+//   화면에 보인 묶음은 그 표시를 overrides(Map<id, 값>)에 적어 둬요 (pinMarks)
+//     값: 'keep' · 'discard' = 사용자가 직접 고른 것 (누름 · 모두 남기기), 'auto-keep' · 'auto-discard' = 처음 표시를 적어 둔 것
+//     → 사용자가 하나라도 고른 묶음은 목록을 다시 받아 keepId가 바뀌어도 본 표시가 그대로예요
+//     → 아직 아무것도 안 고른 묶음은 지문 · 흐림 · AI 특징값이 뒤에서 만들어져 추천이 바뀌면 새 추천에 맞춰 다시 맞춰요
+//       (2026-11-16 앱 확인: 그대로 두면 "추천" 사진이 "버림", 다른 사진이 "남김"으로 남아 헷갈림)
+//     → 버릴 번호는 적어 둔 "버림"만 세요. 아직 화면에 안 보인 묶음의 사진은 버리지 않아요
 //   묶음마다 적어도 한 장은 남아야 해요 (마지막 남김을 버림으로 바꾸려 하면 거절)
 
 // 처음 표시 (사용자가 아직 안 바꾼 사진)
@@ -15,11 +18,14 @@ function firstMark(group, id) {
   return 'discard';
 }
 
+// 적어 둔 값 → 'keep' | 'discard' | null
+const valueOf = (o) => (o === 'keep' || o === 'auto-keep' ? 'keep' : o === 'discard' || o === 'auto-discard' ? 'discard' : null);
+// 사용자가 직접 고른 값인지
+const chosen = (o) => o === 'keep' || o === 'discard';
+
 // 사진 한 장의 표시
 export function markOf(group, id, overrides) {
-  const o = overrides && overrides.get(id);
-  if (o === 'keep' || o === 'discard') return o;
-  return firstMark(group, id);
+  return valueOf(overrides && overrides.get(id)) || firstMark(group, id);
 }
 
 // 표시 바꾸기 → { overrides: 새 Map, refused: 거절했으면 true }
@@ -41,9 +47,12 @@ export function keepAll(group, overrides) {
   return next;
 }
 
-// 화면에 보인 묶음의 표시를 고정해요 (바뀐 것이 없으면 같은 Map을 그대로 돌려줘요)
-//   처음 보이는 묶음: keepId(와 softIds, keptIds)만 남김, 나머지 버림
-//   이미 본 묶음에 새로 들어온 사진: 남김 (사용자가 버림을 고르기 전에는 버리지 않아요)
+// 화면에 보인 묶음의 표시를 적어 둬요 (바뀐 것이 없으면 같은 Map을 그대로 돌려줘요)
+//   처음 보이는 사진: keepId(와 softIds, keptIds)만 남김, 나머지 버림
+//   이미 본 묶음에 새로 들어온 사진도 같은 규칙이에요 (2026-11-16 사용자 지적: 처음엔 추천 1장만 남김, 남길 사진만 눌러 바꿈)
+//     AI 특징값 · 지문이 뒤에서 만들어지며 묶음이 커져도 새 사진이 모두 "남김"으로 쌓이지 않게
+//   사용자가 아무것도 안 고른 묶음은 지금 추천에 맞춰 다시 맞춰요. 하나라도 고른 묶음은 적어 둔 표시 그대로
+//   다시 묶이며 한 묶음이 모두 버림이 되면 그 묶음은 옮기지 않아요 (discardIds, main 도 다시 확인)
 export function pinMarks(groups, overrides) {
   let next = null;
   const put = (id, v) => {
@@ -51,20 +60,22 @@ export function pinMarks(groups, overrides) {
     next.set(id, v);
   };
   for (const g of groups || []) {
-    const seen = g.ids.some((id) => overrides && overrides.has(id));
+    const touched = g.ids.some((id) => chosen(overrides && overrides.get(id)));
     for (const id of g.ids) {
-      if (overrides && overrides.has(id)) continue;
-      put(id, seen ? 'keep' : firstMark(g, id));
+      const cur = overrides && overrides.get(id);
+      if (touched && cur !== undefined) continue;
+      const want = `auto-${firstMark(g, id)}`;
+      if (cur !== want) put(id, want);
     }
   }
   return next || overrides || new Map();
 }
 
-// 버릴 사진 번호들: 고정된 "버림"만 (pinMarks로 화면에 보인 묶음). 혹시 한 묶음이 전부 버림이면 그 묶음은 빼요 (main도 다시 확인해요)
+// 버릴 사진 번호들: 적어 둔 "버림"만 (pinMarks로 화면에 보인 묶음). 혹시 한 묶음이 전부 버림이면 그 묶음은 빼요 (main도 다시 확인해요)
 export function discardIds(groups, overrides) {
   const out = [];
   for (const g of groups || []) {
-    const gone = g.ids.filter((id) => overrides && overrides.get(id) === 'discard');
+    const gone = g.ids.filter((id) => overrides && valueOf(overrides.get(id)) === 'discard');
     if (gone.length === g.ids.length) continue;
     out.push(...gone);
   }
@@ -81,7 +92,7 @@ export function groupReviewLabel(n) {
   return n > 0 ? `이 묶음에서 버릴 ${count(n)}장 옮기기` : '';
 }
 
-// 묶음 제목 옆 설명: 이어 찍기로만 묶인 묶음은 처음엔 모두 남김이라고 알려요
+// 묶음 제목 옆 설명: 이어 찍기로만 묶인 묶음 (AI 로 같은 장면을 확인했을 때만 생겨요)
 export function groupNote(group) {
   if (!group || !group.timeOnly) return '';
   return group.aiChecked ? 'AI 로 같은 장면을 확인한, 1분 안에 이어 찍은 사진' : '1분 안에 이어 찍은 사진';
@@ -96,18 +107,20 @@ export function recommendText(group) {
 // ---------- PC 안 AI 비교 (④) ----------
 const mb = (n) => Math.round(Number(n || 0) / 1e6).toLocaleString('ko-KR');
 
-// AI 상태 한 줄 → { text, button } (button 이 있으면 누르면 확인 창이 떠요). 다 끝났으면 text ''
+// AI 상태 한 줄 → { text, sub, button } (button 이 있으면 누르면 확인 창이 떠요). 다 끝났으면 text ''
+//   모델이 없으면 이어 찍기(1분) 묶음을 만들지 않아서, 받으면 무엇이 달라지는지 화면 맨 위에 알려요 (2026-11-16 사용자 지적)
 export function aiLine(s) {
-  if (!s) return { text: '', button: '' };
-  if (s.model === 'downloading') return { text: `AI 모델 받는 중 ${mb(s.got)} / ${mb(s.bytes)}MB`, button: '' };
+  if (!s) return { text: '', sub: '', button: '' };
+  if (s.model === 'downloading') return { text: `AI 모델 받는 중 ${mb(s.got)} / ${mb(s.bytes)}MB`, sub: '', button: '' };
   if (s.model !== 'ready') {
-    const head = 'AI 로 같은 장면을 더 잘 가릴 수 있어요. 모델 파일을 한 번 받아야 해요.';
-    return { text: s.error ? `${s.error} ${head}` : head, button: `AI 모델 ${mb(s.bytes)}MB 받기` };
+    const head = `AI 비교(${mb(s.bytes)}MB)를 받으면 1분 안에 이어 찍은 사진도 장면별로 묶어요.`;
+    const sub = '지금은 3초 안에 이어 찍었거나 모양이 거의 같은 사진만 묶어요. 모델 파일은 한 번만 받고, 사진은 보내지 않아요.';
+    return { text: s.error ? `${s.error} ${head}` : head, sub, button: `AI 모델 ${mb(s.bytes)}MB 받기` };
   }
-  if (s.error) return { text: s.error, button: '' };
-  if (!s.total || s.done >= s.total) return { text: '', button: '' };
-  if (s.waiting) return { text: `AI 특징값 ${count(s.done)} / ${count(s.total)}장. 가져오기가 끝나면 이어서 만들어요.`, button: '' };
-  return { text: `AI 특징값 만드는 중 ${count(s.done)} / ${count(s.total)}장. 끝나면 묶음이 바뀔 수 있어요.`, button: '' };
+  if (s.error) return { text: s.error, sub: '', button: '' };
+  if (!s.total || s.done >= s.total) return { text: '', sub: '', button: '' };
+  if (s.waiting) return { text: `AI 특징값 ${count(s.done)} / ${count(s.total)}장. 가져오기가 끝나면 이어서 만들어요.`, sub: '', button: '' };
+  return { text: `AI 특징값 만드는 중 ${count(s.done)} / ${count(s.total)}장. 끝나면 묶음이 바뀔 수 있어요.`, sub: '', button: '' };
 }
 
 // 모델 받기 확인 창 글

@@ -6,7 +6,8 @@
 //   아래 버튼 → 확인 창(몇 장이 휴지통으로, 몇 장이 _정리완료원본 폴더로 가는지) → 옮기기. 영구 삭제는 안 해요
 //   남김/버림 표시에만 색연필 빨강을 써요 (CLAUDE.md 화면 디자인)
 //   묶음마다 "이 묶음에서 버릴 N장 옮기기"로 그 묶음만 먼저 옮길 수 있어요. 아래 버튼은 화면에 보인 묶음 전체 (2026-11-16 사용자 요청)
-//   흐린 사진(흐림 점수 0.5 이상)에는 "흐림" 표시. 이어 찍기로만 묶인 묶음은 처음엔 모두 남김이에요
+//   흐린 사진(흐림 점수 0.5 이상)에는 "흐림" 표시. 이어 찍기(1분) 묶음은 AI 로 같은 장면을 확인했을 때만 생겨요
+//   AI 모델이 없으면 맨 위 안내 줄에 "받으면 이어 찍은 사진도 장면별로 묶어요"와 받기 버튼 (받기는 확인 창에서 누를 때만)
 //   지문은 백업 폴더를 읽은 뒤 뒤에서 미리 만들고, 화면을 열 때 남은 것도 만들어요. 다 만들면 목록을 다시 받아요
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -53,10 +54,16 @@ function AiBar({ onNotice, onChanged }) {
       setBusy(false);
     }
   };
+  // 화면 맨 위 안내 줄 (갤러리 안내 줄과 같은 모양). 받기 전에는 받으면 무엇이 달라지는지와 받기 버튼을 잘 보이게 (2026-11-16 사용자 지적)
   return (
     <>
-      <span className="similar-ai">{line.text}</span>
-      {line.button && <button type="button" className="link-button" disabled={busy} onClick={() => setAsking(true)}>{line.button}</button>}
+      <div className="banners similar-ai"><div className="banner">
+        <span className="banner-text">
+          <strong>{line.text}</strong>
+          {line.sub && <> <span className="banner-sub">{line.sub}</span></>}
+        </span>
+        {line.button && <button type="button" disabled={busy} onClick={() => setAsking(true)}>{line.button}</button>}
+      </div></div>
       {asking && (
         <div className="dialog-backdrop">
           <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="ai-confirm-title">
@@ -178,10 +185,14 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
     const again = data.hiddenKept > 0
       ? <button type="button" disabled={busy} onClick={() => run(async () => { await api.clearSimilarKeeps(); await load(); })}>모두 남기기로 한 묶음 {formatCount(data.hiddenKept)}개 다시 보기</button>
       : null;
+    // AI 안내 줄은 묶음이 없어도 맨 위에 보여요 (받으면 이어 찍은 사진 묶음이 생길 수 있어요)
     return (
-      <EmptyState title={progress ? '비슷한 사진을 찾는 중이에요' : '비슷한 사진이 없어요'} action={again}>
-        {progress || '3초 안에 이어서 찍었거나 모양이 거의 같은 사진이 없어요.'}
-      </EmptyState>
+      <section className="similar" aria-label="비슷한 사진">
+        <AiBar onNotice={onNotice} onChanged={load} />
+        <EmptyState title={progress ? '비슷한 사진을 찾는 중이에요' : '비슷한 사진이 없어요'} action={again}>
+          {progress || '3초 안에 이어서 찍었거나, 모양이 거의 같거나, AI 로 같은 장면인 1분 안 사진이 없어요.'}
+        </EmptyState>
+      </section>
     );
   }
 
@@ -223,10 +234,10 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
 
   return (
     <section className="similar" aria-label="비슷한 사진">
+      <AiBar onNotice={onNotice} onChanged={load} />
       <div className="similar-top">
         <span>묶음 {formatCount(groups.length)}개, 버릴 사진 {formatCount(ids.length)}장</span>
         {progress && <span>{progress}</span>}
-        <AiBar onNotice={onNotice} onChanged={load} />
 
         {data.hiddenKept > 0 && (
           <button type="button" className="link-button" disabled={busy} onClick={showKept}>
