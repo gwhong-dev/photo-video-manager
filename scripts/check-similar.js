@@ -460,6 +460,15 @@ const items = [
         // 한 장이라도 특징값이 없으면 그 사진은 잇지 않음 (모델이 다른 특징값도)
         const half = S.buildGroups([r(1, '2026-01-01T10:00:00'), r(2, '2026-01-01T10:00:20', { vec: null, embedModel: null }), r(3, '2026-01-01T10:00:40', { embedModel: 'old-model' })]);
         out.push(sub('36o 특징값이 없거나 모델이 다른 사진은 이어 찍기로 잇지 않음', half.length === 0, JSON.stringify(half)));
+        // #121 검증 지적: 지문 없이 3초 규칙(①)으로만 붙은 사진은 특징값이 있어도 AI 로 비교하지 않았으면 처음엔 남김
+        const Ah = '0f0f0f0f33333333';
+        const Ahn = '0f0f0f0f33333330';
+        const tri = (v3) => S.buildGroups([r(1, '2026-03-03T10:00:00', { dhash: Ah, width: 400, height: 300 }), r(2, '2026-03-03T10:00:01', { dhash: Ahn }), r(3, '2026-03-03T10:00:02', { dhash: null, vec: v3 })]);
+        const other3 = tri(scene(9));
+        const same3 = tri(same);
+        out.push(sub('36o 3초로만 붙은 지문 없는 사진: AI 로 다른 장면이면 처음엔 남김(softIds), 같은 장면으로 이어졌으면 버림',
+          other3.length === 1 && other3[0].ids.join() === '1,2,3' && other3[0].softIds.join() === '3' && same3.length === 1 && same3[0].softIds.length === 0,
+          JSON.stringify([other3, same3].map((g) => g.map((x) => [x.ids, x.softIds])))));
       }
 
       // 36k 흐림 점수 (Crete 방식): 선명한 그림 < 0.5 ≤ 흐리게 한 그림, 한 색 그림은 1, 너무 작으면 null

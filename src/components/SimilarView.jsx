@@ -142,7 +142,8 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
     return () => off();
   }, [load]);
 
-  // 화면에 보인 묶음의 남김/버림 표시를 고정해요 (안 본 묶음은 버리지 않고, 다시 받아도 본 표시는 안 바뀌어요)
+  // 화면에 보인 묶음의 남김/버림 표시를 적어 둬요 (안 본 묶음은 버리지 않아요)
+  //   사용자가 누른 묶음은 다시 받아도 그대로, 안 누른 묶음은 추천이 바뀌면 다시 맞춰요 (src/similar-view.mjs pinMarks)
   useEffect(() => {
     if (data) setOverrides((o) => pinMarks(data.groups.slice(0, shown), o));
   }, [data, shown]);
@@ -213,7 +214,9 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
     if (!r.saved) onNotice('숨긴 묶음 목록을 비우지 못했어요.');
     await load();
   });
-  const ids = discardIds(groups, overrides);
+  // 버릴 사진은 지금 화면에 보인 묶음에서만 세요 (#121 검증 지적: 새 묶음이 위에 생겨 30개 밖으로 밀린 묶음은
+  //   표시를 다시 맞추지 않으므로, 옛 표시가 남은 채 버리지 않게)
+  const ids = discardIds(groups.slice(0, shown), overrides);
   const review = () => run(async () => {
     const info = await api.previewDiscard(ids);
     setConfirm({ ids, info });
