@@ -254,6 +254,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .chip.mine { color: var(--text); }
 .panel-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 .panel-actions button { text-align: left; }
+/* 휴지통으로 옮기기: 값 넣기 버튼들과 조금 떼어 둬요 (빨강은 비슷한 사진 표시에만 써서 색은 그대로) */
+.panel-actions .trash-button { margin-top: 8px; }
 .panel-heading { margin: 0 0 4px; font-size: 13px; font-weight: 400; color: var(--faint); }
 .copy-note { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
 .copy-name { margin: 0 0 4px; word-break: break-all; }
@@ -281,6 +283,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   white-space: nowrap;
 }
 .context-menu button:hover:not(:disabled), .context-menu button:focus-visible { background: var(--sidebar); border-color: transparent; outline: 0; }
+.context-menu .trash-button { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 4px 4px; }
 
 /* ---------- 미리보기 창 ---------- */
 /* 창은 위쪽에 붙여 둬요 (아래 목록 길이가 바뀌어도 위쪽 칸들이 움직이지 않게) */
