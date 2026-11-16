@@ -1,21 +1,24 @@
 // 파일 위치: src/components/SimilarView.jsx
 // 역할: "비슷한 사진" 화면 (단계 4, docs/개발개요-v3.md 4-2)
-//   묶음마다 사진을 늘어놓고, 처음에는 가장 큰 사진 한 장만 "남김", 나머지는 "버림"으로 표시해요
+//   묶음마다 사진을 늘어놓고, 처음에는 추천 1장(흐리지 않음 → 노출 → 크기 → 선명함 → 파일 크기 순)만 "남김", 나머지는 "버림"으로 표시해요
+//   추천 사진에는 "추천" 표시, 묶음 제목 아래에 까닭 한 줄 (2026-11-16 사용자 결정)
 //   사진을 누르면 오른쪽 패널에 크게 보이고, 사진 아래 표시 버튼으로 남김과 버림을 바꿔요 (묶음마다 한 장은 꼭 남아요)
 //   아래 버튼 → 확인 창(몇 장이 휴지통으로, 몇 장이 _정리완료원본 폴더로 가는지) → 옮기기. 영구 삭제는 안 해요
 //   남김/버림 표시에만 색연필 빨강을 써요 (CLAUDE.md 화면 디자인)
-//   지문은 화면을 처음 열 때 만들기 시작해요. 다 만들면 목록을 다시 받아요
+//   묶음마다 "이 묶음에서 버릴 N장 옮기기"로 그 묶음만 먼저 옮길 수 있어요. 아래 버튼은 화면에 보인 묶음 전체 (2026-11-16 사용자 요청)
+//   흐린 사진(흐림 점수 0.5 이상)에는 "흐림" 표시. 이어 찍기로만 묶인 묶음은 처음엔 모두 남김이에요
+//   지문은 백업 폴더를 읽은 뒤 뒤에서 미리 만들고, 화면을 열 때 남은 것도 만들어요. 다 만들면 목록을 다시 받아요
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { formatCount, formatTakenAt } from '../format.mjs';
-import { discardIds, discardLabel, keepAll, markOf, pinMarks, previewLines, progressText, pruneOverrides, resultText, reviewLabel, toggleMark } from '../similar-view.mjs';
+import { discardIds, discardLabel, groupDiscardIds, groupNote, groupReviewLabel, keepAll, markOf, pinMarks, previewLines, progressText, pruneOverrides, recommendText, resultText, reviewLabel, toggleMark } from '../similar-view.mjs';
 import EmptyState from './EmptyState.jsx';
 
 const PAGE = 30; // 한 번에 보여 주는 묶음 수
 
 // 사진 한 칸: 사진을 누르면 크게 보기, 아래 버튼으로 남김과 버림 바꾸기
-function SimilarCell({ file, mark, focused, onFocus, onToggle, disabled }) {
+function SimilarCell({ file, mark, best, focused, onFocus, onToggle, disabled }) {
   const [broken, setBroken] = useState(false);
   const keep = mark === 'keep';
   const size = file.width && file.height ? `${file.width}×${file.height}` : '';
@@ -26,6 +29,8 @@ function SimilarCell({ file, mark, focused, onFocus, onToggle, disabled }) {
           ? <span className="no-preview">미리보기 없음</span>
           : <img src={`pvm://thumb/${file.id}`} alt="" loading="lazy" draggable="false" onError={() => setBroken(true)} />}
         {!keep && <span className="similar-x" aria-hidden="true" />}
+        {file.blurry && <span className="similar-blur">흐림</span>}
+        {best && <span className="similar-best">추천</span>}
       </button>
       <button type="button" className="similar-mark" aria-pressed={keep} aria-label={`${file.name} ${keep ? '남김, 누르면 버림으로' : '버림, 누르면 남김으로'}`} disabled={disabled} onClick={() => onToggle(file.id)}>
         {keep ? '남김' : '버림'}
@@ -144,6 +149,13 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
     const info = await api.previewDiscard(ids);
     setConfirm({ ids, info });
   });
+  // 이 묶음만 먼저: 같은 확인 창을 이 묶음의 버림만으로 열어요
+  const reviewGroup = (g) => run(async () => {
+    const gids = groupDiscardIds(g, overrides);
+    if (!gids.length) return;
+    const info = await api.previewDiscard(gids);
+    setConfirm({ ids: gids, info });
+  });
   const discard = () => run(async () => {
     const r = await api.discardSimilar(confirm.ids);
     setConfirm(null);
@@ -163,22 +175,35 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
         )}
       </div>
       <div className="similar-body">
-        {groups.slice(0, shown).map((g) => (
+        {groups.slice(0, shown).map((g) => {
+          const gone = groupDiscardIds(g, overrides).length;
+          const note = groupNote(g);
+          const why = recommendText(g);
+          return (
           <div className="similar-group" key={g.ids.join(',')}>
             <div className="similar-head">
               <h3 className="panel-heading">{g.takenAt ? formatTakenAt(g.takenAt) : '날짜 없음'}</h3>
               <span className="similar-count">{formatCount(g.ids.length)}장</span>
-              <button type="button" className="link-button" disabled={busy || g.ids.every((id) => markOf(g, id, overrides) === 'keep')} onClick={() => keepGroup(g)}>
-                이 묶음은 모두 남기기
-              </button>
+              {note && <span className="similar-count">{note}</span>}
+              <span className="similar-head-actions">
+                <button type="button" className="link-button" disabled={busy || g.ids.every((id) => markOf(g, id, overrides) === 'keep')} onClick={() => keepGroup(g)}>
+                  이 묶음은 모두 남기기
+                </button>
+                {gone > 0 && (
+                  <button type="button" className="similar-group-go" disabled={busy} onClick={() => reviewGroup(g)}>{groupReviewLabel(gone)}</button>
+                )}
+              </span>
             </div>
+            {why && <p className="similar-why">{why}</p>}
             <div className="similar-grid">
               {g.files.map((f) => (
-                <SimilarCell key={f.id} file={f} mark={markOf(g, f.id, overrides)} focused={focusId === f.id} onFocus={onFocus} onToggle={(id) => toggle(g, id)} disabled={busy} />
+                <SimilarCell key={f.id} file={f} mark={markOf(g, f.id, overrides)} best={f.id === g.keepId} focused
+={focusId === f.id} onFocus={onFocus} onToggle={(id) => toggle(g, id)} disabled={busy} />
               ))}
             </div>
           </div>
-        ))}
+          );
+        })}
         {groups.length > shown && (
           <button type="button" className="similar-more" onClick={() => setShown((n) => n + PAGE)}>
             묶음 {formatCount(Math.min(PAGE, groups.length - shown))}개 더 보기 (남은 {formatCount(groups.length - shown)}개)

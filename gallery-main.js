@@ -42,7 +42,7 @@ const { createJournal, recover } = require('./lib/manual-journal');
 const { buildSuggestions } = require('./lib/location-suggest');
 const { createSkips } = require('./lib/suggest-skips');
 const { createMapNet, roundCoord, roundCity } = require('./lib/map-net');
-const { buildGroups, createHasher } = require('./lib/similar');
+const { buildGroups, createHasher, isBlurry } = require('./lib/similar');
 const { checkDiscard, discardInfo, discardFiles } = require('./lib/similar-discard');
 const { createDriveKindOf } = require('./lib/platform');
 const { historyFromJobs, planFill, toFillPreview, runFill, undoFill, lastFillRun } = require('./lib/fill-nodate');
@@ -277,7 +277,11 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
         if (p.allowed) thumbs.pruneOrphans();
         if (p.markedNow) startupLog(['옛 썸네일 정리를 껐어요 (library.db를 새로 만들 때 썸네일이 이미 있었어요. 다른 백업 폴더 썸네일을 지우지 않게. thumb-prune-off.json)']);
       }
-      thumbs.startBackground(root);
+      // 비슷한 사진 지문 · 흐림 점수를 뒤에서 미리 만들어요: 썸네일이 있는 사진부터 바로, 썸네일 백그라운드가 끝나면 한 번 더
+      startHashing(root, 'bg');
+      Promise.resolve(thumbs.startBackground(root))
+        .then(() => { if (!closed && root === rootNow()) startHashing(root, 'bg'); })
+        .catch((e) => errorLog('썸네일 뒤 지문 만들기', e));
     }
     return result;
   }
@@ -662,24 +666,39 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // ---------- 장소 검색과 지도 출처 ----------
   //   검색어 검사와 실패 문장은 map-net 이 정해요. 거절 문장을 그대로 화면에 넘겨요 (검색어는 로그에 안 남아요)
   // ---------- 비슷한 사진 (단계 4) ----------
-  //   지문은 화면을 처음 열 때부터 만들어요 (썸네일에서 계산). 만드는 동안 진행을 gallery:similar-progress 로 알려요
+  //   지문 · 흐림 점수(썸네일에서 계산)는 두 때에 만들어요. 만드는 동안 진행을 gallery:similar-progress 로 알려요
+  //     'bg'  : 백업 폴더를 끝까지 읽은 뒤(가져오기 회차 뒤 포함)와 썸네일 백그라운드가 끝난 뒤, 썸네일이 있는 사진만 미리 (2026-11-16)
+  //     'full': 화면을 열 때. 썸네일이 없는 사진은 썸네일부터 만들어요
+  //   둘 다 가져오기 중(busy)에는 쉬어요 (가져오기를 느리게 하지 않게, 메모리 지키기와 부딪히지 않게). 고르기 · 버리기는 화면에서만
   //   파일 경로는 화면에 주지 않아요. 버리기는 미리보기(similar-preview)를 보고 사용자가 누를 때만 (similar-discard)
   const hasher = db && thumbs ? createHasher({ db, thumbs }) : null;
   let hashing = false;
+  let hashAgain = null; // 도는 동안 또 부탁받은 것 { root, mode } ('full'이 'bg'보다 앞서요. 다른 폴더 부탁은 새것으로)
+  let closed = false; // 프로그램을 끄는 중 (DB 를 닫은 뒤에 새로 시작하지 않게)
   let discarding = false;
-  const similarProgress = (root) => ({ ...db.hashProgress(root), hashing });
-  function startHashing(root) {
-    if (!hasher || hashing) return;
+  const withState = (p) => ({ ...p, hashing, waiting: hashing && busy() });
+  const similarProgress = (root) => withState(db.hashProgress(root));
+  function startHashing(root, mode = 'full') {
+    if (!hasher || !root || closed) return;
+    if (hashing) {
+      if (!hashAgain || hashAgain.root !== root || mode === 'full') hashAgain = { root, mode };
+      return;
+    }
     const p = db.hashProgress(root);
     if (p.done >= p.total) return;
     hashing = true;
-    send('gallery:similar-progress', similarProgress(root));
-    hasher.run(root, () => send('gallery:similar-progress', similarProgress(root)))
+    send('gallery:similar-progress', withState(p));
+    // 진행 알림은 hasher 가 잰 값을 그대로 써요 (다시 조회하지 않게)
+    hasher.run(root, (q) => send('gallery:similar-progress', withState(q)), { readyOnly: mode === 'bg', isBusy: busy })
       .catch((e) => errorLog('비슷한 사진 지문 만들기', e))
       .finally(() => {
         hashing = false;
+        const again = hashAgain;
+        hashAgain = null;
+        if (closed) return;
         try {
           send('gallery:similar-progress', similarProgress(root));
+          if (again && again.root === rootNow()) startHashing(again.root, again.mode);
         } catch (e) { /* 끄는 중 */ }
       });
   }
@@ -688,7 +707,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   const similarKeeps = createSkips(path.join(base, 'similar-keeps.json'), { onError: errorLog, label: '모두 남긴 사진 목록' });
 
   // 묶음 목록 → { progress: { total, done, hashing }, hiddenKept: 숨긴 묶음 수,
-  //   groups: [{ ids, keepId, softIds, keptIds, takenAt, files: [{ id, name, width, height, size, takenAt }] }] }
+  //   groups: [{ ids, keepId, softIds, keptIds, timeOnly, takenAt, files: [{ id, name, width, height, size, takenAt, blurry }] }] }
+  //   blurry: 흐림 점수가 BLUR_LIMIT 이상 (lib/similar.js). 점수가 아직 없으면 false
   //   모든 사진을 "모두 남기기"로 기억한 묶음은 숨겨요. 일부만 기억한 묶음(새 사진이 들어옴)은 기억한 사진이 처음부터 남김(keptIds)
   ipcMain.handle('gallery:similar-list', () => {
     const root = editReady();
@@ -709,7 +729,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
         keptIds,
         files: g.ids.map((id) => {
           const r = byId.get(id);
-          return { id: r.id, name: r.name, width: r.width, height: r.height, size: r.size, takenAt: r.takenAt };
+          return { id: r.id, name: r.name, width: r.width, height: r.height, size: r.size, takenAt: r.takenAt, blurry: isBlurry(r.blur) };
         }),
       });
     }
@@ -993,7 +1013,9 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     },
     // 프로그램을 끌 때: 진행 중인 FFmpeg를 기다리지 않고 멈추라고만 하고 DB를 닫아요
     close() {
+      closed = true;
       try {
+
         if (hasher) hasher.stop().catch(() => {});
         if (thumbs) thumbs.stop().catch(() => {});
       } catch (e) { /* 끄는 중이라 무시 */ }
