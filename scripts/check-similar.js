@@ -351,11 +351,15 @@ const items = [
         out.push(sub('36h 모양 거리 설정이 6보다 크면 오류 (조용히 꺼지지 않음)', threw));
       }
 
-      // 36j 이어 찍기 (2026-11-16 사용자 결정): 같은 날 · 같은 기기 · 앞 사진과 60초 안이면 한 묶음, 처음엔 모두 남김
+      // 36j 이어 찍기 (2026-11-16 사용자 결정): 같은 날 · 같은 기기 · 앞 사진과 60초 안 · AI 로 같은 장면이면 한 묶음, 추천 1장만 남김
       {
         // 지문끼리 서로 멀어서 ①②로는 안 묶이는 사진들 (실제 안경 사진 5장처럼 dHash 로는 못 가림)
         const far = ['0f0f0f0f33333333', 'f0f0f0f0cccccccc', '00ff00ff0f0f0f0f', 'ff00ff00f0f0f0f0', '3c3c3c3cc3c3c3c3', 'c3c3c3c33c3c3c3c', '55aa55aa55aa55aa'];
-        const r = (id, takenAt, over = {}) => ({ id, name: `${id}.jpg`, takenAt, takenAtSource: 'exif', width: 100, height: 100, size: 1000, model: 'iPhone 15 Pro', dhash: far[id % far.length], blur: 0.3, light: 0.5, ...over });
+        // 이어 찍기는 AI 특징값이 있을 때만 이어요 → 아래 사진은 기본으로 같은 장면 특징값을 줘요 (36o 에서 특징값 없을 때를 따로 봐요)
+        const AI = require('../lib/similar-ai');
+        const scene = (seed) => AI.toInt8(new Float32Array(512).map((_, i) => Math.sin(i * 0.37 + seed * 1.7) + 0.3 * Math.cos(i * seed)));
+        const same = scene(1);
+        const r = (id, takenAt, over = {}) => ({ id, name: `${id}.jpg`, takenAt, takenAtSource: 'exif', width: 100, height: 100, size: 1000, model: 'iPhone 15 Pro', dhash: far[id % far.length], blur: 0.3, light: 0.5, vec: same, embedModel: AI.MODEL.id, ...over });
         // 실제 예 (G: 2026-10-23): 17:08, 19:05 한 장씩 + 22:24:57 부터 2 · 4 · 11 · 15초 간격 5장
         const day = [r(1, '2026-10-23T17:08:20'), r(2, '2026-10-23T19:05:36'), r(3, '2026-10-23T22:24:57'), r(4, '2026-10-23T22:24:59'), r(5, '2026-10-23T22:25:03'), r(6, '2026-10-23T22:25:14'), r(7, '2026-10-23T22:25:29')];
         const g = S.buildGroups(day);
@@ -363,8 +367,10 @@ const items = [
           g.length === 1 && g[0].ids.join() === '3,4,5,6,7', JSON.stringify(g)));
         out.push(sub('36j 이어 찍기로만 묶인 묶음은 timeOnly, 추천 1장만 남김 (정보가 다 있으면 softIds 없음, 2026-11-16 결정 변경)',
           g.length === 1 && g[0].timeOnly === true && g[0].softIds.length === 0 && g[0].keepId === 3 && !!g[0].keepReason, JSON.stringify(g)));
-        const unknown = S.buildGroups(day.map((x) => (x.id === 6 ? { ...x, blur: null } : x)));
-        out.push(sub('36j 흐림 점수가 아직 없는 사진은 처음엔 남김(softIds)', unknown.length === 1 && unknown[0].softIds.join() === '6', JSON.stringify(unknown)));
+        // 2026-11-16 사용자 지적: 흐림 점수만 없는 사진까지 처음에 남김이면 버릴 사진을 하나하나 눌러야 함 → AI · 지문으로 비슷하다고 본 사진은 버림
+        const unknown = S.buildGroups(day.map((x) => (x.id === 6 || x.id === 3 ? { ...x, blur: null } : x)));
+        out.push(sub('36j 흐림 점수만 없는 사진은 처음엔 버림(softIds 아님), 추천은 정보가 다 있는 사진에서',
+          unknown.length === 1 && unknown[0].softIds.length === 0 && unknown[0].keepId === 4, JSON.stringify(unknown)));
         out.push(sub('36j 60초 넘게 떨어지면 안 묶음, 사슬로는 이어짐 (0 · 50 · 100초)',
           S.buildGroups([r(1, '2026-01-01T10:00:00'), r(2, '2026-01-01T10:01:01')]).length === 0
             && S.buildGroups([r(1, '2026-01-01T10:00:00'), r(2, '2026-01-01T10:00:50'), r(3, '2026-01-01T10:01:40')]).map((x) => x.ids.join()).join('|') === '1,2,3'));
@@ -423,13 +429,46 @@ const items = [
         let t = Date.UTC(2020, 0, 1) / 1000;
         for (let i = 1; i <= 60000; i++) {
           t += i % 2 ? 20 : 3000;
-          many.push(r(i, new Date(t * 1000).toISOString().slice(0, 19), { dhash: null }));
+          many.push(r(i, new Date(t * 1000).toISOString().slice(0, 19), { dhash: null, vec: scene(Math.floor(i / 2) % 7) }));
         }
         const t0 = Date.now();
         const mg = S.buildGroups(many);
         const ms = Date.now() - t0;
         // 자정을 넘는 짝은 날이 달라 안 묶여요 → 3만 개보다 조금 적어요
         out.push(sub('36j 6만 장(이어 찍기 약 3만 묶음) 묶기 10초 안', ms < 10000 && mg.length > 29900 && mg.length <= 30000 && mg.every((x) => x.timeOnly), `${ms}ms, 묶음 ${mg.length}개`));
+
+        // 36o AI 특징값이 없으면 이어 찍기(1분) 묶음을 만들지 않음 (2026-11-16 사용자 지적, G: 실제 예 4개의 시각 · 실측 유사도)
+        //   피규어 2장(25초, 0.71) · 정류장과 표지판 앞 사람(48초, 0.55) → 따로, 꽃 1장 + 거울 공 3장(꽃과 0.48~0.58, 공끼리 0.82~0.87) → 공 3장만
+        //   안경 5장(0.86~0.96) → 한 묶음
+        //   그때 G: 의 이 사진들은 지문도 아직 없었어요 (dhash 없음, 뒤에서 미리 계산하는 중)
+        const ex = [
+          r(11, '2026-10-25T17:20:38'), r(12, '2026-10-25T17:21:03'),
+          r(13, '2026-10-25T17:09:44'), r(14, '2026-10-25T17:10:32'),
+          r(15, '2026-10-21T19:41:37'), r(16, '2026-10-21T19:42:02'), r(17, '2026-10-21T19:42:04'), r(18, '2026-10-21T19:42:05'),
+          ...day.slice(2),
+        ].map((x) => ({ ...x, dhash: null }));
+        const noAi = S.buildGroups(ex.map((x) => ({ ...x, vec: null, embedModel: null })));
+        out.push(sub('36o AI 특징값이 없으면 1분 안에 찍었어도 이어 찍기 묶음 없음 (실제 예 4개 모두 묶이지 않음)', noAi.length === 0, JSON.stringify(noAi.map((x) => x.ids))));
+        // 특징값: 실측처럼 장면마다 다른 값 (피규어 두 장 · 정류장과 표지판 · 꽃은 서로 다른 장면, 거울 공 · 안경은 같은 장면)
+        const sceneOf = { 11: 2, 12: 3, 13: 4, 14: 5, 15: 6, 16: 7, 17: 7, 18: 7 };
+        const withAi = S.buildGroups(ex.map((x) => (sceneOf[x.id] ? { ...x, vec: scene(sceneOf[x.id]) } : x)));
+        const sims = [[11, 12], [13, 14], [15, 16]].map(([a, b]) => AI.cosine(scene(sceneOf[a]), scene(sceneOf[b])));
+        out.push(sub('36o AI 특징값이 있으면 장면별로: 거울 공 3장 · 안경 5장만 묶음, 모두 AI 확인 · 추천 1장만 남김',
+          sims.every((c) => c < S.AI_LINK) && JSON.stringify(withAi.map((x) => x.ids).sort()) === JSON.stringify([[16, 17, 18], [3, 4, 5, 6, 7]].sort())
+            && withAi.every((x) => x.timeOnly && x.aiChecked && x.softIds.length === 0),
+          `다른 장면 유사도 ${sims.map((c) => c.toFixed(2)).join(', ')}, ${JSON.stringify(withAi.map((x) => x.ids))}`));
+        // 한 장이라도 특징값이 없으면 그 사진은 잇지 않음 (모델이 다른 특징값도)
+        const half = S.buildGroups([r(1, '2026-01-01T10:00:00'), r(2, '2026-01-01T10:00:20', { vec: null, embedModel: null }), r(3, '2026-01-01T10:00:40', { embedModel: 'old-model' })]);
+        out.push(sub('36o 특징값이 없거나 모델이 다른 사진은 이어 찍기로 잇지 않음', half.length === 0, JSON.stringify(half)));
+        // #121 검증 지적: 지문 없이 3초 규칙(①)으로만 붙은 사진은 특징값이 있어도 AI 로 비교하지 않았으면 처음엔 남김
+        const Ah = '0f0f0f0f33333333';
+        const Ahn = '0f0f0f0f33333330';
+        const tri = (v3) => S.buildGroups([r(1, '2026-03-03T10:00:00', { dhash: Ah, width: 400, height: 300 }), r(2, '2026-03-03T10:00:01', { dhash: Ahn }), r(3, '2026-03-03T10:00:02', { dhash: null, vec: v3 })]);
+        const other3 = tri(scene(9));
+        const same3 = tri(same);
+        out.push(sub('36o 3초로만 붙은 지문 없는 사진: AI 로 다른 장면이면 처음엔 남김(softIds), 같은 장면으로 이어졌으면 버림',
+          other3.length === 1 && other3[0].ids.join() === '1,2,3' && other3[0].softIds.join() === '3' && same3.length === 1 && same3[0].softIds.length === 0,
+          JSON.stringify([other3, same3].map((g) => g.map((x) => [x.ids, x.softIds])))));
       }
 
       // 36k 흐림 점수 (Crete 방식): 선명한 그림 < 0.5 ≤ 흐리게 한 그림, 한 색 그림은 1, 너무 작으면 null
@@ -535,15 +574,30 @@ const items = [
         out.push(sub('37a 아직 화면에 안 보인 묶음의 사진은 버리지 않음',
           JSON.stringify(V.discardIds([g, g2], V.pinMarks([g], new Map()))) === JSON.stringify([1, 3])
             && V.discardIds([g, g2], new Map()).length === 0));
-        // 검증 지적: 목록을 다시 받아 가장 큰 사진(keepId)이 바뀌면 본 "남김"이 "버림"으로 바뀌었음
+        // 검증 지적(#34): 목록을 다시 받아 가장 큰 사진(keepId)이 바뀌면 본 "남김"이 "버림"으로 바뀌었음
+        //   → 2026-11-16: 사용자가 하나라도 고른 묶음은 그대로, 아무것도 안 고른 묶음은 새 추천에 맞춤
+        //     (앱 확인: 그대로 두면 AI 특징값이 만들어진 뒤 "추천" 사진이 "버림"으로 남아 헷갈림)
         {
           const seen = V.pinMarks([g], new Map()); // 2 남김, 1·3 버림
           const regrouped = { ids: [1, 2, 3, 4], keepId: 4 }; // 더 큰 4가 들어옴
           const again = V.pinMarks([regrouped], seen);
-          out.push(sub('37a 다시 받은 목록에서도 본 표시는 그대로, 본 묶음에 새로 들어온 사진은 남김',
-            [1, 2, 3, 4].map((id) => V.markOf(regrouped, id, again)).join() === 'discard,keep,discard,keep'
-              && JSON.stringify(V.discardIds([regrouped], again)) === JSON.stringify([1, 3]),
+          out.push(sub('37a 아무것도 안 고른 묶음은 다시 받은 목록의 새 추천(4)만 남김, 나머지 버림',
+            [1, 2, 3, 4].map((id) => V.markOf(regrouped, id, again)).join() === 'discard,discard,discard,keep'
+              && JSON.stringify(V.discardIds([regrouped], again)) === JSON.stringify([1, 2, 3]),
             JSON.stringify([...again])));
+          const touched = V.toggleMark(g, 1, seen).overrides; // 사용자가 1을 남김으로
+          const again1 = V.pinMarks([regrouped], touched);
+          out.push(sub('37a 사용자가 하나라도 고른 묶음은 다시 받아도 본 표시 그대로, 새로 들어온 추천 사진(4)은 남김',
+            [1, 2, 3, 4].map((id) => V.markOf(regrouped, id, again1)).join() === 'keep,keep,discard,keep'
+              && JSON.stringify(V.discardIds([regrouped], again1)) === JSON.stringify([3]) && V.pinMarks([regrouped], again1) === again1,
+            JSON.stringify([...again1])));
+          // 2026-11-16 사용자 지적: AI 특징값이 뒤에서 만들어지며 본 묶음이 커져도 새 사진은 추천이 아니면 처음엔 버림 (모두 남김으로 쌓이지 않게)
+          const grown = { ids: [1, 2, 3, 5, 6], keepId: 2, softIds: [6] };
+          const again2 = V.pinMarks([grown], seen);
+          out.push(sub('37a 본 묶음에 새로 들어온 사진: 추천이 아니면 버림, 지문 · 특징값이 없는 사진(softIds)만 남김',
+            [1, 2, 3, 5, 6].map((id) => V.markOf(grown, id, again2)).join() === 'discard,keep,discard,discard,keep'
+              && JSON.stringify(V.discardIds([grown], again2)) === JSON.stringify([1, 3, 5]),
+            JSON.stringify([...again2])));
         }
         const pruned = V.pruneOverrides([g], new Map([[1, 'keep'], [99, 'keep']]));
         out.push(sub('37a 다시 받은 목록에 없는 사진의 기록은 지움', pruned.size === 1 && pruned.get(1) === 'keep'));
@@ -627,7 +681,13 @@ const items = [
           row({ root: 'R3', path: 'R3/p3.jpg', name: 'p3.jpg', takenDay: '2026-05-05', takenAt: '2026-05-05T10:00:50', model: 'iPhone' }),
         ]);
         const far3 = { 'p1.jpg': '0f0f0f0f33333333', 'p2.jpg': 'f0f0f0f0cccccccc', 'p3.jpg': '00ff00ff0f0f0f0f' };
-        for (const f of db.hashJobs('R3', 10)) db.setHash(f.path, f.size, f.mtimeMs, far3[f.name]);
+        // 이어 찍기는 AI 특징값이 있을 때만 이어요 → 세 장 모두 같은 장면 특징값
+        const AI3 = require('../lib/similar-ai');
+        const v3 = AI3.toInt8(new Float32Array(512).map((_, i) => Math.sin(i * 0.37)));
+        for (const f of db.hashJobs('R3', 10)) {
+          db.setHash(f.path, f.size, f.mtimeMs, far3[f.name]);
+          db.setEmbed(f.path, f.size, f.mtimeMs, AI3.MODEL.id, v3);
+        }
         const id3 = (n) => db.similarRows('R3').find((r) => r.name === n).id;
         const err3 = (ids) => { try { D.checkDiscard(db, 'R3', ids); return null; } catch (e) { return e.message; } };
         const ok3 = D.checkDiscard(db, 'R3', [id3('p1.jpg'), id3('p2.jpg')]);
@@ -922,11 +982,12 @@ const items = [
         out.push(sub('56b 장면이 바뀐 곳(유사도 0.78 미만)에서 이어 찍기 사슬이 끊겨 두 묶음, 둘 다 AI 확인, 묶음마다 추천 1장만 남김',
           simAB < S.AI_LINK && JSON.stringify(g.map((x) => x.ids).sort()) === '[[1,2],[3,4]]' && g.every((x) => x.timeOnly && x.aiChecked && x.softIds.length === 0 && !!x.keepReason),
           `장면 유사도 ${simAB.toFixed(2)}, ${JSON.stringify(g.map((x) => [x.ids, x.aiChecked]))}`));
-        const noVec = S.buildGroups([r(1, 0, null), r(2, 5, sceneB), r(3, 10, sceneA)]);
-        out.push(sub('56b 한쪽이라도 특징값이 없으면 시간만으로 이어요 (AI 확인 아님)',
-          noVec.length === 1 && noVec[0].ids.join() === '1,2' && noVec[0].aiChecked === false, JSON.stringify(noVec)));
-        const other = S.buildGroups([r(1, 0, sceneA), r(2, 5, sceneB, { embedModel: 'old-model' })]);
-        out.push(sub('56b 모델이 다른 특징값끼리는 비교하지 않고 시간만으로', other.length === 1 && other[0].aiChecked === false, JSON.stringify(other)));
+        // 2026-11-16 사용자 지적: 특징값이 없을 때 시간만으로 이으면 다른 장면이 묶임 → 잇지 않음
+        const noVec = S.buildGroups([r(1, 0, null), r(2, 5, sceneA), r(3, 10, sceneA)]);
+        out.push(sub('56b 한쪽이라도 특징값이 없으면 그 사진은 잇지 않음 (같은 장면 2 · 3만 묶음)',
+          noVec.length === 1 && noVec[0].ids.join() === '2,3' && noVec[0].aiChecked === true, JSON.stringify(noVec)));
+        const other = S.buildGroups([r(1, 0, sceneA), r(2, 5, sceneA, { embedModel: 'old-model' })]);
+        out.push(sub('56b 모델이 다른 특징값끼리는 비교하지 않고 잇지도 않음', other.length === 0, JSON.stringify(other)));
         out.push(sub('56b 묶음 안내: AI 로 확인한 이어 찍기 묶음',
           V.groupNote({ timeOnly: true, aiChecked: true }) === 'AI 로 같은 장면을 확인한, 1분 안에 이어 찍은 사진' && V.groupNote({ timeOnly: true }) === '1분 안에 이어 찍은 사진'));
         // 추천 기준 ⑤ AI 대표: 흐림 · 크기 · 선명도가 같으면 다른 사진들과 가장 비슷한(가운데) 사진을 추천
@@ -1126,8 +1187,8 @@ const items = [
         const done = V.aiLine({ model: 'ready', bytes: 89117001, total: 100, done: 100 });
         const fail = V.aiLine({ model: 'none', bytes: 89117001, error: 'AI 모델을 받지 못했어요 (받는 중에 끊겼어요). 다시 눌러 주세요.' });
         const lines = V.aiConfirmLines({ bytes: 89117001 });
-        out.push(sub('56f 받기 전 버튼 "AI 모델 89MB 받기", 받는 중 45 / 89MB, 만드는 중 40 / 100장, 가져오기 중 안내, 끝나면 숨김, 실패 글',
-          none.button === 'AI 모델 89MB 받기' && dl.text === 'AI 모델 받는 중 45 / 89MB' && !dl.button && mk.text.startsWith('AI 특징값 만드는 중 40 / 100장')
+        out.push(sub('56f 받기 전 안내 "받으면 이어 찍은 사진도 장면별로" + 지금 묶는 규칙 + 버튼 "AI 모델 89MB 받기", 받는 중 45 / 89MB, 만드는 중 40 / 100장, 가져오기 중 안내, 끝나면 숨김, 실패 글',
+          none.button === 'AI 모델 89MB 받기' && none.text === 'AI 비교(89MB)를 받으면 1분 안에 이어 찍은 사진도 장면별로 묶어요.' && none.sub.startsWith('지금은 3초 안에') && !dl.sub && dl.text === 'AI 모델 받는 중 45 / 89MB' && !dl.button && mk.text.startsWith('AI 특징값 만드는 중 40 / 100장')
             && wait.text.includes('가져오기가 끝나면') && done.text === '' && fail.text.startsWith('AI 모델을 받지 못했어요') && fail.button === 'AI 모델 89MB 받기',
           JSON.stringify([none, dl, mk, wait, done, fail])));
         out.push(sub('56f 확인 창: 받는 곳(huggingface.co) · 크기 · 보내지 않는 것 · 걸리는 시간, 버튼 "89MB 받기"',
