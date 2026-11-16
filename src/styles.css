@@ -425,6 +425,7 @@ button.primary:disabled { background: var(--panel); color: var(--sub); border-co
 .similar-count { color: var(--faint); font-size: 13px; }
 .similar-head-actions { margin-left: auto; display: flex; align-items: baseline; gap: 8px; }
 .similar-group-go { font-size: 13px; padding: 4px 12px; }
+.similar-ai { color: var(--sub); }
 /* 추천 1장: 썸네일 오른쪽 위 작은 글자 (색연필 빨강 · 경고 노랑은 쓰지 않아요) */
 .similar-best { position: absolute; right: 6px; top: 6px; padding: 1px 6px; border-radius: 4px; background: var(--text); color: var(--bg, #3B3A37); font-size: 12px; font-weight: 600; pointer-events: none; }
 .similar-why { margin: -2px 0 8px; color: var(--sub); font-size: 13px; }

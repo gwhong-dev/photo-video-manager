@@ -31,6 +31,7 @@
     "@fontsource/ibm-plex-sans-kr": "^5.3.0",
     "@tanstack/react-virtual": "^3.14.24",
     "leaflet": "1.9.4",
+    "onnxruntime-node": "1.31.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "sharp": "^0.35.5"
@@ -49,11 +50,15 @@
       "preload.js",
       "index.html",
       "lib/**/*",
-      "dist/renderer/**/*"
+      "dist/renderer/**/*",
+      "!node_modules/onnxruntime-node/bin/napi-v*/darwin/**",
+      "!node_modules/onnxruntime-node/bin/napi-v*/linux/**",
+      "!node_modules/onnxruntime-node/bin/napi-v*/win32/arm64/**"
     ],
     "asarUnpack": [
       "node_modules/sharp/**/*",
-      "node_modules/@img/**/*"
+      "node_modules/@img/**/*",
+      "node_modules/onnxruntime-node/**"
     ],
     "win": {
       "target": [

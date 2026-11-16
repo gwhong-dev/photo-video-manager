@@ -880,9 +880,306 @@ const items = [
       return out;
     },
   },
+  {
+    no: 56,
+    name: '비슷한 사진 PC 안 AI 비교 (모델 받기 · 특징값 · 묶기)',
+    async run(env) {
+      // 진짜 모델(89MB)은 받지 않아요. 받기는 가짜 인터넷, 모델 실행은 가짜 세션으로 봐요
+      //   PVM_AI_MODEL 에 진짜 모델 파일 경로를 주면 56h 에서 진짜로도 돌려 봐요 (이 PC 확인용, CI 는 건너뜀)
+      const out = [];
+      const { pathToFileURL } = require('url');
+      const A = require('../lib/similar-ai');
+      const S = require('../lib/similar');
+      const V = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'similar-view.mjs')).href);
+      const crypto = require('crypto');
+      const base = path.join(env.tmp, 'similar-ai');
+      fs.mkdirSync(base, { recursive: true });
+
+      // 56a 특징값 줄이기 · 유사도
+      {
+        const v = new Float32Array(512).map((_, i) => Math.sin(i));
+        const w = v.map((x) => -x);
+        const a = A.toInt8(v);
+        out.push(sub('56a 특징값은 512바이트, 같은 것은 1, 반대는 -1, 길이가 다르면 null',
+          a.length === 512 && Math.abs(A.cosine(a, A.toInt8(v)) - 1) < 1e-9 && A.cosine(a, A.toInt8(w)) < -0.999 && A.cosine(a, Buffer.alloc(10)) === null && A.cosine(null, a) === null));
+      }
+
+      // 56b 묶기: 두 사진 모두 특징값이 있으면 유사도 0.78 미만에서 이어 찍기를 끊어요
+      {
+        const unit = (seed) => {
+          const v = new Float32Array(512);
+          for (let i = 0; i < 512; i++) v[i] = Math.sin(i * 0.37 + seed * 1.7) + 0.3 * Math.cos(i * seed);
+          return v;
+        };
+        const mix = (a, b, t) => a.map((x, i) => x * (1 - t) + b[i] * t);
+        const sceneA = unit(1);
+        const sceneB = unit(9);
+        const far = ['0f0f0f0f33333333', 'f0f0f0f0cccccccc', '00ff00ff0f0f0f0f', 'ff00ff00f0f0f0f0', '3c3c3c3cc3c3c3c3', 'c3c3c3c33c3c3c3c'];
+        const r = (id, sec, vec, over = {}) => ({ id, name: `${id}.jpg`, takenAt: `2026-01-01T10:00:${String(sec).padStart(2, '0')}`, takenAtSource: 'exif', width: 10, height: 10, size: 1, model: 'iPhone', dhash: far[id % far.length], blur: 0.3, light: 0.5, vec: vec ? A.toInt8(vec) : null, embedModel: vec ? A.MODEL.id : null, ...over });
+        const simAB = A.cosine(A.toInt8(sceneA), A.toInt8(sceneB));
+        const rows = [r(1, 0, sceneA), r(2, 5, mix(sceneA, sceneB, 0.1)), r(3, 10, sceneB), r(4, 15, mix(sceneB, sceneA, 0.1))];
+        const g = S.buildGroups(rows);
+        out.push(sub('56b 장면이 바뀐 곳(유사도 0.78 미만)에서 이어 찍기 사슬이 끊겨 두 묶음, 둘 다 AI 확인, 묶음마다 추천 1장만 남김',
+          simAB < S.AI_LINK && JSON.stringify(g.map((x) => x.ids).sort()) === '[[1,2],[3,4]]' && g.every((x) => x.timeOnly && x.aiChecked && x.softIds.length === 0 && !!x.keepReason),
+          `장면 유사도 ${simAB.toFixed(2)}, ${JSON.stringify(g.map((x) => [x.ids, x.aiChecked]))}`));
+        const noVec = S.buildGroups([r(1, 0, null), r(2, 5, sceneB), r(3, 10, sceneA)]);
+        out.push(sub('56b 한쪽이라도 특징값이 없으면 시간만으로 이어요 (AI 확인 아님)',
+          noVec.length === 1 && noVec[0].ids.join() === '1,2' && noVec[0].aiChecked === false, JSON.stringify(noVec)));
+        const other = S.buildGroups([r(1, 0, sceneA), r(2, 5, sceneB, { embedModel: 'old-model' })]);
+        out.push(sub('56b 모델이 다른 특징값끼리는 비교하지 않고 시간만으로', other.length === 1 && other[0].aiChecked === false, JSON.stringify(other)));
+        out.push(sub('56b 묶음 안내: AI 로 확인한 이어 찍기 묶음',
+          V.groupNote({ timeOnly: true, aiChecked: true }) === 'AI 로 같은 장면을 확인한, 1분 안에 이어 찍은 사진' && V.groupNote({ timeOnly: true }) === '1분 안에 이어 찍은 사진'));
+        // 추천 기준 ⑤ AI 대표: 흐림 · 크기 · 선명도가 같으면 다른 사진들과 가장 비슷한(가운데) 사진을 추천
+        const center = mix(sceneA, sceneB, 0.15);
+        const rep = S.pickBest([
+          r(1, 0, sceneA, { blur: 0.3, light: 0.5, size: 9 }),
+          r(2, 1, center, { blur: 0.3, light: 0.5, size: 1 }),
+          r(3, 2, mix(sceneA, sceneB, 0.3), { blur: 0.3, light: 0.5, size: 5 }),
+        ]); // AI 기준 없이 고르면 파일 크기로 1번
+        const repG = S.buildGroups([
+          r(1, 0, sceneA, { blur: 0.3, light: 0.5, size: 9 }),
+          r(2, 1, center, { blur: 0.3, light: 0.5, size: 1 }),
+          r(3, 2, mix(sceneA, sceneB, 0.3), { blur: 0.3, light: 0.5, size: 5 }),
+        ]);
+        out.push(sub('56b 추천: 흐림 · 크기 · 선명도가 같으면 AI 대표(다른 사진과 가장 비슷한 사진)를 파일 크기보다 먼저',
+          repG.length === 1 && repG[0].keepId === 2 && repG[0].keepReason === 'AI 가 본 대표 장면에 가장 가까운 사진' && rep.keep.id === 1,
+          JSON.stringify(repG.map((x) => [x.keepId, x.keepReason]))));
+      }
+
+      // 56c 모델 받기: 정해진 주소 하나, 크기 · SHA-256 이 맞을 때만 저장 (가짜 인터넷, 작은 가짜 모델)
+      {
+        const saved = { bytes: A.MODEL.bytes, sha256: A.MODEL.sha256 };
+        const content = Buffer.from('가짜 모델 파일 내용 '.repeat(5000));
+        A.MODEL.bytes = content.length;
+        A.MODEL.sha256 = crypto.createHash('sha256').update(content).digest('hex');
+        const calls = [];
+        const body = (buf) => new ReadableStream({ start(c) { for (let i = 0; i < buf.length; i += 7000) c.enqueue(new Uint8Array(buf.subarray(i, i + 7000))); c.close(); } });
+        const fetchOk = async (url, init) => { calls.push({ url, init }); return { ok: true, status: 200, body: body(content) }; };
+        const errOf = async (fn) => { try { await fn(); return null; } catch (e) { return e.message; } };
+        try {
+          const b1 = path.join(base, 'dl-bad');
+          const bad = Buffer.from(content);
+          bad[10] ^= 1; // 한 글자만 다름
+          const e1 = await errOf(() => A.downloadModel({ fetchImpl: async () => ({ ok: true, status: 200, body: body(bad) }), base: b1 }));
+          const left1 = fs.existsSync(path.join(b1, 'models')) ? fs.readdirSync(path.join(b1, 'models')) : [];
+          out.push(sub('56c 내용이 다르면(SHA-256) 저장하지 않고 임시 파일도 지움', !!e1 && e1.includes('원래 모델과 달라요') && left1.length === 0 && !A.modelReady(b1), `${e1} ${JSON.stringify(left1)}`));
+          const e2 = await errOf(() => A.downloadModel({ fetchImpl: async () => ({ ok: false, status: 404, body: null }), base: b1 }));
+          const e3 = await errOf(() => A.downloadModel({ fetchImpl: async () => { throw new Error('ENOTFOUND'); }, base: b1 }));
+          const e4 = await errOf(() => A.downloadModel({ fetchImpl: undefined, base: b1 }));
+          out.push(sub('56c 서버 오류 · 인터넷 끊김 · 인터넷 없음은 사람이 읽을 글로 실패',
+            String(e2).includes('HTTP 404') && String(e3).includes('인터넷 연결을 확인') && String(e4).includes('인터넷 연결을 쓸 수 없어요'), `${e2} / ${e3} / ${e4}`));
+          const b2 = path.join(base, 'dl-ok');
+          const progress = [];
+          const p = await A.downloadModel({ fetchImpl: fetchOk, base: b2, onProgress: (got, total) => progress.push([got, total]) });
+          out.push(sub('56c 맞으면 설정 폴더 models 에 저장, 진행 알림, 임시 파일 없음',
+            p === A.modelPath(b2) && A.modelReady(b2) && fs.readdirSync(path.join(b2, 'models')).length === 1 && progress.length > 0 && progress.at(-1)[0] === content.length,
+            JSON.stringify({ p, files: fs.readdirSync(path.join(b2, 'models')), last: progress.at(-1) })));
+          out.push(sub('56c 나가는 요청은 정해진 주소 하나 (huggingface.co), 보내는 내용(body · 머리글) 없음',
+            calls.length === 1 && calls[0].url === A.MODEL.url && /^https:\/\/huggingface\.co\//.test(calls[0].url) && !calls[0].init.body && !calls[0].init.headers && !calls[0].init.method,
+            JSON.stringify(calls.map((c) => [c.url, Object.keys(c.init)]))));
+        } finally {
+          A.MODEL.bytes = saved.bytes;
+          A.MODEL.sha256 = saved.sha256;
+        }
+        // 검증 지적: 받다 끈 임시 파일 · 깨진 모델 · 끌 때 멈추기
+        {
+          const saved2 = { bytes: A.MODEL.bytes, sha256: A.MODEL.sha256 };
+          A.MODEL.bytes = content.length;
+          A.MODEL.sha256 = crypto.createHash('sha256').update(content).digest('hex');
+          try {
+            const b4 = path.join(base, 'dl-sweep');
+            fs.mkdirSync(path.join(b4, 'models'), { recursive: true });
+            const stale = `${A.modelPath(b4)}.tmp-1-1`;
+            fs.writeFileSync(stale, 'x');
+            const other = path.join(b4, 'models', 'keep.txt');
+            fs.writeFileSync(other, 'x');
+            await A.downloadModel({ fetchImpl: fetchOk, base: b4 });
+            out.push(sub('56c 받기 시작할 때 지난번에 끊겨 남은 임시 파일만 치움 (다른 파일은 그대로)', !fs.existsSync(stale) && fs.existsSync(other) && A.modelReady(b4)));
+            const good = await A.verifyModel(b4);
+            fs.writeFileSync(A.modelPath(b4), Buffer.alloc(content.length, 1)); // 크기는 같고 내용이 다름
+            const bad = await A.verifyModel(b4);
+            const moved = fs.readdirSync(path.join(b4, 'models')).filter((n) => n.includes('.broken-'));
+            out.push(sub('56c 모델 파일 확인: 맞으면 참, 내용이 다르면 거짓 + 옆 이름(.broken-)으로 치워 다시 받게', good === true && bad === false && moved.length === 1 && !A.modelReady(b4), JSON.stringify({ good, bad, moved })));
+            const ac = new AbortController();
+            const slow = async (url, init) => ({ ok: true, status: 200, body: new ReadableStream({ start(c) { c.enqueue(new Uint8Array(content.subarray(0, 100))); init.signal.addEventListener('abort', () => c.error(new Error('aborted'))); } }) });
+            const b5 = path.join(base, 'dl-abort');
+            const pr = errOf(() => A.downloadModel({ fetchImpl: slow, base: b5, signal: ac.signal }));
+            setTimeout(() => ac.abort(), 50);
+            const e5 = await pr;
+            const left5 = fs.existsSync(path.join(b5, 'models')) ? fs.readdirSync(path.join(b5, 'models')) : [];
+            out.push(sub('56c 끌 때(signal) 받기를 멈추고 임시 파일을 지움', !!e5 && left5.length === 0, `${e5} ${JSON.stringify(left5)}`));
+          } finally {
+            A.MODEL.bytes = saved2.bytes;
+            A.MODEL.sha256 = saved2.sha256;
+          }
+        }
+        out.push(sub('56c 진짜 모델 정보: 89,117,001 바이트, MIT 표기, 받는 곳은 huggingface.co Xenova/clip-vit-base-patch32',
+          A.MODEL.bytes === 89117001 && /^[0-9a-f]{64}$/.test(A.MODEL.sha256) && A.MODEL.url.startsWith('https://huggingface.co/Xenova/clip-vit-base-patch32/') && A.MODEL.label.includes('MIT')));
+      }
+
+      // 56d DB: 특징값 표, 할 일, 진행, 묶기용 줄 (모델이 바뀌면 다시)
+      await withDb(env, 'similar-ai-db', async (db) => {
+        db.upsertFiles([
+          row({ root: 'R1', path: 'R1/a.jpg', name: 'a.jpg' }),
+          row({ root: 'R1', path: 'R1/b.jpg', name: 'b.jpg' }),
+          row({ root: 'R1', path: 'R1/v.mp4', name: 'v.mp4', mediaType: 'video' }),
+        ]);
+        const jobs0 = db.embedJobs('R1', 10, 0, 'm1').map((f) => f.name);
+        const [a, b] = db.embedJobs('R1', 10, 0, 'm1');
+        db.setEmbed(a.path, a.size, a.mtimeMs, 'm1', A.toInt8(new Float32Array(512).fill(1)));
+        db.setEmbed(b.path, b.size, b.mtimeMs, 'm1', null);
+        const jobs1 = db.embedJobs('R1', 10, 0, 'm1').map((f) => f.name);
+        const p1 = db.embedProgress('R1', 'm1');
+        const rows = db.similarRows('R1');
+        const jobsNew = db.embedJobs('R1', 10, 0, 'm2').map((f) => f.name);
+        out.push(sub('56d 할 일은 사진만, 저장하면(실패 포함) 빠지고 진행에 셈, 모델이 바뀌면 다시 할 일',
+          JSON.stringify(jobs0) === '["a.jpg","b.jpg"]' && jobs1.length === 0 && p1.total === 2 && p1.done === 2 && JSON.stringify(jobsNew) === '["a.jpg","b.jpg"]',
+          JSON.stringify([jobs0, jobs1, p1, jobsNew])));
+        out.push(sub('56d 묶기용 줄에 특징값(512바이트)과 모델 이름, 실패는 null',
+          rows[0].vec instanceof Uint8Array && rows[0].vec.length === 512 && rows[0].embedModel === 'm1' && rows[1].vec === null && rows[1].embedModel === null, JSON.stringify(rows.map((x) => [x.name, x.vec && x.vec.length, x.embedModel]))));
+        db.resetFailedThumbs('R1');
+        out.push(sub('56d 썸네일 다시 만들기를 하면 특징값 실패 기록도 지워져 다시 할 일로', db.embedJobs('R1', 10, 0, 'm1').map((f) => f.name).join() === 'b.jpg'));
+      });
+
+      // 56i 검증 지적: AI 로 나뉜 이어 찍기 묶음도 버리기 확인이 같은 묶음으로 봐요 (나뉜 한 묶음을 다 버리면 거절)
+      await withDb(env, 'similar-ai-discard', async (db) => {
+        const D = require('../lib/similar-discard');
+        const va = A.toInt8(new Float32Array(512).map((_, i) => Math.sin(i * 0.37)));
+        const vb = A.toInt8(new Float32Array(512).map((_, i) => Math.cos(i * 1.91)));
+        const hs = { 'a1.jpg': '0f0f0f0f33333333', 'a2.jpg': 'f0f0f0f0cccccccc', 'b1.jpg': '00ff00ff0f0f0f0f', 'b2.jpg': 'ff00ff00f0f0f0f0' };
+        const names = ['a1.jpg', 'a2.jpg', 'b1.jpg', 'b2.jpg'];
+        db.upsertFiles(names.map((n, k) => row({ root: 'R4', path: `R4/${n}`, name: n, takenDay: '2026-06-06', takenAt: `2026-06-06T10:00:${String(k * 10).padStart(2, '0')}`, model: 'iPhone' })));
+        for (const f of db.hashJobs('R4', 10)) {
+          db.setHash(f.path, f.size, f.mtimeMs, hs[f.name]);
+          db.setBlur(f.path, f.size, f.mtimeMs, 0.3, 0.5);
+          db.setEmbed(f.path, f.size, f.mtimeMs, A.MODEL.id, f.name.startsWith('a') ? va : vb);
+        }
+        const groups = S.buildGroups(db.similarRows('R4'));
+        const id4 = (n) => db.similarRows('R4').find((x) => x.name === n).id;
+        let err = '';
+        try { D.checkDiscard(db, 'R4', [id4('a1.jpg'), id4('a2.jpg')]); } catch (e) { err = e.message; }
+        const ok = D.checkDiscard(db, 'R4', [id4('a2.jpg'), id4('b2.jpg')]);
+        out.push(sub('56i AI 로 장면이 나뉘면 두 묶음, 한 묶음을 다 버리면 거절, 묶음마다 한 장씩은 버릴 수 있음',
+          groups.length === 2 && err === '묶음마다 적어도 한 장은 남겨 주세요' && ok.groups === 2, JSON.stringify({ groups: groups.map((g) => g.ids), err, okGroups: ok.groups })));
+      });
+
+      // 56e 특징값 만들기 (가짜 세션): 모델이 없으면 아무것도 안 함, 썸네일 실패는 null, 가져오기 중엔 쉼, 끝나면 세션을 닫음
+      await withDb(env, 'similar-ai-embed', async (db) => {
+        db.upsertFiles([1, 2, 3, 4].map((i) => row({ root: 'R1', path: `R1/${i}.jpg`, name: `${i}.jpg` })));
+        const saved = A.MODEL.bytes;
+        const b3 = path.join(base, 'embed');
+        let loads = 0;
+        let releases = 0;
+        let runs = 0;
+        const loadSession = async (file, threads) => {
+          loads++;
+          return { async run() { runs++; const v = new Float32Array(512); v[runs % 512] = 1; return v; }, async release() { releases++; }, file, threads };
+        };
+        const thumbs = {
+          async request(id) {
+            const f = db.getFile(id);
+            if (f.name === '3.jpg') { db.setThumbState(id, 'failed'); return null; }
+            if (f.name === '4.jpg') return null; // 원본을 못 읽음 → 다음에 다시
+            return `t${id}`;
+          },
+        };
+        const inputOf = async () => new Float32Array(3 * 224 * 224);
+        try {
+          const none = await A.createEmbedder({ db, thumbs, base: b3, loadSession, inputOf }).run('R1');
+          out.push(sub('56e 모델 파일이 없으면 모델도 안 열고 아무것도 안 함', none.made === 0 && loads === 0, JSON.stringify(none)));
+          A.MODEL.bytes = 10;
+          fs.mkdirSync(path.join(b3, 'models'), { recursive: true });
+          fs.writeFileSync(A.modelPath(b3), Buffer.alloc(10));
+          const busyUntil = Date.now() + 1100;
+          const em = A.createEmbedder({ db, thumbs, base: b3, loadSession, inputOf });
+          const t0 = Date.now();
+          const r = await em.run('R1', null, { isBusy: () => Date.now() < busyUntil });
+          const waited = Date.now() - t0;
+          const left = db.embedJobs('R1', 10, 0, A.MODEL.id).map((f) => f.name);
+          out.push(sub('56e 만든 2장 · 썸네일 실패 1장(null) · 원본 못 읽음 1장(다음에 다시), 가져오기 중엔 쉼, 끝나면 세션 닫음',
+            r.made === 2 && r.failed === 1 && r.skipped === 1 && JSON.stringify(left) === '["4.jpg"]' && waited >= 1000 && loads === 1 && releases === 1,
+            JSON.stringify({ r, left, waited, loads, releases })));
+          await em.stop();
+          const after = await em.run('R1');
+          out.push(sub('56e 멈춘 뒤에는 아무것도 안 함', after.made === 0 && loads === 1));
+          // 검증 지적: 모델을 열지 못하면(onnxruntime 을 못 불러옴 등) 회차가 실패로 끝나요 → gallery-main 이 다시 시도하지 않게 표시
+          db.upsertFiles([row({ root: 'R1', path: 'R1/9.jpg', name: '9.jpg' })]);
+          let thrown = '';
+          try {
+            await A.createEmbedder({ db, thumbs, base: b3, inputOf, loadSession: async () => { throw new Error('DLL 을 불러오지 못함'); } }).run('R1');
+          } catch (e) {
+            thrown = e.message;
+          }
+          out.push(sub('56e 모델을 열지 못하면 회차가 오류로 끝남 (특징값을 "실패"로 적지 않아 고친 뒤 다시 만들 수 있음)',
+            thrown.includes('DLL') && db.embedJobs('R1', 10, 0, A.MODEL.id).map((f) => f.name).includes('9.jpg'), thrown));
+        } finally {
+          A.MODEL.bytes = saved;
+        }
+      });
+
+      // 56f 화면 문구: 받기 전 · 받는 중 · 특징값 만드는 중 · 끝
+      {
+        const none = V.aiLine({ model: 'none', bytes: 89117001, got: 0, total: 0, done: 0 });
+        const dl = V.aiLine({ model: 'downloading', bytes: 89117001, got: 45000000 });
+        const mk = V.aiLine({ model: 'ready', bytes: 89117001, total: 100, done: 40, embedding: true });
+        const wait = V.aiLine({ model: 'ready', bytes: 89117001, total: 100, done: 40, embedding: true, waiting: true });
+        const done = V.aiLine({ model: 'ready', bytes: 89117001, total: 100, done: 100 });
+        const fail = V.aiLine({ model: 'none', bytes: 89117001, error: 'AI 모델을 받지 못했어요 (받는 중에 끊겼어요). 다시 눌러 주세요.' });
+        const lines = V.aiConfirmLines({ bytes: 89117001 });
+        out.push(sub('56f 받기 전 버튼 "AI 모델 89MB 받기", 받는 중 45 / 89MB, 만드는 중 40 / 100장, 가져오기 중 안내, 끝나면 숨김, 실패 글',
+          none.button === 'AI 모델 89MB 받기' && dl.text === 'AI 모델 받는 중 45 / 89MB' && !dl.button && mk.text.startsWith('AI 특징값 만드는 중 40 / 100장')
+            && wait.text.includes('가져오기가 끝나면') && done.text === '' && fail.text.startsWith('AI 모델을 받지 못했어요') && fail.button === 'AI 모델 89MB 받기',
+          JSON.stringify([none, dl, mk, wait, done, fail])));
+        out.push(sub('56f 확인 창: 받는 곳(huggingface.co) · 크기 · 보내지 않는 것 · 걸리는 시간, 버튼 "89MB 받기"',
+          lines.length === 4 && lines[0].includes('huggingface.co') && lines[0].includes('89MB') && lines[2].includes('보내지 않아요') && V.aiConfirmLabel({ bytes: 89117001 }) === '89MB 받기',
+          JSON.stringify(lines)));
+      }
+
+      // 56g onnxruntime-node 가 이 PC(Windows)에서 불러와져요 (exe 에 같이 들어가는 실행 도구)
+      {
+        let ok = false;
+        let why = '';
+        try {
+          const ort = require('onnxruntime-node');
+          ok = typeof ort.InferenceSession.create === 'function' && typeof ort.Tensor === 'function';
+        } catch (e) {
+          why = e.message;
+        }
+        out.push(sub('56g onnxruntime-node 불러오기', ok, why));
+      }
+
+      // 56h (선택) 진짜 모델로: 같은 그림 필터 사본은 0.9 이상, 다른 그림은 그보다 낮음
+      const real = process.env.PVM_AI_MODEL;
+      if (real && fs.existsSync(real)) {
+        const ort = require('onnxruntime-node');
+        const sess = await ort.InferenceSession.create(real, { intraOpNumThreads: 2 });
+        const emb = async (f) => {
+          const x = new ort.Tensor('float32', await A.sharpInput(f), [1, 3, 224, 224]);
+          return A.toInt8((await sess.run({ pixel_values: x })).image_embeds.data);
+        };
+        // 알아보기 쉬운 그림: 흰 바탕 빨간 원 · 그 사본(작게, 조금 밝게) · 파란 줄무늬
+        const sharp = require('sharp');
+        const svg = (inner) => Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#fff"/>${inner}</svg>`);
+        const i1 = path.join(base, 'r1.jpg');
+        const i2 = path.join(base, 'r1f.jpg');
+        const i3 = path.join(base, 'r2.jpg');
+        await sharp(svg('<circle cx="200" cy="150" r="100" fill="#d22"/>')).jpeg().toFile(i1);
+        await sharp(i1).resize(200, 150).modulate({ brightness: 1.1 }).jpeg({ quality: 60 }).toFile(i2); // 작게 줄이고 조금 밝게 한 사본
+        await sharp(svg([0, 1, 2, 3, 4].map((k) => `<rect x="0" y="${k * 60}" width="400" height="30" fill="#24c"/>`).join(''))).jpeg().toFile(i3);
+
+        const [e1, e2, e3] = [await emb(i1), await emb(i2), await emb(i3)];
+        const same = A.cosine(e1, e2);
+        const diff = A.cosine(e1, e3);
+        out.push(sub('56h 진짜 모델: 같은 그림을 줄이고 밝게 한 사본은 0.9 이상, 다른 그림은 0.9 아래', same >= 0.9 && diff < 0.9,`같은 ${same.toFixed(3)}, 다른 ${diff.toFixed(3)}`));
+        await sess.release();
+      }
+      return out;
+    },
+  },
 ];
 
 module.exports = { items, makeImage };
+
 
 // 이 파일만 바로 돌릴 때: 임시 폴더를 만들고, 다 통과하면 지워요
 if (require.main === module) {

@@ -83,13 +83,46 @@ export function groupReviewLabel(n) {
 
 // 묶음 제목 옆 설명: 이어 찍기로만 묶인 묶음은 처음엔 모두 남김이라고 알려요
 export function groupNote(group) {
-  return group && group.timeOnly ? '1분 안에 이어 찍은 사진' : '';
+  if (!group || !group.timeOnly) return '';
+  return group.aiChecked ? 'AI 로 같은 장면을 확인한, 1분 안에 이어 찍은 사진' : '1분 안에 이어 찍은 사진';
 }
 
 // 추천 까닭 한 줄 (묶음 제목 아래)
 export function recommendText(group) {
   if (!group || !group.keepReason) return '';
   return `추천 1장: ${group.keepReason}. 나머지를 버릴지, 다른 사진을 남길지, 여러 장 남길지 골라 주세요.`;
+}
+
+// ---------- PC 안 AI 비교 (④) ----------
+const mb = (n) => Math.round(Number(n || 0) / 1e6).toLocaleString('ko-KR');
+
+// AI 상태 한 줄 → { text, button } (button 이 있으면 누르면 확인 창이 떠요). 다 끝났으면 text ''
+export function aiLine(s) {
+  if (!s) return { text: '', button: '' };
+  if (s.model === 'downloading') return { text: `AI 모델 받는 중 ${mb(s.got)} / ${mb(s.bytes)}MB`, button: '' };
+  if (s.model !== 'ready') {
+    const head = 'AI 로 같은 장면을 더 잘 가릴 수 있어요. 모델 파일을 한 번 받아야 해요.';
+    return { text: s.error ? `${s.error} ${head}` : head, button: `AI 모델 ${mb(s.bytes)}MB 받기` };
+  }
+  if (s.error) return { text: s.error, button: '' };
+  if (!s.total || s.done >= s.total) return { text: '', button: '' };
+  if (s.waiting) return { text: `AI 특징값 ${count(s.done)} / ${count(s.total)}장. 가져오기가 끝나면 이어서 만들어요.`, button: '' };
+  return { text: `AI 특징값 만드는 중 ${count(s.done)} / ${count(s.total)}장. 끝나면 묶음이 바뀔 수 있어요.`, button: '' };
+}
+
+// 모델 받기 확인 창 글
+export function aiConfirmLines(s) {
+  const size = mb(s && s.bytes);
+  return [
+    `huggingface.co 에서 CLIP 이미지 모델 파일(${size}MB, MIT 라이선스)을 한 번 받아요.`,
+    '받은 파일은 이 PC 의 설정 폴더(models)에 두고, 원래 파일과 같은지 확인한 뒤에 써요.',
+    '사진, 파일 이름, 폴더 경로는 보내지 않아요. 받은 뒤에는 인터넷 없이 이 PC 안에서만 사진을 비교해요.',
+    '사진 5.5만 장이면 처음 한 번 약 1시간 동안 뒤에서 만들어요 (가져오기 중에는 쉬어요).',
+  ];
+}
+
+export function aiConfirmLabel(s) {
+  return `${mb(s && s.bytes)}MB 받기`;
 }
 
 
