@@ -42,7 +42,8 @@ const { createJournal, recover } = require('./lib/manual-journal');
 const { buildSuggestions } = require('./lib/location-suggest');
 const { createSkips } = require('./lib/suggest-skips');
 const { createMapNet, roundCoord, roundCity } = require('./lib/map-net');
-const { buildGroups, createHasher } = require('./lib/similar');
+const { buildGroups, createHasher, isBlurry } = require('./lib/similar');
+const ai = require('./lib/similar-ai');
 const { checkDiscard, checkSelected, discardInfo, discardFiles } = require('./lib/similar-discard');
 const { createDriveKindOf } = require('./lib/platform');
 const { historyFromJobs, planFill, toFillPreview, runFill, undoFill, lastFillRun } = require('./lib/fill-nodate');
@@ -277,7 +278,11 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
         if (p.allowed) thumbs.pruneOrphans();
         if (p.markedNow) startupLog(['옛 썸네일 정리를 껐어요 (library.db를 새로 만들 때 썸네일이 이미 있었어요. 다른 백업 폴더 썸네일을 지우지 않게. thumb-prune-off.json)']);
       }
-      thumbs.startBackground(root);
+      // 비슷한 사진 지문 · 흐림 점수를 뒤에서 미리 만들어요: 썸네일이 있는 사진부터 바로, 썸네일 백그라운드가 끝나면 한 번 더
+      startHashing(root, 'bg');
+      Promise.resolve(thumbs.startBackground(root))
+        .then(() => { if (!closed && root === rootNow()) startHashing(root, 'bg'); })
+        .catch((e) => errorLog('썸네일 뒤 지문 만들기', e));
     }
     return result;
   }
@@ -662,37 +667,161 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // ---------- 장소 검색과 지도 출처 ----------
   //   검색어 검사와 실패 문장은 map-net 이 정해요. 거절 문장을 그대로 화면에 넘겨요 (검색어는 로그에 안 남아요)
   // ---------- 비슷한 사진 (단계 4) ----------
-  //   지문은 화면을 처음 열 때부터 만들어요 (썸네일에서 계산). 만드는 동안 진행을 gallery:similar-progress 로 알려요
+  //   지문 · 흐림 점수(썸네일에서 계산)는 두 때에 만들어요. 만드는 동안 진행을 gallery:similar-progress 로 알려요
+  //     'bg'  : 백업 폴더를 끝까지 읽은 뒤(가져오기 회차 뒤 포함)와 썸네일 백그라운드가 끝난 뒤, 썸네일이 있는 사진만 미리 (2026-11-16)
+  //     'full': 화면을 열 때. 썸네일이 없는 사진은 썸네일부터 만들어요
+  //   둘 다 가져오기 중(busy)에는 쉬어요 (가져오기를 느리게 하지 않게, 메모리 지키기와 부딪히지 않게). 고르기 · 버리기는 화면에서만
   //   파일 경로는 화면에 주지 않아요. 버리기는 미리보기(similar-preview)를 보고 사용자가 누를 때만 (similar-discard)
   const hasher = db && thumbs ? createHasher({ db, thumbs }) : null;
   let hashing = false;
+  let hashAgain = null; // 도는 동안 또 부탁받은 것 { root, mode } ('full'이 'bg'보다 앞서요. 다른 폴더 부탁은 새것으로)
+  let hashStall = null; // 하나도 못 만들고 끝난 회차의 열쇠 (폴더 · 방식 · 진행이 같으면 다시 돌지 않아요)
+  let closed = false; // 프로그램을 끄는 중 (DB 를 닫은 뒤에 새로 시작하지 않게)
   let discarding = false;
-  const similarProgress = (root) => ({ ...db.hashProgress(root), hashing });
-  function startHashing(root) {
-    if (!hasher || hashing) return;
+  const withState = (p) => ({ ...p, hashing, waiting: hashing && busy() });
+  const similarProgress = (root) => withState(db.hashProgress(root));
+  function startHashing(root, mode = 'full') {
+    if (!hasher || !root || closed) return;
+    if (hashing) {
+      if (!hashAgain || hashAgain.root !== root || mode === 'full') hashAgain = { root, mode };
+      return;
+    }
     const p = db.hashProgress(root);
     if (p.done >= p.total) return;
+    // 지난 회차가 하나도 못 만들고 끝났고 그 뒤 달라진 게 없으면 다시 돌지 않아요
+    //   (원본을 잠깐 못 읽는 사진이 남으면 화면 다시 받기 ↔ 다시 시작이 끝없이 반복됐어요, #120 검증 지적)
+    const key = `${root}|${mode}|${p.done}|${p.total}`;
+    if (hashStall === key) return;
     hashing = true;
-    send('gallery:similar-progress', similarProgress(root));
-    hasher.run(root, () => send('gallery:similar-progress', similarProgress(root)))
+    send('gallery:similar-progress', withState(p));
+    // 진행 알림은 hasher 가 잰 값을 그대로 써요 (다시 조회하지 않게)
+    hasher.run(root, (q) => send('gallery:similar-progress', withState(q)), { readyOnly: mode === 'bg', isBusy: busy })
+      .then((r) => { hashStall = r && r.made + r.failed === 0 ? key : null; })
       .catch((e) => errorLog('비슷한 사진 지문 만들기', e))
       .finally(() => {
         hashing = false;
+        const again = hashAgain;
+        hashAgain = null;
+        if (closed) return;
         try {
           send('gallery:similar-progress', similarProgress(root));
+          if (again && again.root === rootNow()) startHashing(again.root, again.mode);
+          else if (root === rootNow()) startEmbedding(root, mode); // 지문 다음에 AI 특징값 (모델을 받았을 때만)
         } catch (e) { /* 끄는 중 */ }
       });
   }
+
+  // ---------- PC 안 AI 특징값 (④, lib/similar-ai.js) ----------
+  //   모델은 사용자가 화면 확인 창에서 "받기"를 누를 때만 받아요 (gallery:ai-download). 앱이 스스로 받지 않아요
+  //   특징값은 지문처럼 뒤에서 만들고, 가져오기 중에는 쉬어요. 다 만들면 화면이 목록을 다시 받아요
+  const embedder = db && thumbs ? ai.createEmbedder({ db, thumbs, base }) : null;
+  let embedding = false;
+  let embedAgain = null;
+  let embedStall = null; // 지문과 같은 방식 (하나도 못 만들고 끝난 회차)
+  let aiBroken = false; // 모델을 열지 못했어요 (onnxruntime 을 못 불러옴 등) → 다시 받거나 다시 켤 때까지 시도하지 않아요
+  let modelChecked = false; // 이번 실행에서 모델 파일 SHA-256 을 확인했는지
+  let downloadAbort = null; // 받는 중이면 끌 때 멈춰요
+  const aiInfo = { downloading: false, got: 0, error: '' }; // 받기 상태 (화면 표시용)
+  const aiProgress = (root) => {
+    const ready = ai.modelReady(base);
+    const p = ready && root ? db.embedProgress(root, ai.MODEL.id) : { total: 0, done: 0 };
+    return { model: ready ? 'ready' : aiInfo.downloading ? 'downloading' : 'none', bytes: ai.MODEL.bytes, got: aiInfo.got, error: aiInfo.error, ...p, embedding, waiting: embedding && busy() };
+  };
+  const sendAi = (root) => {
+    try { send('gallery:ai-progress', aiProgress(root)); } catch (e) { /* 끄는 중 */ }
+  };
+  function startEmbedding(root, mode = 'full') {
+    if (!embedder || !root || closed || aiBroken || !ai.modelReady(base)) return;
+    if (embedding) {
+      if (!embedAgain || embedAgain.root !== root || mode === 'full') embedAgain = { root, mode };
+      return;
+    }
+    const p = db.embedProgress(root, ai.MODEL.id);
+    if (p.done >= p.total) return;
+    const key = `${root}|${mode}|${p.done}|${p.total}`;
+    if (embedStall === key) return;
+    embedding = true;
+    sendAi(root);
+    (async () => {
+      // 이번 실행에서 처음 쓸 때 한 번 모델 파일이 원래 것과 같은지(SHA-256) 확인해요. 다르면 옆으로 치우고 다시 받게 해요
+      if (!modelChecked) {
+        const ok = await ai.verifyModel(base);
+        modelChecked = true;
+        if (!ok) {
+          aiInfo.error = 'AI 모델 파일이 원래 것과 달라서 쓰지 않았어요. 다시 받아 주세요.';
+          return null;
+        }
+      }
+      return embedder.run(root, () => sendAi(root), { readyOnly: mode === 'bg', isBusy: busy });
+    })()
+      .then((r) => { embedStall = r && r.made + r.failed === 0 ? key : null; })
+      .catch((e) => {
+        aiBroken = true;
+        aiInfo.error = 'AI 특징값을 만들지 못했어요. 프로그램을 다시 켜 주세요 (자세한 내용은 오류 로그).';
+        errorLog('AI 특징값 만들기', e);
+      })
+      .finally(() => {
+        embedding = false;
+        const again = embedAgain;
+        embedAgain = null;
+        if (closed) return;
+        sendAi(root);
+        if (again && again.root === rootNow()) startEmbedding(again.root, again.mode);
+      });
+  }
+
+  // AI 상태 → { model: 'none'|'downloading'|'ready', bytes, got, error, total, done, embedding, waiting }
+  ipcMain.handle('gallery:ai-state', () => aiProgress(rootNow()));
+
+  // AI 모델 받기 (화면 확인 창에서 누른 뒤에만). 정해진 주소 하나 · SHA-256 확인 (lib/similar-ai.js)
+  ipcMain.handle('gallery:ai-download', async () => {
+    if (ai.modelReady(base)) return aiProgress(rootNow());
+    if (aiInfo.downloading) throw new Error('이미 받는 중이에요');
+    aiInfo.downloading = true;
+    aiInfo.got = 0;
+    aiInfo.error = '';
+    downloadAbort = new AbortController();
+    sendAi(rootNow());
+    const log = (() => {
+      try { return logger.newLog('ai-model', `AI 모델 받기 ${now()}`); } catch (e) { return null; }
+    })();
+    try {
+      if (log) log.write(`받는 곳: ${ai.MODEL.url} (${ai.MODEL.bytes} 바이트, ${ai.MODEL.label})`);
+      await ai.downloadModel({
+        fetchImpl: (...a) => mapFetch(...a),
+        base,
+        onProgress: (got) => { aiInfo.got = got; sendAi(rootNow()); },
+        signal: downloadAbort.signal,
+      });
+      if (log) log.write('받기 끝, SHA-256 맞음');
+      modelChecked = true; // 방금 받으면서 확인했어요
+      aiBroken = false;
+      embedStall = null;
+    } catch (e) {
+      aiInfo.error = e.message;
+      if (log) log.write(`받기 실패: ${e.message}`);
+      throw e;
+    } finally {
+      aiInfo.downloading = false;
+      downloadAbort = null;
+      if (!closed) sendAi(rootNow());
+    }
+    const root = rootNow();
+    if (root) startEmbedding(root, 'full');
+    return aiProgress(root);
+  });
 
   // "이 묶음은 모두 남기기"를 누른 사진 (다음 실행에도 기억해요, 2026-11-04 사용자 결정). DB를 새로 만들어도 남게 경로로 적어요
   const similarKeeps = createSkips(path.join(base, 'similar-keeps.json'), { onError: errorLog, label: '모두 남긴 사진 목록' });
 
   // 묶음 목록 → { progress: { total, done, hashing }, hiddenKept: 숨긴 묶음 수,
-  //   groups: [{ ids, keepId, softIds, keptIds, takenAt, files: [{ id, name, width, height, size, takenAt }] }] }
+  //   groups: [{ ids, keepId, softIds, keptIds, timeOnly, takenAt, files: [{ id, name, width, height, size, takenAt, blurry }] }] }
+  //   blurry: 흐림 점수가 BLUR_LIMIT 이상 (lib/similar.js). 점수가 아직 없으면 false
   //   모든 사진을 "모두 남기기"로 기억한 묶음은 숨겨요. 일부만 기억한 묶음(새 사진이 들어옴)은 기억한 사진이 처음부터 남김(keptIds)
   ipcMain.handle('gallery:similar-list', () => {
     const root = editReady();
     startHashing(root);
+    if (!hashing) startEmbedding(root, 'full'); // 지문을 만드는 중이면 지문이 끝난 뒤에 이어서 (CPU 를 겹쳐 쓰지 않게)
     const rows = db.similarRows(root);
     const byId = new Map(rows.map((r) => [r.id, r]));
     const kept = similarKeeps.paths();
@@ -709,7 +838,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
         keptIds,
         files: g.ids.map((id) => {
           const r = byId.get(id);
-          return { id: r.id, name: r.name, width: r.width, height: r.height, size: r.size, takenAt: r.takenAt };
+          return { id: r.id, name: r.name, width: r.width, height: r.height, size: r.size, takenAt: r.takenAt, blurry: isBlurry(r.blur) };
         }),
       });
     }
@@ -1027,8 +1156,14 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     },
     // 프로그램을 끌 때: 진행 중인 FFmpeg를 기다리지 않고 멈추라고만 하고 DB를 닫아요
     close() {
+      closed = true;
       try {
+
         if (hasher) hasher.stop().catch(() => {});
+        if (embedder) embedder.stop().catch(() => {});
+        if (downloadAbort) downloadAbort.abort(); // 받는 중이면 멈춰요 (임시 파일은 다음 받기 때 치워요)
+
+
         if (thumbs) thumbs.stop().catch(() => {});
       } catch (e) { /* 끄는 중이라 무시 */ }
       try {
