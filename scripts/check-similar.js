@@ -37,6 +37,8 @@ const items = [
     async run(env) {
       const out = [];
       const S = require('../lib/similar');
+      // ①② 규칙만 볼 때는 ③ 이어 찍기(60초)를 꺼요 (B0). ③은 36j 에서 따로 봐요
+      const B0 = (rows, o = {}) => S.buildGroups(rows, { burstSec: 0, ...o });
       const base = path.join(env.tmp, 'similar');
       fs.mkdirSync(base, { recursive: true });
 
@@ -75,7 +77,7 @@ const items = [
         const far = 'f0f0f0f0cccccccc'; // H1과 거리 64
         const mid = '0f0f0f0fcccc3333'; // H1과 거리 16 (시간으로는 묶임, 모양으로는 안 묶임)
         const r = (id, takenAt, dhash, over = {}) => ({ id, name: `${id}.jpg`, takenAt, width: 100, height: 100, size: 1000, model: null, dhash, ...over });
-        const groupsOf = (rows) => S.buildGroups(rows).map((g) => g.ids.join(','));
+        const groupsOf = (rows) => B0(rows).map((g) => g.ids.join(','));
         out.push(sub('36c 3초 안 연속 촬영은 묶고 4초는 안 묶음',
           JSON.stringify(groupsOf([r(1, '2026-10-28T13:40:58', mid), r(2, '2026-10-28T13:41:00', H1), r(3, '2026-10-28T13:41:04', far)])) === JSON.stringify(['1,2']),
           JSON.stringify(groupsOf([r(1, '2026-10-28T13:40:58', mid), r(2, '2026-10-28T13:41:00', H1), r(3, '2026-10-28T13:41:04', far)]))));
@@ -89,20 +91,20 @@ const items = [
         out.push(sub('36c 이어지면 한 묶음 (1-2는 시간, 2-3은 모양)',
           JSON.stringify(groupsOf([r(1, '2026-10-28T13:40:58', null), r(2, '2026-10-28T13:40:59', H1), r(3, '2019-05-05T10:00:00', near)])) === JSON.stringify(['3,1,2'])));
         // 남길 사진: 가로×세로 → 파일 크기 → 먼저 찍은 것
-        const keepOf = (rows) => S.buildGroups(rows)[0].keepId;
+        const keepOf = (rows) => B0(rows)[0].keepId;
         out.push(sub('36c 남길 사진: 가장 큰 사진, 같으면 파일 크기가 큰 것, 같으면 먼저 찍은 것',
           keepOf([r(1, '2026-10-28T13:40:58', H1, { width: 100, height: 100 }), r(2, '2026-10-28T13:40:59', near, { width: 400, height: 300 })]) === 2
             && keepOf([r(1, '2026-10-28T13:40:58', H1, { size: 5 }), r(2, '2026-10-28T13:40:59', near, { size: 9 })]) === 2
             && keepOf([r(5, '2026-10-28T13:40:59', H1), r(4, '2026-10-28T13:40:58', near)]) === 4
             && keepOf([r(1, '2026-10-28T13:40:58', H1, { width: null, height: null, size: 99 }), r(2, '2026-10-28T13:40:59', near, { size: 1 })]) === 2));
         // 순서: 최근 묶음부터, 날짜 없는 묶음은 맨 뒤. 묶음 안은 찍은 순서
-        const order = S.buildGroups([
+        const order = B0([
           r(1, null, '00ff00ff00ff00ff'), r(2, null, '00ff00ff00ff00fe'),
           r(3, '2020-01-01T00:00:00', H1), r(4, '2020-01-01T00:00:02', mid),
           r(5, '2026-01-01T00:00:01', '3333333355555555'), r(6, '2026-01-01T00:00:00', '3333333355555555'),
         ]).map((g) => g.ids.join(','));
         out.push(sub('36c 순서: 최근 묶음부터, 날짜 없는 묶음은 맨 뒤, 묶음 안은 찍은 순서', JSON.stringify(order) === JSON.stringify(['6,5', '3,4', '1,2']), JSON.stringify(order)));
-        out.push(sub('36c 한 장짜리와 잘못된 지문은 묶음이 아님', S.buildGroups([r(1, '2026-01-01T00:00:00', 'zz'), r(2, '2027-01-01T00:00:00', 'zz')]).length === 0));
+        out.push(sub('36c 한 장짜리와 잘못된 지문은 묶음이 아님', B0([r(1, '2026-01-01T00:00:00', 'zz'), r(2, '2027-01-01T00:00:00', 'zz')]).length === 0));
       }
 
       // 36i 사용자 결정 (2026-11-04): 남길 사진과 직접 비교해서 끝없이 이어지지 않음, 지문 없는 사진은 가장 가까운 한 장에만 붙고 처음엔 남김
@@ -121,7 +123,7 @@ const items = [
         const at = (sec) => new Date(Date.UTC(2026, 0, 1, 0, 0, sec)).toISOString().slice(0, 19);
         const drift = [];
         for (let k = 0; k < 40; k++) drift.push({ id: k + 1, name: `${k + 1}.jpg`, takenAt: at(k), width: 10, height: 10, size: 1, dhash: bits(k) });
-        const dg = S.buildGroups(drift);
+        const dg = B0(drift);
         const biggest = Math.max(...dg.map((g) => g.ids.length));
         out.push(sub('36i 장면이 조금씩 바뀌는 40초 연속 촬영은 한 묶음으로 끝없이 이어지지 않음 (남길 사진과 거리 24 넘으면 새 묶음)',
           dg.length >= 2 && biggest <= 25 && dg.every((g) => g.ids.every((id) => S.distance(drift[id - 1].dhash, drift[g.keepId - 1].dhash) <= 24)),
@@ -130,14 +132,14 @@ const items = [
         const A = '0f0f0f0f33333333';
         const C = 'f0f0f0f0cccccccc';
         const rr = (id, sec, h) => ({ id, name: `${id}.jpg`, takenAt: at(sec), width: 10, height: 10, size: 1, dhash: h });
-        const bridge = S.buildGroups([rr(1, 0, A), rr(2, 1, A), rr(3, 2, null), rr(4, 4, C), rr(5, 5, C)]);
+        const bridge = B0([rr(1, 0, A), rr(2, 1, A), rr(3, 2, null), rr(4, 4, C), rr(5, 5, C)]);
         const bridgeIds = JSON.stringify(bridge.map((g) => g.ids).sort());
         out.push(sub('36i 지문 없는 사진은 두 장면을 잇지 않고 가장 가까운 지문 있는 사진 한 장에만 붙음',
           bridgeIds === JSON.stringify([[1, 2, 3], [4, 5]]), bridgeIds));
-        const lone = S.buildGroups([rr(1, 0, null), rr(2, 1, null), rr(3, 2, null)]);
+        const lone = B0([rr(1, 0, null), rr(2, 1, null), rr(3, 2, null)]);
         out.push(sub('36i 지문 없는 사진끼리는 묶지 않음', lone.length === 0, JSON.stringify(lone)));
         // 처음엔 남김: 지문 없는 사진은 softIds, 남길 사진은 지문 있는 사진 중에서 (지문 없는 사진이 더 커도)
-        const soft = S.buildGroups([rr(1, 0, A), { ...rr(2, 1, null), width: 4000, height: 3000 }]);
+        const soft = B0([rr(1, 0, A), { ...rr(2, 1, null), width: 4000, height: 3000 }]);
         out.push(sub('36i 지문 없이 시간만으로 묶인 사진은 softIds (처음엔 남김), 남길 사진은 지문 있는 사진',
           soft.length === 1 && soft[0].keepId === 1 && JSON.stringify(soft[0].softIds) === '[2]', JSON.stringify(soft)));
       }
@@ -191,6 +193,11 @@ const items = [
         const b = db.hashJobs('R1', 10).find((f) => f.name === 'b.jpg');
         db.setHash(a.path, a.size, a.mtimeMs, '0f0f0f0f33333333');
         db.setHash(b.path, b.size, b.mtimeMs, null); // 만들 수 없음
+        // 지문만 있고 흐림 점수가 없으면 아직 할 일 (흐림 점수만 만들면 돼요)
+        const half = db.hashJobs('R1', 10).map((f) => `${f.name}:${f.needHash ? 'h' : ''}${f.needBlur ? 'b' : ''}`);
+        const pHalf = db.hashProgress('R1');
+        db.setBlur(a.path, a.size, a.mtimeMs, 0.31);
+        db.setBlur(b.path, b.size, b.mtimeMs, null); // 만들 수 없음
         const jobs2 = db.hashJobs('R1', 10).map((f) => f.name);
         const p1 = db.hashProgress('R1');
         const rows1 = db.similarRows('R1');
@@ -199,15 +206,28 @@ const items = [
           JSON.stringify(jobs1) === JSON.stringify(['a.jpg', 'b.jpg']) && jobs2.length === 0 && p0.total === 2 && p0.done === 0 && p1.done === 2,
           JSON.stringify([jobs1, jobs2, p0, p1]),
         ));
+        out.push(sub('36e 지문만 있으면 흐림 점수만 할 일로 남고 진행은 0 (둘 다 있어야 끝)',
+          JSON.stringify(half) === JSON.stringify(['a.jpg:b', 'b.jpg:b']) && pHalf.done === 0, JSON.stringify([half, pHalf])));
         out.push(sub(
-          '36e 묶기용 줄: 지문, 크기, 찍은 시각 (실패는 null)',
-          rows1.length === 2 && rows1[0].dhash === '0f0f0f0f33333333' && rows1[0].width === 400 && rows1[1].dhash === null && typeof rows1[0].takenAt === 'string',
+          '36e 묶기용 줄: 지문, 흐림 점수, 크기, 찍은 시각 (실패는 null)',
+          rows1.length === 2 && rows1[0].dhash === '0f0f0f0f33333333' && rows1[0].blur === 0.31 && rows1[0].width === 400 && rows1[1].dhash === null && rows1[1].blur === null && typeof rows1[0].takenAt === 'string',
           JSON.stringify(rows1),
         ));
         // 파일이 바뀌면(수정 시각) 지문이 안 맞아서 다시 할 일로
         db.upsertFiles([row({ root: 'R1', path: 'R1/a.jpg', name: 'a.jpg', mtimeMs: 999999 })]);
         const jobs3 = db.hashJobs('R1', 10).map((f) => f.name);
-        out.push(sub('36e 파일이 바뀌면 지문을 다시 만들 일로 돌아감', JSON.stringify(jobs3) === JSON.stringify(['a.jpg']) && db.similarRows('R1')[0].dhash === null, JSON.stringify(jobs3)));
+        const job3 = db.hashJobs('R1', 10)[0];
+        out.push(sub('36e 파일이 바뀌면 지문 · 흐림 점수를 다시 만들 일로 돌아감', JSON.stringify(jobs3) === JSON.stringify(['a.jpg']) && job3.needHash && job3.needBlur && db.similarRows('R1')[0].dhash === null && db.similarRows('R1')[0].blur === null, JSON.stringify(jobs3)));
+        // 뒤에서 미리 계산(readyOnly)은 썸네일이 있는 사진만
+        db.setThumbState(job3.id, 'ready');
+        db.upsertFiles([row({ root: 'R1', path: 'R1/c.jpg', name: 'c.jpg' })]);
+        const ready = db.hashJobs('R1', 10, 0, { readyOnly: true }).map((f) => f.name);
+        const all = db.hashJobs('R1', 10).map((f) => f.name);
+        out.push(sub('36e 뒤에서 미리 계산할 때는 썸네일이 있는 사진만 (없는 것은 화면을 열 때)', JSON.stringify(ready) === '["a.jpg"]' && JSON.stringify(all) === '["a.jpg","c.jpg"]', JSON.stringify([ready, all])));
+        // 실패한 썸네일 다시 만들기를 하면 흐림 점수 "없음"도 지워져요
+        db.resetFailedThumbs('R1');
+        const bAgain = db.hashJobs('R1', 10).find((f) => f.name === 'b.jpg');
+        out.push(sub('36e 썸네일 다시 만들기를 하면 지문 · 흐림 점수 없음 기록이 지워져 다시 할 일로', !!bAgain && bAgain.needHash && bAgain.needBlur, JSON.stringify(bAgain && { h: bAgain.needHash, b: bAgain.needBlur })));
         // 옛 DB(지문 표 없음)를 열면 표가 생기고 구조 버전은 그대로 2
         const { DatabaseSync } = require('node:sqlite');
         const oldFile = newDbPath(env, 'similar-olddb');
@@ -254,12 +274,16 @@ const items = [
         const r = await p1;
         const rows = db.similarRows('R1');
         const byName = Object.fromEntries(rows.map((x) => [x.name, x.dhash]));
+        const blurByName = Object.fromEntries(rows.map((x) => [x.name, x.blur]));
         out.push(sub(
           '36f 썸네일에서 지문을 만들고, 썸네일 실패는 null, 원본을 못 읽은 것은 비워 둠 (다음에 다시)',
           r.made === 2 && r.failed === 1 && r.skipped === 1 && /^[0-9a-f]{16}$/.test(byName['a.jpg']) && byName['broken.jpg'] === null
             && db.hashJobs('R1', 10).map((f) => f.name).join() === 'unplugged.jpg',
           JSON.stringify([r, byName]),
         ));
+        out.push(sub('36f 지문과 같이 흐림 점수도 만듦 (0~1), 썸네일 실패는 null',
+          typeof blurByName['a.jpg'] === 'number' && blurByName['a.jpg'] >= 0 && blurByName['a.jpg'] <= 1 && blurByName['broken.jpg'] === null && blurByName['unplugged.jpg'] === null,
+          JSON.stringify(blurByName)));
         out.push(sub('36f 같은 때 두 번 부르면 하나만 돌고, 진행 알림이 옴', same && progress.length > 0 && progress[progress.length - 1].total === 4, JSON.stringify(progress)));
         const g = S.buildGroups(rows);
         out.push(sub('36f 만든 지문으로 필터만 다른 두 장이 한 묶음', g.length === 1 && g[0].ids.length === 2 && g[0].ids.includes(idOf('a.jpg')) && g[0].ids.includes(idOf('a-filter.jpg')), JSON.stringify(g)));
@@ -280,8 +304,8 @@ const items = [
         db.upsertFiles(many);
         const realJobs = db.hashJobs.bind(db);
         let fetched = 0;
-        db.hashJobs = (root, limit, afterId) => {
-          const r = realJobs(root, limit, afterId);
+        db.hashJobs = (root, limit, afterId, o) => {
+          const r = realJobs(root, limit, afterId, o);
           fetched += r.length;
           return r;
         };
@@ -295,7 +319,8 @@ const items = [
           return Buffer.alloc(72, Number(t.slice(1)) % 251);
         };
         const t0 = Date.now();
-        const r = await S.createHasher({ db, thumbs, grayOf }).run('R1');
+        const blurGrayOf = async (t) => ({ data: Buffer.alloc(256, Number(t.slice(1)) % 251), width: 16, height: 16 });
+        const r = await S.createHasher({ db, thumbs, grayOf, blurGrayOf }).run('R1');
         const ms = Date.now() - t0;
         db.hashJobs = realJobs;
         const left = db.hashJobs('R1', N).map((f) => f.id);
@@ -311,20 +336,164 @@ const items = [
         const A2 = '0f0f0f0f3333ffff'; // A와 거리 8 (시간으로는 묶임, 모양으로는 아님)
         const C = 'f0f0f0f0cccccccc'; // A와 거리 64
         const r = (id, sec, h) => ({ id, name: `${id}.jpg`, takenAt: `2026-01-01T00:00:0${sec}`, width: 10, height: 10, size: 1, dhash: h });
-        const ids = (rows) => JSON.stringify(S.buildGroups(rows).map((g) => g.ids));
+        const ids = (rows) => JSON.stringify(B0(rows).map((g) => g.ids));
         const inter = ids([r(1, 0, A), r(2, 1, C), r(3, 2, A2)]);
         const far = ids([r(1, 0, A), r(2, 2, C), r(3, 4, A2)]); // 1과 3은 4초 차이 → 안 묶임
         out.push(sub('36h 사이에 다른 사진이 껴도 3초 안의 비슷한 두 장은 묶이고, 3초 넘으면 안 묶임', inter === '[[1,3]]' && far === '[]', `${inter} ${far}`));
         const same = [];
         for (let i = 1; i <= 5000; i++) same.push(r(i, 0, i % 2 ? A : C));
         const t0 = Date.now();
-        const gs = S.buildGroups(same);
+        const gs = B0(same);
         const ms = Date.now() - t0;
         out.push(sub('36h 같은 시각 5천 장도 빠르게 (앞 50장까지만 비교)', gs.length === 2 && ms < 3000, `${ms}ms, 묶음 ${gs.length}`));
         let threw = false;
-        try { S.buildGroups([], { shapeMaxDist: 7 }); } catch (e) { threw = true; }
+        try { B0([], { shapeMaxDist: 7 }); } catch (e) { threw = true; }
         out.push(sub('36h 모양 거리 설정이 6보다 크면 오류 (조용히 꺼지지 않음)', threw));
       }
+
+      // 36j 이어 찍기 (2026-11-16 사용자 결정): 같은 날 · 같은 기기 · 앞 사진과 60초 안이면 한 묶음, 처음엔 모두 남김
+      {
+        // 지문끼리 서로 멀어서 ①②로는 안 묶이는 사진들 (실제 안경 사진 5장처럼 dHash 로는 못 가림)
+        const far = ['0f0f0f0f33333333', 'f0f0f0f0cccccccc', '00ff00ff0f0f0f0f', 'ff00ff00f0f0f0f0', '3c3c3c3cc3c3c3c3', 'c3c3c3c33c3c3c3c', '55aa55aa55aa55aa'];
+        const r = (id, takenAt, over = {}) => ({ id, name: `${id}.jpg`, takenAt, takenAtSource: 'exif', width: 100, height: 100, size: 1000, model: 'iPhone 15 Pro', dhash: far[id % far.length], blur: 0.3, light: 0.5, ...over });
+        // 실제 예 (G: 2026-10-23): 17:08, 19:05 한 장씩 + 22:24:57 부터 2 · 4 · 11 · 15초 간격 5장
+        const day = [r(1, '2026-10-23T17:08:20'), r(2, '2026-10-23T19:05:36'), r(3, '2026-10-23T22:24:57'), r(4, '2026-10-23T22:24:59'), r(5, '2026-10-23T22:25:03'), r(6, '2026-10-23T22:25:14'), r(7, '2026-10-23T22:25:29')];
+        const g = S.buildGroups(day);
+        out.push(sub('36j 안경 사진 5장(2 · 4 · 11 · 15초 간격)은 한 묶음, 17:08 · 19:05 사진은 안 들어옴',
+          g.length === 1 && g[0].ids.join() === '3,4,5,6,7', JSON.stringify(g)));
+        out.push(sub('36j 이어 찍기로만 묶인 묶음은 timeOnly, 추천 1장만 남김 (정보가 다 있으면 softIds 없음, 2026-11-16 결정 변경)',
+          g.length === 1 && g[0].timeOnly === true && g[0].softIds.length === 0 && g[0].keepId === 3 && !!g[0].keepReason, JSON.stringify(g)));
+        const unknown = S.buildGroups(day.map((x) => (x.id === 6 ? { ...x, blur: null } : x)));
+        out.push(sub('36j 흐림 점수가 아직 없는 사진은 처음엔 남김(softIds)', unknown.length === 1 && unknown[0].softIds.join() === '6', JSON.stringify(unknown)));
+        out.push(sub('36j 60초 넘게 떨어지면 안 묶음, 사슬로는 이어짐 (0 · 50 · 100초)',
+          S.buildGroups([r(1, '2026-01-01T10:00:00'), r(2, '2026-01-01T10:01:01')]).length === 0
+            && S.buildGroups([r(1, '2026-01-01T10:00:00'), r(2, '2026-01-01T10:00:50'), r(3, '2026-01-01T10:01:40')]).map((x) => x.ids.join()).join('|') === '1,2,3'));
+        const dev = S.buildGroups([r(1, '2026-01-01T10:00:00'), r(2, '2026-01-01T10:00:05', { model: 'Galaxy S24' }), r(3, '2026-01-01T10:00:20'), r(4, '2026-01-01T10:00:30', { model: 'Galaxy S24' })]);
+        out.push(sub('36j 기기가 다르면 잇지 않음, 다른 기기 사진이 사이에 껴도 같은 기기끼리는 이어짐',
+          JSON.stringify(dev.map((x) => x.ids).sort()) === '[[1,3],[2,4]]', JSON.stringify(dev.map((x) => x.ids))));
+        out.push(sub('36j 날이 바뀌면 잇지 않음 (23:59:50 → 다음 날 00:00:10)',
+          S.buildGroups([r(1, '2026-01-01T23:59:50'), r(2, '2026-01-02T00:00:10')]).length === 0));
+        out.push(sub('36j burstSec 0 이면 이어 찍기를 쓰지 않음', S.buildGroups(day, { burstSec: 0 }).length === 0));
+        // 검증 지적: 파일 이름 · 직접 넣은 날짜는 같은 시각이 많아 하루가 통째로 이어질 수 있음 → 촬영 정보(exif) 시각만 이어요
+        const named = [1, 2, 3].map((k) => r(k, '2026-01-01T00:00:00', { takenAtSource: 'filename', model: null }));
+        const manual = [4, 5].map((k) => r(k, '2026-01-01T10:00:00', { takenAtSource: 'manual' }));
+        out.push(sub('36j 찍은 시각이 파일 이름 · 직접 넣은 값이면 이어 찍기로 잇지 않음',
+          S.buildGroups([...named, ...manual]).length === 0, JSON.stringify(S.buildGroups([...named, ...manual]))));
+        // ①로 묶인 두 장(3초 안 · 지문 가까움) + 30초 뒤 다른 장면 한 장 → 하나로 합치되, ① 묶음의 처음 표시는 그대로
+        const A = '0f0f0f0f33333333';
+        const An = '0f0f0f0f33333330';
+        const mix = S.buildGroups([r(1, '2026-01-01T10:00:00', { dhash: A, width: 400, height: 300 }), r(2, '2026-01-01T10:00:02', { dhash: An }), r(3, '2026-01-01T10:00:32', { dhash: 'f0f0f0f0cccccccc' })]);
+        out.push(sub('36j ① 묶음에 이어 찍은 사진이 붙으면 한 묶음, 추천 1장(가장 큰 사진)만 남김',
+          mix.length === 1 && mix[0].ids.join() === '1,2,3' && mix[0].keepId === 1 && mix[0].softIds.length === 0 && mix[0].timeOnly === false && mix[0].keepReason === '가장 큰 사진', JSON.stringify(mix)));
+        // ① 묶음 두 개가 이어 찍기로 이어지면 한 묶음, 두 묶음의 남길 사진은 둘 다 처음엔 남김
+        const B = 'f0f0f0f0cccccccc';
+        const Bn = 'f0f0f0f0cccccccd';
+        const two = S.buildGroups([r(1, '2026-01-01T10:00:00', { dhash: A, width: 400, height: 300 }), r(2, '2026-01-01T10:00:01', { dhash: An }), r(3, '2026-01-01T10:00:40', { dhash: B, width: 300, height: 200 }), r(4, '2026-01-01T10:00:41', { dhash: Bn })]);
+        const keepsFirst = two.length === 1 ? two[0].ids.filter((id) => id === two[0].keepId || two[0].softIds.includes(id)) : [];
+        out.push(sub('36j ① 묶음 두 개가 이어지면 한 묶음, 추천 1장(1)만 남김',
+          two.length === 1 && two[0].keepId === 1 && keepsFirst.join() === '1', JSON.stringify(two)));
+
+        // 36n 추천 1장 고르기 (2026-11-16 사용자 결정): 흐리지 않음 → 노출 → 정보 → 크기 → 선명함 → 파일 크기 → 먼저 찍음
+        const q = (id, over) => r(id, `2026-02-02T10:00:0${id}`, over);
+        // 실제 안경 5장의 값 (흐림 · 크기는 G: 실측, 앞 3장 선명 · 뒤 2장 흐림)
+        const glasses = [
+          q(1, { blur: 0.337, light: 0.6, width: 3024, height: 4032, size: 1936755 }),
+          q(2, { blur: 0.315, light: 0.6, width: 3024, height: 4032, size: 2041156 }),
+          q(3, { blur: 0.346, light: 0.6, width: 3024, height: 4032, size: 1760173 }),
+          q(4, { blur: 0.64, light: 0.55, width: 3024, height: 4032, size: 1435666 }),
+          q(5, { blur: 0.685, light: 0.6, width: 3024, height: 4032, size: 1234299 }),
+        ];
+        const gb = S.pickBest(glasses);
+        out.push(sub('36n 안경 5장: 흐린 2장을 빼고 선명도 차이가 작은 3장 중 파일이 가장 큰 IMG_82411(2번)',
+          gb.keep.id === 2 && gb.reason === '흐린 사진 2장을 빼고 파일이 가장 큰 사진', JSON.stringify({ id: gb.keep.id, reason: gb.reason })));
+        const dark = S.pickBest([q(1, { light: 0.05, size: 9999 }), q(2, { light: 0.5 }), q(3, { light: 0.52 })]);
+        out.push(sub('36n 묶음 가운데 밝기에서 크게 벗어난(너무 어두운) 사진은 뒤로', dark.keep.id === 2 && dark.reason.startsWith('너무 어둡거나 밝은 사진 1장을 빼고'), JSON.stringify({ id: dark.keep.id, reason: dark.reason })));
+        const night = S.pickBest([q(1, { light: 0.06 }), q(2, { light: 0.07, size: 2000 })]);
+        out.push(sub('36n 모두 어두운 밤 사진이면 노출로 빼지 않음 (파일 크기로)', night.keep.id === 2 && night.reason === '파일이 가장 큰 사진', JSON.stringify({ id: night.keep.id, reason: night.reason })));
+        const copies = S.pickBest([q(1, { width: 1536, height: 2048, blur: 0.28, size: 900000 }), q(2, { width: 3024, height: 4032, blur: 0.33, size: 2500000 })]);
+        out.push(sub('36n 줄인 사본보다 원본(가로×세로가 큰 것)을 추천 (썸네일 선명도 작은 차이보다 먼저)', copies.keep.id === 2 && copies.reason === '가장 큰 사진', JSON.stringify({ id: copies.keep.id, reason: copies.reason })));
+        const sharper = S.pickBest([q(1, { blur: 0.42, size: 5000 }), q(2, { blur: 0.30 })]);
+        out.push(sub('36n 같은 크기면 흐림 점수가 0.03 넘게 낮은 쪽이 추천 ("가장 선명한 사진")', sharper.keep.id === 2 && sharper.reason === '가장 선명한 사진', JSON.stringify({ id: sharper.keep.id, reason: sharper.reason })));
+        const info = S.pickBest([q(1, { blur: null, width: 4000, height: 3000 }), q(2, {})]);
+        out.push(sub('36n 흐림 점수가 없는 사진보다 정보가 다 있는 사진을 추천', info.keep.id === 2, JSON.stringify({ id: info.keep.id, reason: info.reason })));
+        const allBlur = S.pickBest([q(1, { blur: 0.7 }), q(2, { blur: 0.6, size: 2000 })]);
+        out.push(sub('36n 모두 흐리면 흐림으로 빼지 않고 다음 기준으로', allBlur.keep.id === 2 && !allBlur.reason.includes('빼고'), JSON.stringify({ id: allBlur.keep.id, reason: allBlur.reason })));
+        // 6만 장 중 절반이 이어 찍기여도 빠르게
+        const many = [];
+        let t = Date.UTC(2020, 0, 1) / 1000;
+        for (let i = 1; i <= 60000; i++) {
+          t += i % 2 ? 20 : 3000;
+          many.push(r(i, new Date(t * 1000).toISOString().slice(0, 19), { dhash: null }));
+        }
+        const t0 = Date.now();
+        const mg = S.buildGroups(many);
+        const ms = Date.now() - t0;
+        // 자정을 넘는 짝은 날이 달라 안 묶여요 → 3만 개보다 조금 적어요
+        out.push(sub('36j 6만 장(이어 찍기 약 3만 묶음) 묶기 10초 안', ms < 10000 && mg.length > 29900 && mg.length <= 30000 && mg.every((x) => x.timeOnly), `${ms}ms, 묶음 ${mg.length}개`));
+      }
+
+      // 36k 흐림 점수 (Crete 방식): 선명한 그림 < 0.5 ≤ 흐리게 한 그림, 한 색 그림은 1, 너무 작으면 null
+      {
+        const sharp = require('sharp');
+        // 8px 네모 조각 그림 (가장자리가 또렷해요). 썸네일과 같은 320×240 흑백
+        const w = 320;
+        const h = 240;
+        const px = Buffer.alloc(w * h);
+        let seed = 5;
+        const rnd = () => { seed = (seed * 1103515245 + 12345) >>> 0; return seed >>> 16; };
+        const blk = [];
+        for (let i = 0; i < 40 * 30; i++) blk.push(rnd() % 256);
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) px[y * w + x] = blk[Math.floor(y / 8) * 40 + Math.floor(x / 8)];
+        const gray = async (blur) => {
+          let img = sharp(px, { raw: { width: w, height: h, channels: 1 } });
+          if (blur) img = img.blur(blur);
+          const { data, info } = await img.toColourspace('b-w').raw().toBuffer({ resolveWithObject: true });
+          return { data, width: info.width, height: info.height };
+        };
+        const sc = S.blurOf(await gray(0));
+        const sb = S.blurOf(await gray(2));
+        const flat = S.blurOf({ data: Buffer.alloc(100 * 100, 128), width: 100, height: 100 });
+        out.push(sub('36k 선명한 그림은 0.5 아래, 흐리게 한 같은 그림은 0.5 이상 ("흐림")',
+          sc < S.BLUR_LIMIT && sb >= S.BLUR_LIMIT && !S.isBlurry(sc) && S.isBlurry(sb), `선명 ${sc}, 흐림 ${sb}`));
+        out.push(sub('36k 한 색 그림은 1, 너무 작거나 모자란 그림은 null, 점수 없음은 흐림 아님',
+          flat === 1 && S.blurOf({ data: Buffer.alloc(16), width: 4, height: 4 }) === null && S.blurOf({ data: Buffer.alloc(10), width: 100, height: 100 }) === null && !S.isBlurry(null)));
+        const big = await gray(0);
+
+        const t0 = Date.now();
+        for (let i = 0; i < 20; i++) S.blurOf(big);
+        const each = (Date.now() - t0) / 20;
+        out.push(sub('36k 썸네일 한 장 흐림 계산 50ms 안 (6만 장이면 한 시간 안)', each < 50, `${each.toFixed(1)}ms`));
+      }
+
+      // 36m 검증 지적: 흐림용 그림만 못 읽어도 지문은 저장 (흐림 점수만 다음에 다시)
+      await withDb(env, 'similar-hasher-half', async (db) => {
+        db.upsertFiles([row({ root: 'R1', path: 'R1/1.jpg', name: '1.jpg' })]);
+        const thumbs = { async request() { return 't1'; } };
+        const grayOf = async () => Buffer.alloc(72, 9);
+        const blurGrayOf = async () => { throw new Error('잠김'); };
+        const r = await S.createHasher({ db, thumbs, grayOf, blurGrayOf }).run('R1');
+        const job = db.hashJobs('R1', 10)[0];
+        out.push(sub('36m 흐림용 그림만 못 읽으면 지문은 저장하고, 흐림 점수만 다시 할 일로',
+          r.skipped === 1 && !!job && !job.needHash && job.needBlur && db.similarRows('R1')[0].dhash !== null, JSON.stringify({ r, job: job && { h: job.needHash, b: job.needBlur } })));
+      });
+
+      // 36l 가져오기 중(isBusy)에는 쉬었다가, 끝나면 이어서 만듦
+
+      await withDb(env, 'similar-hasher-busy', async (db) => {
+        db.upsertFiles([row({ root: 'R1', path: 'R1/1.jpg', name: '1.jpg' }), row({ root: 'R1', path: 'R1/2.jpg', name: '2.jpg' })]);
+        let checks = 0;
+        let requested = 0;
+        const thumbs = { async request(id) { requested++; return `t${id}`; } };
+        const grayOf = async () => Buffer.alloc(72, 9);
+        const blurGrayOf = async () => ({ data: Buffer.alloc(256, 9), width: 16, height: 16 });
+        const busyUntil = Date.now() + 1200;
+        const isBusy = () => { checks++; return Date.now() < busyUntil; };
+        const t0 = Date.now();
+        const r = await S.createHasher({ db, thumbs, grayOf, blurGrayOf }).run('R1', null, { isBusy });
+        const waited = Date.now() - t0;
+        out.push(sub('36l 가져오기 중에는 썸네일도 안 읽고 쉬다가, 끝나면 두 장 다 만듦',
+          waited >= 1000 && checks >= 3 && r.made === 2 && requested === 2 && db.hashProgress('R1').done === 2, JSON.stringify({ waited, checks, r })));
+      });
 
       return out;
     },
@@ -387,6 +556,28 @@ const items = [
           JSON.stringify([...pinnedS])));
       }
 
+      // 37i 묶음별로 먼저 옮기기 (2026-11-16 사용자 요청): 이 묶음의 고정된 버림만, 전부 버림이면 빈 목록
+      {
+        const g = { ids: [1, 2, 3], keepId: 1, softIds: [], keptIds: [] };
+        const pinned = V.pinMarks([g], new Map());
+        const other = { ids: [8, 9], keepId: 8, softIds: [], keptIds: [] };
+        const both = V.pinMarks([other], pinned);
+        const all = new Map([[1, 'discard'], [2, 'discard'], [3, 'discard']]);
+        out.push(sub('37i 이 묶음만: 이 묶음의 버림 번호만 (다른 묶음 빼고), 모두 버림이면 빈 목록, 버튼 문구',
+          JSON.stringify(V.groupDiscardIds(g, both)) === '[2,3]' && JSON.stringify(V.groupDiscardIds(g, all)) === '[]'
+            && V.groupReviewLabel(2) === '이 묶음에서 버릴 2장 옮기기' && V.groupReviewLabel(0) === '',
+          JSON.stringify(V.groupDiscardIds(g, both))));
+        const t = { ids: [4, 5, 6], keepId: 5, keepReason: '흐린 사진 1장을 빼고 가장 선명한 사진', softIds: [], keptIds: [], timeOnly: true };
+        out.push(sub('37i 이어 찍기 묶음: 추천 1장만 남김, 나머지 2장은 버림 후보, 안내 · 추천 까닭 문구',
+          V.markOf(t, 5, new Map()) === 'keep' && V.markOf(t, 4, new Map()) === 'discard' && JSON.stringify(V.groupDiscardIds(t, V.pinMarks([t], new Map()))) === '[4,6]'
+            && V.groupNote(t) === '1분 안에 이어 찍은 사진' && V.groupNote(g) === ''
+            && V.recommendText(t) === '추천 1장: 흐린 사진 1장을 빼고 가장 선명한 사진. 나머지를 버릴지, 다른 사진을 남길지, 여러 장 남길지 골라 주세요.' && V.recommendText(g) === '',
+          V.recommendText(t)));
+
+        out.push(sub('37i 가져오기 중이면 "가져오기가 끝나면 이어서" 안내',
+          V.progressText({ total: 10, done: 3, waiting: true }) === '사진 지문 3 / 10장. 가져오기가 끝나면 이어서 만들어요.', V.progressText({ total: 10, done: 3, waiting: true })));
+      }
+
       // 37b 문구: 버튼은 결과를 말해요
       out.push(sub('37b 버튼 문구',
         V.reviewLabel(3) === '버릴 사진 3장 확인하기' && V.reviewLabel(0) === '버릴 사진이 없어요'
@@ -429,7 +620,23 @@ const items = [
         out.push(sub('37c 묶음을 전부 버리려 하면 거절', err([id('a.jpg'), id('b.jpg')]) === '묶음마다 적어도 한 장은 남겨 주세요'));
         out.push(sub('37c 묶음에 없는 사진, 같은 번호 두 번, 빈 목록, 이상한 번호는 거절',
           !!err([id('c.jpg')]) && !!err([id('b.jpg'), id('b.jpg')]) && !!err([]) && !!err(['x']) && !!err(null)));
+        // 37j 검증 지적: 이어 찍기로만 묶인 묶음도 버리기 확인이 같은 묶음으로 봐요 (한 장은 남겨야 함)
+        db.upsertFiles([
+          row({ root: 'R3', path: 'R3/p1.jpg', name: 'p1.jpg', takenDay: '2026-05-05', takenAt: '2026-05-05T10:00:00', model: 'iPhone' }),
+          row({ root: 'R3', path: 'R3/p2.jpg', name: 'p2.jpg', takenDay: '2026-05-05', takenAt: '2026-05-05T10:00:20', model: 'iPhone' }),
+          row({ root: 'R3', path: 'R3/p3.jpg', name: 'p3.jpg', takenDay: '2026-05-05', takenAt: '2026-05-05T10:00:50', model: 'iPhone' }),
+        ]);
+        const far3 = { 'p1.jpg': '0f0f0f0f33333333', 'p2.jpg': 'f0f0f0f0cccccccc', 'p3.jpg': '00ff00ff0f0f0f0f' };
+        for (const f of db.hashJobs('R3', 10)) db.setHash(f.path, f.size, f.mtimeMs, far3[f.name]);
+        const id3 = (n) => db.similarRows('R3').find((r) => r.name === n).id;
+        const err3 = (ids) => { try { D.checkDiscard(db, 'R3', ids); return null; } catch (e) { return e.message; } };
+        const ok3 = D.checkDiscard(db, 'R3', [id3('p1.jpg'), id3('p2.jpg')]);
+        out.push(sub('37j 이어 찍기 묶음: 두 장은 버릴 수 있고 남는 사진이 keepers, 세 장 모두는 거절',
+          ok3.files.length === 2 && ok3.groups === 1 && ok3.files[0].keepers.map((k) => k.path).join() === 'R3/p3.jpg'
+            && err3([id3('p1.jpg'), id3('p2.jpg'), id3('p3.jpg')]) === '묶음마다 적어도 한 장은 남겨 주세요',
+          JSON.stringify(ok3.files.map((f) => f.keepers))));
         // 라이브 포토 짝 영상: 같은 폴더, 같은 이름의 MP4
+
         const liveRow = (p, over = {}) => row({ root: 'R1', path: p, name: path.basename(p), mediaType: 'video', takenDay: '2026-02-01', takenAt: '2026-02-01T10:00:01', durationSec: 2.5, ...over });
         db.upsertFiles([liveRow('R1/b.mp4'), liveRow('R1/b.jpg.mp4')]);
         const withPair = D.checkDiscard(db, 'R1', [id('b.jpg')]);
@@ -636,7 +843,8 @@ const items = [
         thenClickUntil: '그만두기',
       });
       const text = String(r.text);
-      out.push(sub('38a 묶음이 보이고 남김과 버림 표시, 아래 버튼', r.clicked === true && text.includes('묶음 1개') && text.includes('남김') && text.includes('버림') && text.includes('이 묶음은 모두 남기기'), `화면 글자: ${text.slice(0, 400).replace(/\s+/g, ' ')}`));
+      out.push(sub('38a 묶음이 보이고 남김과 버림 표시, 아래 버튼', r.clicked === true && text.includes('묶음 1개') && text.includes('남김') && text.includes('버림') && text.includes('이 묶음은 모두 남기기') && text.includes('이 묶음에서 버릴 1장 옮기기'), `화면 글자:
+ ${text.slice(0, 400).replace(/\s+/g, ' ')}`));
       out.push(sub('38b 확인 창: 1장을 옮긴다는 글과 결과를 말하는 버튼', text.includes('묶음 1개에서 1장을 옮겨요') && /1장 (휴지통으로|정리완료원본 폴더로) 옮기기/.test(text) && text.includes('그만두기'), `화면 글자: ${text.slice(-300).replace(/\s+/g, ' ')}`));
       out.push(sub('38c 사진 파일은 그대로 (확인 창까지만)', fs.existsSync(big) && fs.existsSync(small)));
       out.push(sub('38d 화면 오류 없음, 정상 종료', r.errors.length === 0 && r.exitCode === 0, `${r.errors.join(' / ')} 종료 코드 ${r.exitCode}`));
@@ -672,9 +880,306 @@ const items = [
       return out;
     },
   },
+  {
+    no: 56,
+    name: '비슷한 사진 PC 안 AI 비교 (모델 받기 · 특징값 · 묶기)',
+    async run(env) {
+      // 진짜 모델(89MB)은 받지 않아요. 받기는 가짜 인터넷, 모델 실행은 가짜 세션으로 봐요
+      //   PVM_AI_MODEL 에 진짜 모델 파일 경로를 주면 56h 에서 진짜로도 돌려 봐요 (이 PC 확인용, CI 는 건너뜀)
+      const out = [];
+      const { pathToFileURL } = require('url');
+      const A = require('../lib/similar-ai');
+      const S = require('../lib/similar');
+      const V = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'similar-view.mjs')).href);
+      const crypto = require('crypto');
+      const base = path.join(env.tmp, 'similar-ai');
+      fs.mkdirSync(base, { recursive: true });
+
+      // 56a 특징값 줄이기 · 유사도
+      {
+        const v = new Float32Array(512).map((_, i) => Math.sin(i));
+        const w = v.map((x) => -x);
+        const a = A.toInt8(v);
+        out.push(sub('56a 특징값은 512바이트, 같은 것은 1, 반대는 -1, 길이가 다르면 null',
+          a.length === 512 && Math.abs(A.cosine(a, A.toInt8(v)) - 1) < 1e-9 && A.cosine(a, A.toInt8(w)) < -0.999 && A.cosine(a, Buffer.alloc(10)) === null && A.cosine(null, a) === null));
+      }
+
+      // 56b 묶기: 두 사진 모두 특징값이 있으면 유사도 0.78 미만에서 이어 찍기를 끊어요
+      {
+        const unit = (seed) => {
+          const v = new Float32Array(512);
+          for (let i = 0; i < 512; i++) v[i] = Math.sin(i * 0.37 + seed * 1.7) + 0.3 * Math.cos(i * seed);
+          return v;
+        };
+        const mix = (a, b, t) => a.map((x, i) => x * (1 - t) + b[i] * t);
+        const sceneA = unit(1);
+        const sceneB = unit(9);
+        const far = ['0f0f0f0f33333333', 'f0f0f0f0cccccccc', '00ff00ff0f0f0f0f', 'ff00ff00f0f0f0f0', '3c3c3c3cc3c3c3c3', 'c3c3c3c33c3c3c3c'];
+        const r = (id, sec, vec, over = {}) => ({ id, name: `${id}.jpg`, takenAt: `2026-01-01T10:00:${String(sec).padStart(2, '0')}`, takenAtSource: 'exif', width: 10, height: 10, size: 1, model: 'iPhone', dhash: far[id % far.length], blur: 0.3, light: 0.5, vec: vec ? A.toInt8(vec) : null, embedModel: vec ? A.MODEL.id : null, ...over });
+        const simAB = A.cosine(A.toInt8(sceneA), A.toInt8(sceneB));
+        const rows = [r(1, 0, sceneA), r(2, 5, mix(sceneA, sceneB, 0.1)), r(3, 10, sceneB), r(4, 15, mix(sceneB, sceneA, 0.1))];
+        const g = S.buildGroups(rows);
+        out.push(sub('56b 장면이 바뀐 곳(유사도 0.78 미만)에서 이어 찍기 사슬이 끊겨 두 묶음, 둘 다 AI 확인, 묶음마다 추천 1장만 남김',
+          simAB < S.AI_LINK && JSON.stringify(g.map((x) => x.ids).sort()) === '[[1,2],[3,4]]' && g.every((x) => x.timeOnly && x.aiChecked && x.softIds.length === 0 && !!x.keepReason),
+          `장면 유사도 ${simAB.toFixed(2)}, ${JSON.stringify(g.map((x) => [x.ids, x.aiChecked]))}`));
+        const noVec = S.buildGroups([r(1, 0, null), r(2, 5, sceneB), r(3, 10, sceneA)]);
+        out.push(sub('56b 한쪽이라도 특징값이 없으면 시간만으로 이어요 (AI 확인 아님)',
+          noVec.length === 1 && noVec[0].ids.join() === '1,2' && noVec[0].aiChecked === false, JSON.stringify(noVec)));
+        const other = S.buildGroups([r(1, 0, sceneA), r(2, 5, sceneB, { embedModel: 'old-model' })]);
+        out.push(sub('56b 모델이 다른 특징값끼리는 비교하지 않고 시간만으로', other.length === 1 && other[0].aiChecked === false, JSON.stringify(other)));
+        out.push(sub('56b 묶음 안내: AI 로 확인한 이어 찍기 묶음',
+          V.groupNote({ timeOnly: true, aiChecked: true }) === 'AI 로 같은 장면을 확인한, 1분 안에 이어 찍은 사진' && V.groupNote({ timeOnly: true }) === '1분 안에 이어 찍은 사진'));
+        // 추천 기준 ⑤ AI 대표: 흐림 · 크기 · 선명도가 같으면 다른 사진들과 가장 비슷한(가운데) 사진을 추천
+        const center = mix(sceneA, sceneB, 0.15);
+        const rep = S.pickBest([
+          r(1, 0, sceneA, { blur: 0.3, light: 0.5, size: 9 }),
+          r(2, 1, center, { blur: 0.3, light: 0.5, size: 1 }),
+          r(3, 2, mix(sceneA, sceneB, 0.3), { blur: 0.3, light: 0.5, size: 5 }),
+        ]); // AI 기준 없이 고르면 파일 크기로 1번
+        const repG = S.buildGroups([
+          r(1, 0, sceneA, { blur: 0.3, light: 0.5, size: 9 }),
+          r(2, 1, center, { blur: 0.3, light: 0.5, size: 1 }),
+          r(3, 2, mix(sceneA, sceneB, 0.3), { blur: 0.3, light: 0.5, size: 5 }),
+        ]);
+        out.push(sub('56b 추천: 흐림 · 크기 · 선명도가 같으면 AI 대표(다른 사진과 가장 비슷한 사진)를 파일 크기보다 먼저',
+          repG.length === 1 && repG[0].keepId === 2 && repG[0].keepReason === 'AI 가 본 대표 장면에 가장 가까운 사진' && rep.keep.id === 1,
+          JSON.stringify(repG.map((x) => [x.keepId, x.keepReason]))));
+      }
+
+      // 56c 모델 받기: 정해진 주소 하나, 크기 · SHA-256 이 맞을 때만 저장 (가짜 인터넷, 작은 가짜 모델)
+      {
+        const saved = { bytes: A.MODEL.bytes, sha256: A.MODEL.sha256 };
+        const content = Buffer.from('가짜 모델 파일 내용 '.repeat(5000));
+        A.MODEL.bytes = content.length;
+        A.MODEL.sha256 = crypto.createHash('sha256').update(content).digest('hex');
+        const calls = [];
+        const body = (buf) => new ReadableStream({ start(c) { for (let i = 0; i < buf.length; i += 7000) c.enqueue(new Uint8Array(buf.subarray(i, i + 7000))); c.close(); } });
+        const fetchOk = async (url, init) => { calls.push({ url, init }); return { ok: true, status: 200, body: body(content) }; };
+        const errOf = async (fn) => { try { await fn(); return null; } catch (e) { return e.message; } };
+        try {
+          const b1 = path.join(base, 'dl-bad');
+          const bad = Buffer.from(content);
+          bad[10] ^= 1; // 한 글자만 다름
+          const e1 = await errOf(() => A.downloadModel({ fetchImpl: async () => ({ ok: true, status: 200, body: body(bad) }), base: b1 }));
+          const left1 = fs.existsSync(path.join(b1, 'models')) ? fs.readdirSync(path.join(b1, 'models')) : [];
+          out.push(sub('56c 내용이 다르면(SHA-256) 저장하지 않고 임시 파일도 지움', !!e1 && e1.includes('원래 모델과 달라요') && left1.length === 0 && !A.modelReady(b1), `${e1} ${JSON.stringify(left1)}`));
+          const e2 = await errOf(() => A.downloadModel({ fetchImpl: async () => ({ ok: false, status: 404, body: null }), base: b1 }));
+          const e3 = await errOf(() => A.downloadModel({ fetchImpl: async () => { throw new Error('ENOTFOUND'); }, base: b1 }));
+          const e4 = await errOf(() => A.downloadModel({ fetchImpl: undefined, base: b1 }));
+          out.push(sub('56c 서버 오류 · 인터넷 끊김 · 인터넷 없음은 사람이 읽을 글로 실패',
+            String(e2).includes('HTTP 404') && String(e3).includes('인터넷 연결을 확인') && String(e4).includes('인터넷 연결을 쓸 수 없어요'), `${e2} / ${e3} / ${e4}`));
+          const b2 = path.join(base, 'dl-ok');
+          const progress = [];
+          const p = await A.downloadModel({ fetchImpl: fetchOk, base: b2, onProgress: (got, total) => progress.push([got, total]) });
+          out.push(sub('56c 맞으면 설정 폴더 models 에 저장, 진행 알림, 임시 파일 없음',
+            p === A.modelPath(b2) && A.modelReady(b2) && fs.readdirSync(path.join(b2, 'models')).length === 1 && progress.length > 0 && progress.at(-1)[0] === content.length,
+            JSON.stringify({ p, files: fs.readdirSync(path.join(b2, 'models')), last: progress.at(-1) })));
+          out.push(sub('56c 나가는 요청은 정해진 주소 하나 (huggingface.co), 보내는 내용(body · 머리글) 없음',
+            calls.length === 1 && calls[0].url === A.MODEL.url && /^https:\/\/huggingface\.co\//.test(calls[0].url) && !calls[0].init.body && !calls[0].init.headers && !calls[0].init.method,
+            JSON.stringify(calls.map((c) => [c.url, Object.keys(c.init)]))));
+        } finally {
+          A.MODEL.bytes = saved.bytes;
+          A.MODEL.sha256 = saved.sha256;
+        }
+        // 검증 지적: 받다 끈 임시 파일 · 깨진 모델 · 끌 때 멈추기
+        {
+          const saved2 = { bytes: A.MODEL.bytes, sha256: A.MODEL.sha256 };
+          A.MODEL.bytes = content.length;
+          A.MODEL.sha256 = crypto.createHash('sha256').update(content).digest('hex');
+          try {
+            const b4 = path.join(base, 'dl-sweep');
+            fs.mkdirSync(path.join(b4, 'models'), { recursive: true });
+            const stale = `${A.modelPath(b4)}.tmp-1-1`;
+            fs.writeFileSync(stale, 'x');
+            const other = path.join(b4, 'models', 'keep.txt');
+            fs.writeFileSync(other, 'x');
+            await A.downloadModel({ fetchImpl: fetchOk, base: b4 });
+            out.push(sub('56c 받기 시작할 때 지난번에 끊겨 남은 임시 파일만 치움 (다른 파일은 그대로)', !fs.existsSync(stale) && fs.existsSync(other) && A.modelReady(b4)));
+            const good = await A.verifyModel(b4);
+            fs.writeFileSync(A.modelPath(b4), Buffer.alloc(content.length, 1)); // 크기는 같고 내용이 다름
+            const bad = await A.verifyModel(b4);
+            const moved = fs.readdirSync(path.join(b4, 'models')).filter((n) => n.includes('.broken-'));
+            out.push(sub('56c 모델 파일 확인: 맞으면 참, 내용이 다르면 거짓 + 옆 이름(.broken-)으로 치워 다시 받게', good === true && bad === false && moved.length === 1 && !A.modelReady(b4), JSON.stringify({ good, bad, moved })));
+            const ac = new AbortController();
+            const slow = async (url, init) => ({ ok: true, status: 200, body: new ReadableStream({ start(c) { c.enqueue(new Uint8Array(content.subarray(0, 100))); init.signal.addEventListener('abort', () => c.error(new Error('aborted'))); } }) });
+            const b5 = path.join(base, 'dl-abort');
+            const pr = errOf(() => A.downloadModel({ fetchImpl: slow, base: b5, signal: ac.signal }));
+            setTimeout(() => ac.abort(), 50);
+            const e5 = await pr;
+            const left5 = fs.existsSync(path.join(b5, 'models')) ? fs.readdirSync(path.join(b5, 'models')) : [];
+            out.push(sub('56c 끌 때(signal) 받기를 멈추고 임시 파일을 지움', !!e5 && left5.length === 0, `${e5} ${JSON.stringify(left5)}`));
+          } finally {
+            A.MODEL.bytes = saved2.bytes;
+            A.MODEL.sha256 = saved2.sha256;
+          }
+        }
+        out.push(sub('56c 진짜 모델 정보: 89,117,001 바이트, MIT 표기, 받는 곳은 huggingface.co Xenova/clip-vit-base-patch32',
+          A.MODEL.bytes === 89117001 && /^[0-9a-f]{64}$/.test(A.MODEL.sha256) && A.MODEL.url.startsWith('https://huggingface.co/Xenova/clip-vit-base-patch32/') && A.MODEL.label.includes('MIT')));
+      }
+
+      // 56d DB: 특징값 표, 할 일, 진행, 묶기용 줄 (모델이 바뀌면 다시)
+      await withDb(env, 'similar-ai-db', async (db) => {
+        db.upsertFiles([
+          row({ root: 'R1', path: 'R1/a.jpg', name: 'a.jpg' }),
+          row({ root: 'R1', path: 'R1/b.jpg', name: 'b.jpg' }),
+          row({ root: 'R1', path: 'R1/v.mp4', name: 'v.mp4', mediaType: 'video' }),
+        ]);
+        const jobs0 = db.embedJobs('R1', 10, 0, 'm1').map((f) => f.name);
+        const [a, b] = db.embedJobs('R1', 10, 0, 'm1');
+        db.setEmbed(a.path, a.size, a.mtimeMs, 'm1', A.toInt8(new Float32Array(512).fill(1)));
+        db.setEmbed(b.path, b.size, b.mtimeMs, 'm1', null);
+        const jobs1 = db.embedJobs('R1', 10, 0, 'm1').map((f) => f.name);
+        const p1 = db.embedProgress('R1', 'm1');
+        const rows = db.similarRows('R1');
+        const jobsNew = db.embedJobs('R1', 10, 0, 'm2').map((f) => f.name);
+        out.push(sub('56d 할 일은 사진만, 저장하면(실패 포함) 빠지고 진행에 셈, 모델이 바뀌면 다시 할 일',
+          JSON.stringify(jobs0) === '["a.jpg","b.jpg"]' && jobs1.length === 0 && p1.total === 2 && p1.done === 2 && JSON.stringify(jobsNew) === '["a.jpg","b.jpg"]',
+          JSON.stringify([jobs0, jobs1, p1, jobsNew])));
+        out.push(sub('56d 묶기용 줄에 특징값(512바이트)과 모델 이름, 실패는 null',
+          rows[0].vec instanceof Uint8Array && rows[0].vec.length === 512 && rows[0].embedModel === 'm1' && rows[1].vec === null && rows[1].embedModel === null, JSON.stringify(rows.map((x) => [x.name, x.vec && x.vec.length, x.embedModel]))));
+        db.resetFailedThumbs('R1');
+        out.push(sub('56d 썸네일 다시 만들기를 하면 특징값 실패 기록도 지워져 다시 할 일로', db.embedJobs('R1', 10, 0, 'm1').map((f) => f.name).join() === 'b.jpg'));
+      });
+
+      // 56i 검증 지적: AI 로 나뉜 이어 찍기 묶음도 버리기 확인이 같은 묶음으로 봐요 (나뉜 한 묶음을 다 버리면 거절)
+      await withDb(env, 'similar-ai-discard', async (db) => {
+        const D = require('../lib/similar-discard');
+        const va = A.toInt8(new Float32Array(512).map((_, i) => Math.sin(i * 0.37)));
+        const vb = A.toInt8(new Float32Array(512).map((_, i) => Math.cos(i * 1.91)));
+        const hs = { 'a1.jpg': '0f0f0f0f33333333', 'a2.jpg': 'f0f0f0f0cccccccc', 'b1.jpg': '00ff00ff0f0f0f0f', 'b2.jpg': 'ff00ff00f0f0f0f0' };
+        const names = ['a1.jpg', 'a2.jpg', 'b1.jpg', 'b2.jpg'];
+        db.upsertFiles(names.map((n, k) => row({ root: 'R4', path: `R4/${n}`, name: n, takenDay: '2026-06-06', takenAt: `2026-06-06T10:00:${String(k * 10).padStart(2, '0')}`, model: 'iPhone' })));
+        for (const f of db.hashJobs('R4', 10)) {
+          db.setHash(f.path, f.size, f.mtimeMs, hs[f.name]);
+          db.setBlur(f.path, f.size, f.mtimeMs, 0.3, 0.5);
+          db.setEmbed(f.path, f.size, f.mtimeMs, A.MODEL.id, f.name.startsWith('a') ? va : vb);
+        }
+        const groups = S.buildGroups(db.similarRows('R4'));
+        const id4 = (n) => db.similarRows('R4').find((x) => x.name === n).id;
+        let err = '';
+        try { D.checkDiscard(db, 'R4', [id4('a1.jpg'), id4('a2.jpg')]); } catch (e) { err = e.message; }
+        const ok = D.checkDiscard(db, 'R4', [id4('a2.jpg'), id4('b2.jpg')]);
+        out.push(sub('56i AI 로 장면이 나뉘면 두 묶음, 한 묶음을 다 버리면 거절, 묶음마다 한 장씩은 버릴 수 있음',
+          groups.length === 2 && err === '묶음마다 적어도 한 장은 남겨 주세요' && ok.groups === 2, JSON.stringify({ groups: groups.map((g) => g.ids), err, okGroups: ok.groups })));
+      });
+
+      // 56e 특징값 만들기 (가짜 세션): 모델이 없으면 아무것도 안 함, 썸네일 실패는 null, 가져오기 중엔 쉼, 끝나면 세션을 닫음
+      await withDb(env, 'similar-ai-embed', async (db) => {
+        db.upsertFiles([1, 2, 3, 4].map((i) => row({ root: 'R1', path: `R1/${i}.jpg`, name: `${i}.jpg` })));
+        const saved = A.MODEL.bytes;
+        const b3 = path.join(base, 'embed');
+        let loads = 0;
+        let releases = 0;
+        let runs = 0;
+        const loadSession = async (file, threads) => {
+          loads++;
+          return { async run() { runs++; const v = new Float32Array(512); v[runs % 512] = 1; return v; }, async release() { releases++; }, file, threads };
+        };
+        const thumbs = {
+          async request(id) {
+            const f = db.getFile(id);
+            if (f.name === '3.jpg') { db.setThumbState(id, 'failed'); return null; }
+            if (f.name === '4.jpg') return null; // 원본을 못 읽음 → 다음에 다시
+            return `t${id}`;
+          },
+        };
+        const inputOf = async () => new Float32Array(3 * 224 * 224);
+        try {
+          const none = await A.createEmbedder({ db, thumbs, base: b3, loadSession, inputOf }).run('R1');
+          out.push(sub('56e 모델 파일이 없으면 모델도 안 열고 아무것도 안 함', none.made === 0 && loads === 0, JSON.stringify(none)));
+          A.MODEL.bytes = 10;
+          fs.mkdirSync(path.join(b3, 'models'), { recursive: true });
+          fs.writeFileSync(A.modelPath(b3), Buffer.alloc(10));
+          const busyUntil = Date.now() + 1100;
+          const em = A.createEmbedder({ db, thumbs, base: b3, loadSession, inputOf });
+          const t0 = Date.now();
+          const r = await em.run('R1', null, { isBusy: () => Date.now() < busyUntil });
+          const waited = Date.now() - t0;
+          const left = db.embedJobs('R1', 10, 0, A.MODEL.id).map((f) => f.name);
+          out.push(sub('56e 만든 2장 · 썸네일 실패 1장(null) · 원본 못 읽음 1장(다음에 다시), 가져오기 중엔 쉼, 끝나면 세션 닫음',
+            r.made === 2 && r.failed === 1 && r.skipped === 1 && JSON.stringify(left) === '["4.jpg"]' && waited >= 1000 && loads === 1 && releases === 1,
+            JSON.stringify({ r, left, waited, loads, releases })));
+          await em.stop();
+          const after = await em.run('R1');
+          out.push(sub('56e 멈춘 뒤에는 아무것도 안 함', after.made === 0 && loads === 1));
+          // 검증 지적: 모델을 열지 못하면(onnxruntime 을 못 불러옴 등) 회차가 실패로 끝나요 → gallery-main 이 다시 시도하지 않게 표시
+          db.upsertFiles([row({ root: 'R1', path: 'R1/9.jpg', name: '9.jpg' })]);
+          let thrown = '';
+          try {
+            await A.createEmbedder({ db, thumbs, base: b3, inputOf, loadSession: async () => { throw new Error('DLL 을 불러오지 못함'); } }).run('R1');
+          } catch (e) {
+            thrown = e.message;
+          }
+          out.push(sub('56e 모델을 열지 못하면 회차가 오류로 끝남 (특징값을 "실패"로 적지 않아 고친 뒤 다시 만들 수 있음)',
+            thrown.includes('DLL') && db.embedJobs('R1', 10, 0, A.MODEL.id).map((f) => f.name).includes('9.jpg'), thrown));
+        } finally {
+          A.MODEL.bytes = saved;
+        }
+      });
+
+      // 56f 화면 문구: 받기 전 · 받는 중 · 특징값 만드는 중 · 끝
+      {
+        const none = V.aiLine({ model: 'none', bytes: 89117001, got: 0, total: 0, done: 0 });
+        const dl = V.aiLine({ model: 'downloading', bytes: 89117001, got: 45000000 });
+        const mk = V.aiLine({ model: 'ready', bytes: 89117001, total: 100, done: 40, embedding: true });
+        const wait = V.aiLine({ model: 'ready', bytes: 89117001, total: 100, done: 40, embedding: true, waiting: true });
+        const done = V.aiLine({ model: 'ready', bytes: 89117001, total: 100, done: 100 });
+        const fail = V.aiLine({ model: 'none', bytes: 89117001, error: 'AI 모델을 받지 못했어요 (받는 중에 끊겼어요). 다시 눌러 주세요.' });
+        const lines = V.aiConfirmLines({ bytes: 89117001 });
+        out.push(sub('56f 받기 전 버튼 "AI 모델 89MB 받기", 받는 중 45 / 89MB, 만드는 중 40 / 100장, 가져오기 중 안내, 끝나면 숨김, 실패 글',
+          none.button === 'AI 모델 89MB 받기' && dl.text === 'AI 모델 받는 중 45 / 89MB' && !dl.button && mk.text.startsWith('AI 특징값 만드는 중 40 / 100장')
+            && wait.text.includes('가져오기가 끝나면') && done.text === '' && fail.text.startsWith('AI 모델을 받지 못했어요') && fail.button === 'AI 모델 89MB 받기',
+          JSON.stringify([none, dl, mk, wait, done, fail])));
+        out.push(sub('56f 확인 창: 받는 곳(huggingface.co) · 크기 · 보내지 않는 것 · 걸리는 시간, 버튼 "89MB 받기"',
+          lines.length === 4 && lines[0].includes('huggingface.co') && lines[0].includes('89MB') && lines[2].includes('보내지 않아요') && V.aiConfirmLabel({ bytes: 89117001 }) === '89MB 받기',
+          JSON.stringify(lines)));
+      }
+
+      // 56g onnxruntime-node 가 이 PC(Windows)에서 불러와져요 (exe 에 같이 들어가는 실행 도구)
+      {
+        let ok = false;
+        let why = '';
+        try {
+          const ort = require('onnxruntime-node');
+          ok = typeof ort.InferenceSession.create === 'function' && typeof ort.Tensor === 'function';
+        } catch (e) {
+          why = e.message;
+        }
+        out.push(sub('56g onnxruntime-node 불러오기', ok, why));
+      }
+
+      // 56h (선택) 진짜 모델로: 같은 그림 필터 사본은 0.9 이상, 다른 그림은 그보다 낮음
+      const real = process.env.PVM_AI_MODEL;
+      if (real && fs.existsSync(real)) {
+        const ort = require('onnxruntime-node');
+        const sess = await ort.InferenceSession.create(real, { intraOpNumThreads: 2 });
+        const emb = async (f) => {
+          const x = new ort.Tensor('float32', await A.sharpInput(f), [1, 3, 224, 224]);
+          return A.toInt8((await sess.run({ pixel_values: x })).image_embeds.data);
+        };
+        // 알아보기 쉬운 그림: 흰 바탕 빨간 원 · 그 사본(작게, 조금 밝게) · 파란 줄무늬
+        const sharp = require('sharp');
+        const svg = (inner) => Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#fff"/>${inner}</svg>`);
+        const i1 = path.join(base, 'r1.jpg');
+        const i2 = path.join(base, 'r1f.jpg');
+        const i3 = path.join(base, 'r2.jpg');
+        await sharp(svg('<circle cx="200" cy="150" r="100" fill="#d22"/>')).jpeg().toFile(i1);
+        await sharp(i1).resize(200, 150).modulate({ brightness: 1.1 }).jpeg({ quality: 60 }).toFile(i2); // 작게 줄이고 조금 밝게 한 사본
+        await sharp(svg([0, 1, 2, 3, 4].map((k) => `<rect x="0" y="${k * 60}" width="400" height="30" fill="#24c"/>`).join(''))).jpeg().toFile(i3);
+
+        const [e1, e2, e3] = [await emb(i1), await emb(i2), await emb(i3)];
+        const same = A.cosine(e1, e2);
+        const diff = A.cosine(e1, e3);
+        out.push(sub('56h 진짜 모델: 같은 그림을 줄이고 밝게 한 사본은 0.9 이상, 다른 그림은 0.9 아래', same >= 0.9 && diff < 0.9,`같은 ${same.toFixed(3)}, 다른 ${diff.toFixed(3)}`));
+        await sess.release();
+      }
+      return out;
+    },
+  },
 ];
 
 module.exports = { items, makeImage };
+
 
 // 이 파일만 바로 돌릴 때: 임시 폴더를 만들고, 다 통과하면 지워요
 if (require.main === module) {

@@ -50,6 +50,9 @@ export const api = {
   previewTrash: (ids) => gallery().previewTrash(ids), // 갤러리에서 고른 사진 휴지통으로: 미리보기
   trashSelected: (ids) => gallery().trashSelected(ids), // 갤러리에서 고른 사진 휴지통으로: 옮기기
   onSimilarProgress: (cb) => gallery().onSimilarProgress(cb),
+  aiState: () => gallery().aiState(),
+  aiDownload: () => gallery().aiDownload(),
+  onAiProgress: (cb) => gallery().onAiProgress(cb),
   // 날짜 없음 채우기 (_날짜없음 → 앨범 정보 날짜의 날짜 폴더)
   fillPreview: () => gallery().fillPreview(),
   fillRun: (token) => gallery().fillRun(token),

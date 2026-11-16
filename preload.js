@@ -88,6 +88,10 @@ contextBridge.exposeInMainWorld('api', {
     // 갤러리에서 고른 사진 휴지통으로: 미리보기(몇 장이 어디로, 아무것도 옮기지 않음), 옮기기 (id로만)
     previewTrash: (ids) => ipcRenderer.invoke('gallery:trash-preview', ids),
     trashSelected: (ids) => ipcRenderer.invoke('gallery:trash-selected', ids),
+    // PC 안 AI 비교: 상태 보기, 모델 받기 (화면 확인 창에서 누른 뒤에만), 진행 알림
+    aiState: () => ipcRenderer.invoke('gallery:ai-state'),
+    aiDownload: () => ipcRenderer.invoke('gallery:ai-download'),
+    onAiProgress: (cb) => subscribe('gallery:ai-progress', cb),
     fillPreview: () => ipcRenderer.invoke('gallery:fill-preview'), // 날짜없음 채우기: 후보 미리보기 (아무것도 옮기지 않음)
     fillRun: (token) => ipcRenderer.invoke('gallery:fill-run', token),
     fillUndo: () => ipcRenderer.invoke('gallery:fill-undo'),
