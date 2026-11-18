@@ -144,7 +144,8 @@ function infoOf(j, list) {
     source: j.source,
     backupRoot: j.backupRoot,
     createdAt: j.createdAt,
-    stats: jobStats(j),
+    // moved: _정리완료원본으로 옮겨 정리한 원본 수 (jobStats 의 trashed 는 휴지통으로 보낸 것만 세요). 화면 "원본 정리" 칩에 같이 세요
+    stats: { ...jobStats(j), moved: j.items.filter((it) => it.movedTo).length },
     deletable: list ? list.length : null,
     deletableBytes: list ? list.reduce((a, it) => a + (it.size || 0), 0) : null,
   };
