@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { sub } = require('./check-gallery');
 const { makePlan } = require('../lib/planner');
-const { JobStore } = require('../lib/job');
+const { JobStore, jobStats } = require('../lib/job');
 const { createLogger } = require('../lib/logger');
 const runner = require('../lib/runner');
 const cleaner = require('../lib/cleaner');
@@ -127,6 +127,44 @@ const items = [
           /onJobInfo: \(cb\) => subscribe\('job-info', cb\)/.test(preload) && /api\.onJobInfo\(/.test(html) && /원본 세는 중/.test(html) && /await cleanCandidatesAsync\(job\)/.test(cleanerSrc);
         out.push(sub('55f 정리할 원본 세기: 같은 결과, 그만두기, 세는 동안 창이 멈추지 않음, 처음 켤 때 기다리지 않음', same && stopped === null && lagOk && wired,
           `같음 ${same}, 그만둠 ${stopped === null}, 큰 작업 ${bigList.length}개 · 최대 지연 ${maxLag}ms (동기판 ${syncMs}ms), 연결 ${wired}`));
+      }
+
+      // 55g 실행 · 원본 정리가 끝나면 위쪽 칩이 미리보기 숫자("처리 예정")가 아니라 결과를 보여 줌 (2026-11-18 실사용 지적)
+      //   화면 코드의 resultChips 를 그대로 꺼내 돌려 봐요 + 그리는 곳 연결 확인
+      {
+        const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+        const src = (html.match(/function resultChips\(s, phase\) \{[\s\S]*?\n    \}/) || [''])[0];
+        let detail = '';
+        let ok = false;
+        try {
+          const resultChips = new Function(`${src}; return resultChips;`)();
+          const txt = (list) => list.map(([t]) => t).join(' | ');
+          // 사용자 사례: 218개 완료 · 10개 중복, 원본 228개 정리 → 모든 작업 끝
+          const done = txt(resultChips({ total: 228, todo: 0, done: 218, dup: 10, fail: 0, broken: 0, skip: 0, trashed: 228 }, 'done'));
+          // 진행 중: 120개 완료, 98개 남음
+          const mid = txt(resultChips({ total: 218, todo: 98, done: 120, dup: 0, fail: 0, broken: 0, skip: 0, trashed: 0 }, 'run'));
+          // 실제로 끝까지 실행한 작업(55b)의 숫자 → "실행 끝", 완료 개수가 같음
+          const st = jobStats(ranJob);
+          const real = txt(resultChips(st, 'run'));
+          const cancel = txt(resultChips({ total: 10, todo: 4, done: 6, trashed: 0 }, 'cancel'));
+          const all = [done, mid, real, cancel].join(' / ');
+          const rules = !/처리 예정/.test(all) && !/·/.test(all) && !/[A-Z]{2,}/.test(all); // 가운뎃점 · 영어 대문자 라벨 금지 (CLAUDE.md 화면 디자인)
+          const shape = done === '🎉 모든 작업 끝 | ✅ 완료 218 | ⏭ 중복 10 | 🧹 원본 정리 228' &&
+            mid === '지금까지 결과 | ✅ 완료 120 | ⏳ 남은 98' &&
+            real.startsWith(`실행 끝 | ✅ 완료 ${st.done.toLocaleString('ko-KR')}`) && !/남은/.test(real) &&
+            cancel === '작업 취소함 | ✅ 완료 6 | ✖ 하지 않음 4';
+          // 연결: 작업이 열리면(setJob) 결과 칩, 작업을 닫을 때는 닫기 전 숫자로 다시 그림 (닫은 뒤 setJob(null) 이 칩을 지우지 않음)
+          const setJobSrc = (html.match(/function setJob\(info\) \{[\s\S]*?\n    \}/) || [''])[0];
+          const finishSrc = (html.match(/async function maybeFinish\(\) \{[\s\S]*?\n    \}/) || [''])[0];
+          const wired = /renderJobChips\(s, 'run'\)/.test(setJobSrc) && !/\$\('chips'\)/.test(setJobSrc.replace(/renderJobChips/g, '')) &&
+            /const last = job\.stats;[\s\S]*setJob\(null\);\s*\n\s*renderJobChips\(last, 'done'\)/.test(finishSrc) &&
+            /renderJobChips\(last, 'finish'\)/.test(html) && /renderJobChips\(last, 'cancel'\)/.test(html);
+          ok = !!src && rules && shape && wired;
+          detail = `${all}, 규칙 ${rules}, 연결 ${wired}`;
+        } catch (e) {
+          detail = '오류 ' + e.message;
+        }
+        out.push(sub('55g 끝난 뒤 칩: 미리보기 숫자 대신 결과(완료 · 중복 · 원본 정리), 진행 중이면 남은 개수', ok, detail));
       }
       return out;
     },

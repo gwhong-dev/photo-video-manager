@@ -322,6 +322,7 @@
         return;
       }
       const s = info.stats;
+      renderJobChips(s, 'run'); // 작업이 열려 있으면 아래 칩도 미리보기 숫자 대신 결과로
       $('banner').style.display = 'block';
       $('bannerFrom').textContent = `· ${info.source} → ${info.backupRoot}`;
       const c = $('bannerChips');
@@ -356,6 +357,35 @@
       if (s.skip) c.appendChild(chip(`✔ 이미 정리됨 ${num(s.skip)}`));
       if (s.unsure) c.appendChild(chip(`⚠ 확인 필요 (이미 있는 파일과 같은지 모름) ${num(s.unsure)}`, 'red'));
       c.appendChild(chip(`날짜 출처: 촬영정보 ${num(s.byFrom['촬영정보'])} · 파일이름 ${num(s.byFrom['파일이름'])} · 앨범정보 ${num(s.byFrom['앨범정보'])} · 없음 ${num(s.byFrom['없음'])}`));
+    }
+
+    // ---------- 요약 칩 (실행한 뒤 결과) ----------
+    // 실행을 시작하면 미리보기 숫자("처리 예정 …") 대신 작업 결과를 보여 줘요
+    //   2026-11-18 실사용: 다 끝났는데 칩이 "처리 예정 218개" 그대로라 다 된 건지 알 수 없었음
+    //   s: 작업 숫자(jobStats: 완료 · 중복 · 실패 · 재생 불가 · 남은 것 · 원본 정리한 것)
+    //   phase: 'run' 작업이 열려 있음 / 'done' 모든 작업 끝 / 'finish' "작업 끝내기"로 끝냄 / 'cancel' 취소함
+    //   돌려주는 값: [글자, 색] 목록 (화면 그리기와 나눠서 점검이 그대로 불러 써요)
+    function resultChips(s, phase) {
+      const n = (v) => Number(v || 0).toLocaleString('ko-KR');
+      const out = [];
+      if (phase === 'done') out.push(['🎉 모든 작업 끝', 'green']);
+      else if (phase === 'finish') out.push(['작업 끝냄', '']);
+      else if (phase === 'cancel') out.push(['작업 취소함', '']);
+      else if (s.todo) out.push(['지금까지 결과', '']);
+      else out.push(['실행 끝', 'green']);
+      out.push([`✅ 완료 ${n(s.done)}`, 'green']);
+      if (s.dup) out.push([`⏭ 중복 ${n(s.dup)}`, '']);
+      if (s.skip) out.push([`✔ 이미 정리됨 ${n(s.skip)}`, '']);
+      if (s.fail) out.push([`❌ 실패 ${n(s.fail)}`, 'red']);
+      if (s.broken) out.push([`⚠ 재생 불가 ${n(s.broken)}`, 'red']);
+      if (s.todo) out.push(phase === 'cancel' ? [`✖ 하지 않음 ${n(s.todo)}`, ''] : [`⏳ 남은 ${n(s.todo)}`, 'orange']);
+      if (s.trashed) out.push([`🧹 원본 정리 ${n(s.trashed)}`, 'purple']);
+      return out;
+    }
+    function renderJobChips(s, phase) {
+      const c = $('chips');
+      c.innerHTML = '';
+      for (const [text, cls] of resultChips(s, phase)) c.appendChild(chip(text, cls));
     }
 
     // ---------- 표 ----------
@@ -838,8 +868,10 @@
     // 다 끝났으면 작업 정리
     async function maybeFinish() {
       if (job && job.stats.todo === 0 && job.deletable === 0) {
+        const last = job.stats; // 작업을 닫으면 숫자가 사라져서 먼저 잡아 둬요
         await api.closeJob('done');
         setJob(null);
+        renderJobChips(last, 'done');
         setStatus($('status').textContent + '\n✅ 모든 작업이 끝났어요!');
       }
     }
@@ -847,14 +879,18 @@
     $('finishBtn').onclick = async () => {
       // 아직 세는 중(null)이면 남은 원본이 있을 수 있어서 똑같이 물어봐요
       if (job.deletable !== 0 && !confirm(job.deletable == null ? '지우지 않은 원본이 있을 수 있어요 (아직 세는 중). 원본은 그대로 두고 작업을 끝낼까요?' : '지우지 않은 원본이 있어요. 원본은 그대로 두고 작업을 끝낼까요?')) return;
+      const last = job.stats;
       await api.closeJob('done');
       setJob(null);
+      renderJobChips(last, 'finish');
       setStatus('✅ 작업을 끝냈어요');
     };
     $('cancelBtn').onclick = async () => {
       if (!confirm('남은 작업을 취소할까요?\n(이미 완료된 파일과 원본은 그대로 있어요)')) return;
+      const last = job.stats;
       await api.closeJob('cancel');
       setJob(null);
+      renderJobChips(last, 'cancel');
       setStatus('✖ 작업을 취소했어요');
     };
 
