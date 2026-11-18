@@ -62,9 +62,16 @@ export function manyCheckText(count) {
   return needsManyCheck(count) ? `${formatCount(count)}장에 한 번에 넣는 것이 맞아요` : '';
 }
 
-// 태그 묶음 (단계 5): tagAdd 붙이기, tagRemove 떼기
-const TAG_UNDO = { tagAdd: '태그 붙이기', tagRemove: '태그 떼기' };
-const TAG_APPLIED = { tagAdd: '장에 태그를 붙였어요', tagRemove: '장에서 태그를 뗐어요' };
+// 태그 묶음 (단계 5): tagAdd 붙이기, tagRemove 떼기, tagRename 이름 바꾸기 · 합치기, tagDelete 지우기 (2026-11-18)
+const TAG_UNDO = { tagAdd: '태그 붙이기', tagRemove: '태그 떼기', tagRename: '태그 이름 바꾸기', tagDelete: '태그 지우기' };
+const TAG_APPLIED = { tagAdd: '장에 태그를 붙였어요', tagRemove: '장에서 태그를 뗐어요', tagRename: '장의 태그 이름을 바꿨어요', tagDelete: '장에서 태그를 지웠어요' };
+// 태그 이름을 알 때 (방금 한 일): "3장에 '여행' 붙였어요"
+const TAG_APPLIED_NAMED = {
+  tagAdd: (n, name) => `${n}장에 '${name}' 붙였어요`,
+  tagRemove: (n, name) => `${n}장에서 '${name}' 뗐어요`,
+  tagRename: (n, name) => `${n}장의 태그를 '${name}' 이름으로 바꿨어요`,
+  tagDelete: (n, name) => `${n}장에서 '${name}' 태그를 지웠어요`,
+};
 
 // 되돌리기 버튼: "124장 위치 되돌리기", "12장 태그 붙이기 되돌리기"
 export function undoLabel(count, kind) {
@@ -74,8 +81,10 @@ export function undoLabel(count, kind) {
 }
 
 // 값을 넣은 직후 알림 줄의 글: "124장에 위치를 넣었어요", "12장에 태그를 붙였어요"
-export function appliedText(count, kind) {
+//   name: 태그 이름을 알면 (방금 붙인 태그) "12장에 '여행' 붙였어요"
+export function appliedText(count, kind, name) {
   if (!countOk(count)) return '';
+  if (name && TAG_APPLIED_NAMED[kind]) return TAG_APPLIED_NAMED[kind](formatCount(count), name);
   if (TAG_APPLIED[kind]) return `${formatCount(count)}${TAG_APPLIED[kind]}`;
   return KIND_OBJECT[kind] ? `${formatCount(count)}장에 ${KIND_OBJECT[kind]} 넣었어요` : '';
 }

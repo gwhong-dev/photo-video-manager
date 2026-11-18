@@ -10,7 +10,8 @@ import { appliedText, undoLabel } from '../format.mjs';
 
 // batch = state.lastBatch { id, kind, count, createdAt }
 // busy = 되돌리는 중(글자도 바뀜), disabled = 새 상태를 기다리는 중(글자는 그대로, 버튼만 꺼짐)
-export default function UndoBar({ batch, variant, busy, disabled, onUndo, onDismiss }) {
+// name = 방금 붙인 태그 이름 (알면 "3장에 '여행' 붙였어요")
+export default function UndoBar({ batch, variant, busy, disabled, onUndo, onDismiss, name }) {
   if (!batch) return null;
   const label = undoLabel(batch.count, batch.kind);
   if (!label) return null;
@@ -19,7 +20,7 @@ export default function UndoBar({ batch, variant, busy, disabled, onUndo, onDism
     <div className="banners">
       <div className="banner" role="status">
         <div className="banner-text">
-          {after ? <strong>{appliedText(batch.count, batch.kind)}</strong> : <strong>마지막으로 넣은 정보</strong>}
+          {after ? <strong>{appliedText(batch.count, batch.kind, name)}</strong> : <strong>마지막으로 넣은 정보</strong>}
           {after
             ? <span className="banner-sub"> 잘못 넣었다면 바로 되돌릴 수 있어요</span>
             : <span className="banner-sub"> 마지막에 넣은 것부터 차례로 되돌려요</span>}

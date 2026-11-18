@@ -8,12 +8,15 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { formatCount } from '../format.mjs';
 import { trashMenuLabel } from '../trash-view.mjs';
+import { quickTagLabel } from '../tag-keys.mjs';
 
 const EDGE = 8; // 창 가장자리에서 띄울 거리
 
 // at = { x, y } 우클릭한 자리, count = 선택한 장수, canCopy = 복사할 수 있는지(한 장일 때), hasCopy = 복사해 둔 값이 있는지
 //   onTrash = 고른 사진을 휴지통으로 (확인 창을 거쳐요, 2026-11-16). 없으면 항목을 안 그려요
-export default function ContextMenu({ at, count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, onTrash, onClose }) {
+//   quick = 단축키 숫자를 정한 태그 [{ name, hotkey }] (2026-11-18). 항목마다 "N장에 '여행' 붙이기"와 숫자, 누르면 onQuickTag(숫자)
+//   단축키 글자(T, 숫자)는 CSS 로 오른쪽에 그려요 (data-key). 버튼 글자에는 들어가지 않아요
+export default function ContextMenu({ at, count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, onTrash, onClose, quick = [], onQuickTag }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: at.x, top: at.y });
 
@@ -75,7 +78,10 @@ export default function ContextMenu({ at, count, canCopy, hasCopy, onCopy, onPas
       {hasCopy && <button type="button" role="menuitem" onClick={onPaste}>{n}장에 붙여넣기</button>}
       <button type="button" role="menuitem" onClick={onDirect}>{n}장에 날짜 직접 넣기</button>
       <button type="button" role="menuitem" onClick={onMap}>{n}장 위치 지도에서 고르기</button>
-      <button type="button" role="menuitem" onClick={onTagAdd}>{n}장에 태그 붙이기</button>
+      <button type="button" role="menuitem" data-key="T" onClick={onTagAdd}>{n}장에 태그 붙이기</button>
+      {onQuickTag && quick.map((t) => (
+        <button key={t.name} type="button" role="menuitem" className="quick-tag" data-key={String(t.hotkey)} onClick={() => onQuickTag(t.hotkey)}>{quickTagLabel(count, t.name)}</button>
+      ))}
       <button type="button" role="menuitem" onClick={onTagRemove}>{n}장에서 태그 떼기</button>
       {onTrash && <button type="button" role="menuitem" className="trash-button" onClick={onTrash}>{trashMenuLabel(count)}</button>}
     </div>

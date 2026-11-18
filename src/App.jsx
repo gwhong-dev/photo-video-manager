@@ -26,6 +26,7 @@ import ScanBanner from './components/ScanBanner.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import SuggestPanel from './components/SuggestPanel.jsx';
 import TagDialog from './components/TagDialog.jsx';
+import TagManageDialog from './components/TagManageDialog.jsx';
 import TagsView from './components/TagsView.jsx';
 import MapView from './components/MapView.jsx';
 import MapPanel from './components/MapPanel.jsx';
@@ -37,7 +38,8 @@ import FillBanner from './components/FillBanner.jsx';
 import FillDialog from './components/FillDialog.jsx';
 import TrashDialog from './components/TrashDialog.jsx';
 import { deleteKeyOpens } from './trash-view.mjs';
-import { undoneText } from './format.mjs';
+import { needsManyCheck, undoneText } from './format.mjs';
+import { alreadyText, noKeyText, quickTags, tagKeyAction, tagOfKey } from './tag-keys.mjs';
 import { EMPTY_SELECTION, filterScope, nextSelection, selectionForMenu, selectionOf, viewMatches } from './selection.mjs';
 
 const START_FILTER = { tab: 'all', sort: 'newest', query: '', tag: null, area: null }; // area: 지도에서 고른 곳 { rects, year }
@@ -356,11 +358,72 @@ export default function App() {
     }
     // 새 상태가 오기 전에는 되돌리기 줄에 앞 묶음의 글이 남아 있을 수 있어서, 도착할 때까지 버튼을 꺼요
     setSyncing(true);
-    setJustApplied({ batchId: result.batchId });
+    setJustApplied({ batchId: result.batchId, name: result.name || null });
     setGen((g) => g + 1);
     try {
       await refresh();
     } finally {
+      setSyncing(false);
+    }
+  };
+
+  // ---------- 태그 만들기 · 이름 바꾸기 · 지우기 (2026-11-18) ----------
+  //   창(TagManageDialog)은 태그 화면과 왼쪽 메뉴 "새 태그"에서 열어요. 사진을 고르지 않아도 돼요
+  const [tagEdit, setTagEdit] = useState(null); // { mode: 'create' | 'rename' | 'delete', tag }
+  // 끝났을 때: 사진이 바뀐 묶음이면 되돌리기 줄을, 아니면(빈 태그) 알림 글을 보여 줘요
+  const onTagManaged = async (result, text) => {
+    setTagEdit(null);
+    setNotice('');
+    if (result && result.batchId) {
+      setSyncing(true);
+      setJustApplied({ batchId: result.batchId, name: result.name || null });
+    } else if (text) {
+      setNotice(text);
+    }
+    setGen((g) => g + 1);
+    try {
+      await refresh();
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // ---------- 숫자 단축키로 바로 붙이기 (2026-11-18) ----------
+  //   태그 화면에서 그 숫자로 정한 태그를 고른 사진에 붙여요. 미리보기 창 없이 바로 붙이고 되돌리기 줄을 보여 줘요
+  //   이미 모두 붙어 있으면 아무것도 안 해요 (떼지 않아요: 잘못 눌러도 태그가 사라지지 않게. 떼기는 떼기 창이나 되돌리기로)
+  //   100장 이상이면 바로 붙이지 않고 이름을 적어 둔 붙이기 창을 열어요 (장수 확인을 한 번 더 받는 규칙, 2026-11-04)
+  //   붙인 뒤에도 선택은 그대로 둬요 (같은 사진에 다른 숫자 태그를 이어서 붙일 수 있게)
+  const quickBusy = useRef(false);
+  const quickTag = async (key) => {
+    setCellMenuAt(null);
+    if (quickBusy.current || selection.ids.size === 0) return;
+    const name = tagOfKey((state && state.manualTags) || [], key);
+    if (!name) {
+      setNotice(noKeyText(key));
+      return;
+    }
+    const ids = [...selection.ids];
+    if (needsManyCheck(ids.length)) {
+      setNotice('');
+      setDialog({ mode: 'tagAdd', ids, name });
+      return;
+    }
+    quickBusy.current = true;
+    setNotice('');
+    try {
+      const r = await api.applyTag(ids, { op: 'add', name });
+      if (!r || !r.count) {
+        setNotice(alreadyText(ids.length, name));
+        return;
+      }
+      setSyncing(true);
+      setJustApplied({ batchId: r.batchId, name: r.name || name });
+      setGen((g) => g + 1);
+      await refresh();
+    } catch (e) {
+      setNotice(errorText(e));
+    } finally {
+      quickBusy.current = false;
       setSyncing(false);
     }
   };
@@ -415,11 +478,25 @@ export default function App() {
   // Delete 키로 확인 창 열기 (글 쓰는 칸 · 다른 창이 열려 있으면 안 열어요)
   useEffect(() => {
     const onKey = (e) => {
-      const open = !!(dialog || fillOpen || trashIds || cellMenuAt);
+      const open = !!(dialog || fillOpen || trashIds || cellMenuAt || tagEdit);
       if (!deleteKeyOpens(e.key, document.activeElement, open)) return;
       if (!trashScreen || suggestOpen || selection.ids.size === 0) return;
       e.preventDefault();
       openTrash();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
+  // 태그 단축키: T = 붙이기 창, 숫자 1~9 = 정한 태그 바로 붙이기 (Delete 와 같은 화면 · 같은 조건, 글 쓰는 칸에서는 안 돼요)
+  useEffect(() => {
+    const onKey = (e) => {
+      const open = !!(dialog || fillOpen || trashIds || cellMenuAt || tagEdit);
+      const act = tagKeyAction(e, document.activeElement, open);
+      if (!act) return;
+      if (!showTools || !trashScreen || suggestOpen || selection.ids.size === 0) return;
+      e.preventDefault();
+      if (act.type === 'open') openDialog('tagAdd');
+      else quickTag(act.key);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -504,7 +581,10 @@ export default function App() {
   } else if (screen === 'similar') {
     center = <SimilarView gen={gen} focusId={similarFocus} onFocus={setSimilarFocus} onNotice={setNotice} />;
   } else if (screen === 'tags') {
-    center = <TagsView gen={gen} onPick={pickTagFromList} />;
+    center = (
+      <TagsView gen={gen} onPick={pickTagFromList} onManage={(mode, tag) => { setNotice(''); setTagEdit({ mode, tag }); }}
+        onChanged={(text) => { setNotice(text); setGen((g) => g + 1); refresh(); }} />
+    );
   } else if (screen === 'clean') {
     center = <CleanView picked={cleanPick && cleanPick.id} onPick={setCleanPick} />;
   } else if (screen === 'map') {
@@ -562,6 +642,7 @@ export default function App() {
           setSuggestOpen(false); // 위치 제안 탭에는 태그 목록이 없어서, 고른 태그의 사진이 보이는 격자로 돌아가요
           setField({ tag });
         }}
+        onNewTag={() => { setNotice(''); setTagEdit({ mode: 'create', tag: null }); }}
         onRescan={rescan}
         rescanning={rescanning}
       />
@@ -607,7 +688,7 @@ export default function App() {
         {showTools && screen === 'missing' && filter.info === 'noDate' && !suggestOpen && (state.noDate > 0 || !!state.lastFill) && (
           <FillBanner noDate={state.noDate} lastFill={state.lastFill || null} busy={fillUndoing} disabled={syncing} onOpen={() => setFillOpen(true)} onUndo={undoFill} />
         )}
-        {showAfterUndo && <UndoBar batch={lastBatch} variant="after" busy={undoing} disabled={syncing} onUndo={() => undo(lastBatch.id)} onDismiss={() => setJustApplied(null)} />}
+        {showAfterUndo && <UndoBar batch={lastBatch} variant="after" busy={undoing} disabled={syncing} onUndo={() => undo(lastBatch.id)} onDismiss={() => setJustApplied(null)} name={justApplied.name} />}
         <div className="center">{center}</div>
       </main>
       {showTools && screen === 'map' && <MapPanel picked={mapPick} located={mapLocated} top={mapTop} onShowArea={showArea} onGoto={(t) => setMapGoto((g) => ({ key: t.key, seq: (g ? g.seq : 0) + 1 }))} />}
@@ -641,12 +722,15 @@ export default function App() {
           onTagAdd={() => openDialog('tagAdd')}
           onTagRemove={() => openDialog('tagRemove')}
           onTrash={trashScreen && !suggestOpen ? openTrash : undefined}
+          quick={quickTags(state.manualTags)}
+          onQuickTag={trashScreen && !suggestOpen ? quickTag : undefined}
           onClose={closeMenu}
         />
       )}
+      {tagEdit && <TagManageDialog mode={tagEdit.mode} tag={tagEdit.tag} onClose={() => setTagEdit(null)} onDone={onTagManaged} />}
       {fillOpen && <FillDialog onClose={() => setFillOpen(false)} onDone={onFillDone} />}
       {trashIds && <TrashDialog ids={trashIds} onClose={() => setTrashIds(null)} onDone={onTrashDone} />}
-      {dialog && (dialog.mode === 'tagAdd' || dialog.mode === 'tagRemove') && <TagDialog mode={dialog.mode} ids={dialog.ids} onClose={() => setDialog(null)} onApplied={onApplied} />}
+      {dialog && (dialog.mode === 'tagAdd' || dialog.mode === 'tagRemove') && <TagDialog mode={dialog.mode} ids={dialog.ids} initialName={dialog.name || ''} onClose={() => setDialog(null)} onApplied={onApplied} />}
       {dialog && dialog.mode !== 'tagAdd' && dialog.mode !== 'tagRemove' && <EditDialog mode={dialog.mode} ids={dialog.ids} source={copySource} prefer={dialog.prefer} startAt={lastPin} onPinChosen={setLastPin} onClose={() => setDialog(null)} onApplied={onApplied} />}
     </div>
   );

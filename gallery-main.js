@@ -47,7 +47,7 @@ const ai = require('./lib/similar-ai');
 const { checkDiscard, checkSelected, discardInfo, discardFiles } = require('./lib/similar-discard');
 const { createDriveKindOf } = require('./lib/platform');
 const { historyFromJobs, planFill, toFillPreview, runFill, undoFill, lastFillRun } = require('./lib/fill-nodate');
-const { isTagKind, normalizeTagEdit, planTagEdit, toTagPreview } = require('./lib/manual-tags');
+const { isTagKind, normalizeTagEdit, planTagEdit, toTagPreview, cleanTagName, cleanHotkey, normalizeRename, planTagRename } = require('./lib/manual-tags');
 const { readCleanHistory, cleanedFolders, cleanedDirOf } = require('./lib/clean-history');
 
 const SCHEME = 'pvm';
@@ -186,10 +186,10 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     // 복구가 실패해도 갤러리는 켜요 (오류 로그만 남김). recover 는 줄 하나가 틀려도 던지지 않지만 혹시 몰라 한 번 더 감싸요
     try {
       const r = recover(db, journal);
-      if (r.applied || r.undone || r.skipped || r.superseded) {
+      if (r.applied || r.undone || r.skipped || r.superseded || r.defs) {
         // 건너뛴 이유도 같이 남겨요 (묶음 번호, 종류, 이유). 사진 파일 경로는 안 들어가는 글만이에요
         const why = (r.errors || []).map((x) => `  건너뜀: ${x.batchId ? `묶음 ${x.batchId} ` : ''}(${x.type}) ${x.message}`);
-        startupLog([`기록 파일에서 직접 넣은 값을 복구했어요: 넣기 ${r.applied}개, 되돌리기 ${r.undone}개, 버린 옛 묶음 ${r.superseded}개, 겹친 사진을 빼고 넣은 옛 묶음 ${r.partial || 0}개, 건너뜀 ${r.skipped}개`, ...why]);
+        startupLog([`기록 파일에서 직접 넣은 값을 복구했어요: 넣기 ${r.applied}개, 되돌리기 ${r.undone}개, 버린 옛 묶음 ${r.superseded}개, 겹친 사진을 빼고 넣은 옛 묶음 ${r.partial || 0}개, 태그 정의 ${r.defs || 0}개, 건너뜀 ${r.skipped}개`, ...why]);
       }
     } catch (e) {
       errorLog('직접 넣은 값 복구', e);
@@ -207,6 +207,13 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       if (n) startupLog([`내가 붙인 태그 ${n}개를 목록에 다시 넣었어요`]);
     } catch (e) {
       errorLog('내가 붙인 태그 다시 맞추기', e);
+    }
+    // 이 기능(빈 태그 · 단축키, 2026-11-18) 전에 붙인 태그 이름을 태그 정의 표에 채워요 (처음 한 번만 개수가 있어요)
+    try {
+      const n = db.fillTagNames();
+      if (n) startupLog([`내가 붙인 태그 이름 ${n}개를 태그 목록에 채웠어요`]);
+    } catch (e) {
+      errorLog('태그 목록 채우기', e);
     }
   }
 
@@ -602,7 +609,9 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       errorLog('되돌리기 기록 파일 쓰기', err);
       throw new Error(`기록 파일에 쓰지 못해서 되돌리지 않았어요${codeNote(err)}. 자세한 내용은 로그 폴더의 오류 로그에 있어요.`);
     }
-    saveOrVoid('undo', last.id, '되돌리기', () => db.undoBatch(last.id, at));
+    let defsChanged = false;
+    saveOrVoid('undo', last.id, '되돌리기', () => { defsChanged = db.undoBatch(last.id, at); });
+    if (defsChanged) saveTagDefs(root); // 태그 이름 바꾸기 · 지우기 등을 되돌리면 태그 목록도 바뀌어요
     // 그 넣기에서 체크를 꺼서 건너뛴 사진도 다시 제안에 나오게 빼요. 목록 파일 저장에 실패해도 되돌리기는 이미 끝났어요
     const unskip = skips.undoBatch(last.id);
     // 되돌리기 로그: 파일별로 "되돌리기 전(넣었던 값) → 되돌린 뒤(그 전 값, 직접 넣은 값이 없었으면 없음)"
@@ -643,25 +652,148 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     return toTagPreview(computeTagPlan(root, ids, edit));
   });
 
-  // 붙이기·떼기: 바뀌는 사진만 저장해요. 바꿀 것이 없으면 아무것도 쓰지 않고 count 0
-  ipcMain.handle('gallery:tag-apply', (e, ids, edit) => {
-    const root = editReady();
-    const plan = computeTagPlan(root, ids, edit);
-    const changed = plan.items.filter((it) => it.status === 'changed');
-    if (!changed.length) return { batchId: null, kind: plan.kind, count: 0 };
+  // 태그 묶음 하나 저장: 기록 파일 → DB(실패하면 void) → (정의가 바뀌었으면 정의 목록 줄) → 로그 → 화면 알림
+  //   items: 바뀌는 사진들 [{ path, before, after }], defs: 태그 정의 전후 (없으면 빈 목록)
+  function saveTagBatch(root, kind, items, defs, title, note) {
     const batchId = crypto.randomUUID();
     const at = new Date().toISOString();
-    const items = changed.map((it) => ({ path: it.path, before: it.before, after: it.after }));
     try {
-      journal.append({ type: 'apply', batchId, at, root, kind: plan.kind, via: 'tag', sourcePath: null, items });
+      journal.append({ type: 'apply', batchId, at, root, kind, via: 'tag', sourcePath: null, items, ...(defs.length ? { defs } : {}) });
     } catch (err) {
       errorLog('태그 기록 파일 쓰기', err);
       throw new Error(`기록 파일에 쓰지 못해서 태그를 바꾸지 않았어요${codeNote(err)}. 자세한 내용은 로그 폴더의 오류 로그에 있어요.`);
     }
-    saveOrVoid('apply', batchId, '태그', () => db.applyManualBatch({ id: batchId, root, kind: plan.kind, createdAt: at, items }));
-    finishEdit(plan.kind === 'tagAdd' ? '태그 붙이기' : '태그 떼기', batchId, plan.kind, changed.length,
-      () => changed.map((it) => `${it.path}\t태그 ${tagText(it.before)} → ${tagText(it.after)}`), `\n태그 ${plan.name}`);
-    return { batchId, kind: plan.kind, count: changed.length };
+    saveOrVoid('apply', batchId, '태그', () => db.applyManualBatch({ id: batchId, root, kind, createdAt: at, items, defs }));
+    if (defs.length) saveTagDefs(root);
+    finishEdit(title, batchId, kind, items.length, () => items.map((it) => `${it.path}\t태그 ${tagText(it.before)} → ${tagText(it.after)}`), note);
+    return batchId;
+  }
+
+  // 붙이기·떼기: 바뀌는 사진만 저장해요. 바꿀 것이 없으면 아무것도 쓰지 않고 count 0
+  //   새 이름으로 붙이면 태그 정의도 같이 만들어요 (되돌리면 그 빈 태그도 같이 사라져요)
+  ipcMain.handle('gallery:tag-apply', (e, ids, edit) => {
+    const root = editReady();
+    const plan = computeTagPlan(root, ids, edit);
+    const changed = plan.items.filter((it) => it.status === 'changed');
+    if (!changed.length) return { batchId: null, kind: plan.kind, count: 0, name: plan.name };
+    const items = changed.map((it) => ({ path: it.path, before: it.before, after: it.after }));
+    const defs = plan.kind === 'tagAdd' && !db.tagDef(root, plan.name) ? [{ name: plan.name, before: null, after: { hotkey: null } }] : [];
+    const batchId = saveTagBatch(root, plan.kind, items, defs, plan.kind === 'tagAdd' ? '태그 붙이기' : '태그 떼기', `\n태그 ${plan.name}`);
+    return { batchId, kind: plan.kind, count: changed.length, name: plan.name };
+  });
+
+  // ---------- 태그 만들기 · 이름 바꾸기 · 지우기 · 단축키 (2026-11-18) ----------
+  //   내가 만든 태그만 바꿀 수 있어요. 앨범에서 가져온 태그(파일에서 읽은 것)는 읽기 전용이에요
+  //   사진 파일은 건드리지 않아요. 쓰는 곳은 DB, 기록 파일, 로그뿐이에요
+
+  // 태그 정의 목록을 기록 파일에 한 줄로 (DB를 새로 만들 때 빈 태그와 숫자를 되살리려고). 못 써도 이미 저장한 작업은 그대로예요
+  function saveTagDefs(root) {
+    try {
+      journal.append({ type: 'tagDefs', batchId: crypto.randomUUID(), at: new Date().toISOString(), root, defs: db.tagDefList(root) });
+    } catch (err) {
+      errorLog('태그 목록 기록 파일 쓰기', err);
+    }
+  }
+  // 묶음이 아닌 정의 바꾸기의 로그와 화면 알림 (실패해도 저장은 그대로)
+  function defDone(title, text) {
+    try {
+      logger.newLog('manual-edit', `${title} ${now()}\n${text}`);
+    } catch (err) {
+      errorLog(`${title} 로그`, err);
+    }
+    try {
+      send('gallery:library-changed');
+    } catch (err) {
+      errorLog(`${title} 화면 알림`, err);
+    }
+  }
+  const tagNameArg = (v) => {
+    if (typeof v !== 'string' || !v || v.length > 200) throw new Error('태그 이름이 올바르지 않아요.');
+    return v;
+  };
+  // 내가 만든 태그 정의를 찾아요. 없으면 (앨범 태그뿐이거나 그 사이 지워졌으면) 거절해요
+  const mineOrThrow = (root, name) => {
+    const d = db.tagDef(root, tagNameArg(name));
+    if (!d) throw new Error(`'${name}'은 내가 만든 태그가 아니라서 바꿀 수 없어요. 앨범에서 가져온 태그는 읽기 전용이에요.`);
+    return d;
+  };
+  const defState = (d) => (d ? { hotkey: d.hotkey } : null);
+  const shownCount = (root, name) => {
+    const t = db.summary(root).manualTags.find((x) => x.name === name);
+    return t ? t.count : 0;
+  };
+
+  // 빈 태그 만들기: 사진 없이 목록에 남아요 (장수 0). 같은 이름이 이미 있으면 거절
+  ipcMain.handle('gallery:tag-create', (e, rawName) => {
+    const root = editReady();
+    const name = cleanTagName(rawName);
+    if (db.tagDef(root, name)) throw new Error(`'${name}' 태그는 이미 있어요.`);
+    db.setTagDefs(root, [{ name, after: { hotkey: null } }]);
+    saveTagDefs(root);
+    defDone('태그 만들기', `태그 ${name}`);
+    return { name };
+  });
+
+  // 단축키 숫자 정하기 (1~9, null = 빼기). 같은 숫자를 쓰던 태그는 숫자가 빠져요 → { name, hotkey, moved: 숫자가 빠진 태그 이름 }
+  ipcMain.handle('gallery:tag-hotkey', (e, name, key) => {
+    const root = editReady();
+    const hotkey = cleanHotkey(key);
+    mineOrThrow(root, name);
+    const moved = db.setTagHotkey(root, name, hotkey);
+    saveTagDefs(root);
+    defDone('태그 단축키', `태그 ${name}\n숫자 ${hotkey === null ? '없음' : hotkey}${moved ? `\n숫자가 빠진 태그 ${moved}` : ''}`);
+    return { name, hotkey, moved };
+  });
+
+  // 이름 바꾸기 미리보기: 같은 이름의 내 태그가 있으면 합치기(merge)예요. 아무것도 저장하지 않아요
+  ipcMain.handle('gallery:tag-rename-preview', (e, from, to) => {
+    const root = editReady();
+    const r = normalizeRename(tagNameArg(from), to);
+    mineOrThrow(root, r.from);
+    const merge = !!db.tagDef(root, r.to);
+    return { from: r.from, to: r.to, merge, count: shownCount(root, r.from), toCount: merge ? shownCount(root, r.to) : 0 };
+  });
+
+  // 이름 바꾸기 · 합치기: 그 태그가 붙은 사진 모두에서 이름을 바꿔요. 같은 이름이 있으면 merge 가 true 일 때만 합쳐요
+  //   단축키 숫자는 새 이름으로 옮겨요 (합칠 때 새 이름에 숫자가 이미 있으면 그 숫자를 남겨요)
+  ipcMain.handle('gallery:tag-rename', (e, from, to, merge) => {
+    const root = editReady();
+    const r = normalizeRename(tagNameArg(from), to);
+    const a = mineOrThrow(root, r.from);
+    const b = db.tagDef(root, r.to);
+    if (b && merge !== true) throw new Error(`'${r.to}' 태그가 이미 있어요. 합칠지 먼저 확인해 주세요.`);
+    const defs = [
+      { name: r.from, before: defState(a), after: null },
+      { name: r.to, before: defState(b), after: { hotkey: b && b.hotkey !== null ? b.hotkey : a.hotkey } },
+    ];
+    const { items } = planTagRename(db.taggedPaths(root, r.from), r.from, r.to);
+    const kind = 'tagRename';
+    if (!items.length) {
+      // 사진이 없는 태그: 정의만 바꿔요 (되돌리기 줄을 차지하지 않게 묶음을 만들지 않아요)
+      db.setTagDefs(root, defs);
+      saveTagDefs(root);
+      defDone('태그 이름 바꾸기', `태그 ${r.from} → ${r.to}${b ? ' (합침)' : ''}\n개수 0`);
+      return { batchId: null, kind, count: 0, from: r.from, name: r.to, merged: !!b };
+    }
+    const batchId = saveTagBatch(root, kind, items, defs, b ? '태그 합치기' : '태그 이름 바꾸기', `\n태그 ${r.from} → ${r.to}`);
+    return { batchId, kind, count: items.length, from: r.from, name: r.to, merged: !!b };
+  });
+
+  // 지우기: 그 태그를 모든 사진에서 떼고 목록에서 빼요. 사진 · 영상 파일은 그대로예요. 같은 이름의 앨범 태그도 그대로예요
+  ipcMain.handle('gallery:tag-delete', (e, name) => {
+    const root = editReady();
+    const a = mineOrThrow(root, name);
+    const defs = [{ name: a.name, before: defState(a), after: null }];
+    const { items } = planTagRename(db.taggedPaths(root, a.name), a.name, null);
+    const kind = 'tagDelete';
+    if (!items.length) {
+      db.setTagDefs(root, defs);
+      saveTagDefs(root);
+      defDone('태그 지우기', `태그 ${a.name}\n개수 0`);
+      return { batchId: null, kind, count: 0, name: a.name };
+    }
+    const batchId = saveTagBatch(root, kind, items, defs, '태그 지우기', `\n태그 ${a.name}`);
+    return { batchId, kind, count: items.length, name: a.name };
   });
 
   // ---------- 장소 검색과 지도 출처 ----------

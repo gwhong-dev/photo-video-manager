@@ -2,7 +2,8 @@
 // 역할: 왼쪽 메뉴와 "앨범에서 가져온 태그" 목록
 //   메뉴: 가져오기, 갤러리, 정보 없는 사진, 비슷한 사진, 태그 (지금 있는 화면 다섯). 나머지는 다음 단계에서 만들어서 흐리게 꺼 둬요
 //   갤러리, 정보 없는 사진, 비슷한 사진, 태그는 같은 창 안에서 바뀌는 화면이에요 (onScreen)
-//   태그 목록은 "내가 붙인 태그"와 "앨범에서 가져온 태그" 두 묶음이에요
+//   태그 목록은 "내가 만든 태그"와 "앨범에서 가져온 태그" 두 묶음이에요
+//   내가 만든 태그 옆에 "새 태그" 버튼 (2026-11-18). 단축키 숫자를 정한 태그는 숫자를 같이 보여 줘요
 //   태그를 누르면 그 태그만 보고, 다시 누르면 풀려요
 
 import React from 'react';
@@ -27,7 +28,7 @@ function MenuRow({ icon, label, count, note, active, disabled, onClick, countCla
   );
 }
 
-export default function Sidebar({ state, screen, filter, onOpenImport, onScreen, onPickTag, onRescan, rescanning }) {
+export default function Sidebar({ state, screen, filter, onOpenImport, onScreen, onPickTag, onNewTag, onRescan, rescanning }) {
   const s = state || {};
   const showCounts = !!(state && state.root && !state.dbError);
   const tags = (showCounts && s.tags) || [];
@@ -45,6 +46,7 @@ export default function Sidebar({ state, screen, filter, onOpenImport, onScreen,
       >
         <TagIcon />
         <span className="menu-label">{t.name}</span>
+        {Number.isInteger(t.hotkey) && <span className="tag-key" title={`사진을 고른 뒤 숫자 ${t.hotkey} 키를 누르면 붙어요`}>{t.hotkey}</span>}
         <span className="menu-count">{formatCount(t.count)}</span>
       </button>
     );
@@ -61,10 +63,13 @@ export default function Sidebar({ state, screen, filter, onOpenImport, onScreen,
         <MenuRow icon={<CleanIcon />} label="정리" active={screen === 'clean'} onClick={() => onScreen('clean')} disabled={!showCounts} />
       </nav>
 
-      {mine.length > 0 && (
+      {showCounts && (
         <>
-          <h2 className="side-heading">내가 붙인 태그</h2>
-          <div className="tag-list">{tagRows(mine)}</div>
+          <div className="side-heading-row">
+            <h2 className="side-heading">내가 만든 태그</h2>
+            <button type="button" className="link-button side-new" onClick={onNewTag}>새 태그</button>
+          </div>
+          {mine.length > 0 && <div className="tag-list">{tagRows(mine)}</div>}
         </>
       )}
       {tags.length > 0 && (
