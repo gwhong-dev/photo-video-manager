@@ -121,10 +121,19 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   const base = typeof userDir === 'function' ? userDir() : userDir;
   // 백업 폴더 경로. 끝의 \ 나 / 가 달라도 같은 폴더로 보게 path.resolve 로 한 번만 다듬어요 (대소문자는 그대로 둬요).
   //   DB의 root 열쇠가 되니 모든 곳이 이 함수 하나를 써요
-  const rootNow = () => {
+  const libRoot = () => {
     const raw = String((getSettings() && getSettings().backupRoot) || '').trim();
     return raw ? path.resolve(raw) : '';
   };
+  // ---------- 가져오기 전 거르기 (2026-11-18 사용자 결정, docs/superpowers/specs/2026-11-18-import-screening-design.md) ----------
+  //   가져올 폴더를 잠깐 "지금 보는 폴더"로 삼아 비슷한 사진 화면 · 사진 보기 · 바로 지우기를 그대로 써요
+  //   screen = { root: 가져올 폴더, name: 폴더 이름, removed: 거르기에서 옮긴 장수, hasher, embedder } 또는 null
+  //   메모리에만 있어요 (설정 파일에 안 써요). 끝내면(가져오기 화면으로, 앱을 끌 때) 다시 백업 폴더를 봐요
+  //   폴더는 main.js 가 설정의 가져올 폴더로만 정해요 (화면이 경로를 보내지 않아요)
+  let screen = null;
+  const rootNow = () => (screen ? screen.root : libRoot());
+  const isScreenRoot = (root) => !!screen && root === screen.root;
+  const SCREEN_BLOCK = '가져오기 전 거르기 중에는 할 수 없어요. "거르기 끝내고 가져오기로"를 누른 뒤에 해 주세요';
   const busy = () => {
     try {
       return !!isRunning();
@@ -279,7 +288,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     if (result.status === 'done' && root === rootNow() && thumbs) {
       // 켠 뒤 처음 끝까지 읽었을 때 한 번만 옛 썸네일을 정리해요 (파일이 바뀌어 이름이 달라진 썸네일)
       //   새 DB를 만들 때 썸네일이 이미 있었으면 정리하지 않아요 (lib/thumbs.js pruneAllowed)
-      if (!pruned) {
+      //   거르기 폴더(가져올 폴더) 읽기에서는 정리하지 않아요 (그 폴더가 켠 뒤 처음 읽은 폴더여도, 설계 5-1)
+      if (!pruned && !isScreenRoot(root)) {
         pruned = true;
         const p = pruneAllowed({ thumbDir: path.join(base, 'thumbs'), markerPath: path.join(base, 'thumb-prune-off.json'), freshDb, onError: errorLog });
         if (p.allowed) thumbs.pruneOrphans();
@@ -313,6 +323,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       scanStatus: lastStatus,
       tools: t ? { exiftool: !!(t.exiftool && t.exiftool.ok), ffmpeg: !!(t.ffmpeg && t.ffmpeg.ok) } : null,
       jobPending: !!(getJobPending && getJobPending()),
+      // 가져오기 전 거르기 중이면 폴더 이름만 (전체 경로는 화면에 주지 않아요). root 는 그 폴더예요
+      screening: screen ? { name: screen.name } : null,
     };
     if (dbError) out.dbError = dbError;
     if (recoveredOnce) {
@@ -356,6 +368,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     return { sessions, folders };
   };
   ipcMain.handle('gallery:clean-history', () => {
+    if (screen) throw new Error(SCREEN_BLOCK);
     if (!cleanJob) cleanJob = loadCleanHistory().finally(() => { cleanJob = null; });
     return cleanJob;
   });
@@ -363,6 +376,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   //   'source' · 'backup' = 지금 설정의 폴더, 'old-…' = 정리 기록에서 찾아 화면에 보여 준 예전 폴더
   ipcMain.handle('gallery:open-cleaned', async (e, key) => {
     if (typeof key !== 'string' || !/^(source|backup|old-[0-9a-f]{12})$/.test(key)) throw new Error('열 폴더가 올바르지 않아요');
+    if (screen) throw new Error(SCREEN_BLOCK);
     const s = getSettings() || {};
     let dir = null;
     if (key === 'source') dir = cleanedDirOf(s.source);
@@ -380,6 +394,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
 
   // 지도 핀용 위치 목록 (단계 6) → [[id, 위도, 경도, 찍은 날], ...]
   ipcMain.handle('gallery:map-points', () => {
+    if (screen) throw new Error(SCREEN_BLOCK); // 지도는 거르기 중에 막아요
     const root = rootNow();
     return db && root ? db.mapPoints(root) : [];
   });
@@ -420,6 +435,10 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       planningNow = !!(isPlanning && isPlanning());
     } catch (err) { /* 모르면 막지 않아요 */ }
     if (planningNow) throw new Error('미리보기가 끝난 뒤에 화면을 바꿀 수 있어요');
+    // 가져오기 화면으로 가면 거르기를 끝내요 ("거르기 끝내고 가져오기로" 버튼도 이 길로 와요)
+    //   옮기는 중이면 기다려요 (옮긴 장수를 다 센 뒤에 끝내려고)
+    if (name === 'import' && screen && discarding) throw new Error('사진을 옮기는 중이에요. 끝난 뒤 다시 눌러 주세요');
+    if (name === 'import') endScreening();
     await loadScreen(name);
     return true;
   });
@@ -431,7 +450,10 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   //   백업 폴더가 연결되지 않아도 돼요 (DB와 기록 파일만 쓰므로)
 
   // 가져오기 중이거나 DB, 백업 폴더가 없으면 못 해요. 준비됐으면 지금 백업 폴더(root)를 돌려줘요
-  function editReady() {
+  //   screenOk: 가져오기 전 거르기 중에도 쓰는 일 (비슷한 사진 · 바로 지우기). 그 밖의 일(날짜 · 위치 · 태그 · 날짜없음 채우기 ·
+  //   위치 제안 · 되돌리기)은 거르기 중에 막아요. 가져올 폴더 경로에 붙인 값은 가져오면 경로가 바뀌어 사라지기 때문이에요 (설계 4-1)
+  function editReady({ screenOk = false } = {}) {
+    if (screen && !screenOk) throw new Error(SCREEN_BLOCK);
     if (busy()) throw new Error('가져오기가 끝난 뒤에 할 수 있어요');
     // 원인(경로가 섞일 수 있음)은 시작 로그에 있어서 화면에는 정해진 문장만 보여요
     if (!db) throw new Error('목록 파일(library.db)을 열지 못해서 할 수 없어요. 프로그램을 다시 켜 보세요');
@@ -632,6 +654,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
 
   // 태그 목록: 내가 붙인 태그와 앨범 태그 (장수 많은 순)
   ipcMain.handle('gallery:tag-list', () => {
+    if (screen) throw new Error(SCREEN_BLOCK);
     const root = rootNow();
     if (!db || !root) return { manual: [], album: [] };
     const s = db.summary(root);
@@ -804,7 +827,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   //     'full': 화면을 열 때. 썸네일이 없는 사진은 썸네일부터 만들어요
   //   둘 다 가져오기 중(busy)에는 쉬어요 (가져오기를 느리게 하지 않게, 메모리 지키기와 부딪히지 않게). 고르기 · 버리기는 화면에서만
   //   파일 경로는 화면에 주지 않아요. 버리기는 미리보기(similar-preview)를 보고 사용자가 누를 때만 (similar-discard)
-  const hasher = db && thumbs ? createHasher({ db, thumbs }) : null;
+  let hasher = db && thumbs ? createHasher({ db, thumbs }) : null;
   let hashing = false;
   let hashAgain = null; // 도는 동안 또 부탁받은 것 { root, mode } ('full'이 'bg'보다 앞서요. 다른 폴더 부탁은 새것으로)
   let hashStall = null; // 하나도 못 만들고 끝난 회차의 열쇠 (폴더 · 방식 · 진행이 같으면 다시 돌지 않아요)
@@ -826,9 +849,12 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     if (hashStall === key) return;
     hashing = true;
     send('gallery:similar-progress', withState(p));
+    // 거르기 폴더는 따로 만든 계산기로 돌려요 (거르기를 끝낼 때 그것만 멈춰요. 라이브러리 계산기는 그대로)
+    const h = isScreenRoot(root) ? screen.hasher : hasher;
     // 진행 알림은 hasher 가 잰 값을 그대로 써요 (다시 조회하지 않게)
-    hasher.run(root, (q) => send('gallery:similar-progress', withState(q)), { readyOnly: mode === 'bg', isBusy: busy })
-      .then((r) => { hashStall = r && r.made + r.failed === 0 ? key : null; })
+    h.run(root, (q) => send('gallery:similar-progress', withState(q)), { readyOnly: mode === 'bg', isBusy: busy })
+      // 멈춘 계산기(거르기를 시작 · 끝내며 바꾼 것)의 빈 결과는 '못 만듦'으로 기억하지 않아요 (다음에 다시 돌게)
+      .then((r) => { hashStall = r && r.made + r.failed === 0 && (h === hasher || (screen && h === screen.hasher)) ? key : null; })
       .catch((e) => errorLog('비슷한 사진 지문 만들기', e))
       .finally(() => {
         hashing = false;
@@ -846,7 +872,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // ---------- PC 안 AI 특징값 (④, lib/similar-ai.js) ----------
   //   모델은 사용자가 화면 확인 창에서 "받기"를 누를 때만 받아요 (gallery:ai-download). 앱이 스스로 받지 않아요
   //   특징값은 지문처럼 뒤에서 만들고, 가져오기 중에는 쉬어요. 다 만들면 화면이 목록을 다시 받아요
-  const embedder = db && thumbs ? ai.createEmbedder({ db, thumbs, base }) : null;
+  let embedder = db && thumbs ? ai.createEmbedder({ db, thumbs, base }) : null;
   let embedding = false;
   let embedAgain = null;
   let embedStall = null; // 지문과 같은 방식 (하나도 못 만들고 끝난 회차)
@@ -874,6 +900,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     if (embedStall === key) return;
     embedding = true;
     sendAi(root);
+    const em = isScreenRoot(root) ? screen.embedder : embedder; // 지문과 같아요 (거르기 폴더는 따로)
     (async () => {
       // 이번 실행에서 처음 쓸 때 한 번 모델 파일이 원래 것과 같은지(SHA-256) 확인해요. 다르면 옆으로 치우고 다시 받게 해요
       if (!modelChecked) {
@@ -884,9 +911,9 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
           return null;
         }
       }
-      return embedder.run(root, () => sendAi(root), { readyOnly: mode === 'bg', isBusy: busy });
+      return em.run(root, () => sendAi(root), { readyOnly: mode === 'bg', isBusy: busy });
     })()
-      .then((r) => { embedStall = r && r.made + r.failed === 0 ? key : null; })
+      .then((r) => { embedStall = r && r.made + r.failed === 0 && (em === embedder || (screen && em === screen.embedder)) ? key : null; })
       .catch((e) => {
         aiBroken = true;
         aiInfo.error = 'AI 특징값을 만들지 못했어요. 프로그램을 다시 켜 주세요 (자세한 내용은 오류 로그).';
@@ -951,7 +978,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   //   blurry: 흐림 점수가 BLUR_LIMIT 이상 (lib/similar.js). 점수가 아직 없으면 false
   //   모든 사진을 "모두 남기기"로 기억한 묶음은 숨겨요. 일부만 기억한 묶음(새 사진이 들어옴)은 기억한 사진이 처음부터 남김(keptIds)
   ipcMain.handle('gallery:similar-list', () => {
-    const root = editReady();
+    const root = editReady({ screenOk: true });
     startHashing(root);
     if (!hashing) startEmbedding(root, 'full'); // 지문을 만드는 중이면 지문이 끝난 뒤에 이어서 (CPU 를 겹쳐 쓰지 않게)
     const rows = db.similarRows(root);
@@ -978,22 +1005,32 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   });
 
   // 모두 남기기 기억: 번호를 경로로 바꿔 지금 백업 폴더의 사진만 더해요. saved = 파일에 저장했는지
+  // 거르기 중 버리기 · 바로 지우기: 로그 이름을 따로 해요 (정리 기록 화면이 라이브러리 버리기로 세지 않게) + 옮긴 장수 세기
+  const screenLog = (root) => (isScreenRoot(root) ? { logKind: 'screen-discard', logTitle: '가져오기 전 거르기' } : {});
+  function countScreenRemoved(root, r) {
+    if (isScreenRoot(root)) screen.removed += (r.trashed || 0) + (r.moved || 0);
+  }
+
+  //   거르기 중에는 그 폴더 몫으로 따로 적어 둬요 (screenKeepId). "숨긴 묶음 다시 보기"가 그 몫만 비우게 (라이브러리 기억은 그대로)
+  const screenKeepId = (root) => `screen|${root}`;
   ipcMain.handle('gallery:similar-keep-all', (e, ids) => {
-    const root = editReady();
+    const root = editReady({ screenOk: true });
     checkIds(ids);
     const paths = db.getFilesByIds(ids).filter((f) => f.root === root).map((f) => f.path);
-    return { saved: similarKeeps.add(paths) };
+    return { saved: similarKeeps.add(paths, isScreenRoot(root) ? screenKeepId(root) : null) };
   });
 
   // 숨긴 묶음 다시 보기: 기억을 비워요. 사진 파일에는 영향이 없어요
+  //   거르기 중에는 이 거르기 폴더에서 남긴 기억만 비워요 (라이브러리의 "모두 남기기" 기억을 바꾸지 않게, 설계 2절)
   ipcMain.handle('gallery:similar-clear-keeps', () => {
-    editReady();
+    const root = editReady({ screenOk: true });
+    if (isScreenRoot(root)) return { saved: similarKeeps.undoBatch(screenKeepId(root)).saved };
     return { saved: similarKeeps.clear() };
   });
 
   // 버리기 미리보기: 몇 장이 휴지통으로, 몇 장이 _정리완료원본으로 가는지 (아무것도 옮기지 않아요)
   ipcMain.handle('gallery:similar-preview', async (e, ids) => {
-    const root = editReady();
+    const root = editReady({ screenOk: true });
     const { files, groups } = checkDiscard(db, root, ids);
     const info = await discardInfo(files, { driveKindOf: makeDriveKindOf() });
     return { ...info, groups, canTrash: typeof trash === 'function' };
@@ -1001,14 +1038,14 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
 
   // 버리기 실행. 끝나면 옮긴 사진을 "사라짐"으로 적고 화면에 목록이 바뀌었다고 알려요
   ipcMain.handle('gallery:similar-discard', async (e, ids) => {
-    const root = editReady();
+    const root = editReady({ screenOk: true });
     if (discarding || filling) throw new Error('이미 옮기는 중이에요');
     if (library && library.isScanning()) throw new Error('백업 폴더를 읽는 중이에요. 끝난 뒤 다시 눌러 주세요');
     const { files } = checkDiscard(db, root, ids);
     discarding = true;
     try {
       const noTrash = async () => { throw new Error('휴지통을 쓸 수 없어요'); };
-      const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: makeDriveKindOf(), logger });
+      const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: makeDriveKindOf(), logger, ...screenLog(root) });
       // DB에 적다가 실패해도 옮긴 결과는 알려요 (다음에 백업 폴더를 읽으면 "사라짐"으로 맞춰져요)
       if (r.done.length) {
         try {
@@ -1017,6 +1054,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
           errorLog('비슷한 사진 사라짐 표시', err);
         }
       }
+      countScreenRemoved(root, r);
       send('gallery:library-changed');
       return { trashed: r.trashed, moved: r.moved, fail: r.fail, pairs: r.pairs, pairFail: r.pairFail, logFail: r.logFail, logName: path.basename(r.logPath || '') };
     } finally {
@@ -1029,20 +1067,20 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   //   옮기는 방법 · 로그 · 라이브 포토 짝 영상은 비슷한 사진 버리기와 같아요 (lib/similar-discard.js). 묶음 조건만 없어요
   //   영구 삭제는 안 해요: 휴지통, 휴지통이 없는 드라이브면 백업 폴더\_정리완료원본
   ipcMain.handle('gallery:trash-preview', async (e, ids) => {
-    const root = editReady();
+    const root = editReady({ screenOk: true });
     const { files } = checkSelected(db, root, ids);
     const info = await discardInfo(files, { driveKindOf: makeDriveKindOf() });
     return { ...info, canTrash: typeof trash === 'function' };
   });
   ipcMain.handle('gallery:trash-selected', async (e, ids) => {
-    const root = editReady();
+    const root = editReady({ screenOk: true });
     if (discarding || filling) throw new Error('이미 옮기는 중이에요');
     if (library && library.isScanning()) throw new Error('백업 폴더를 읽는 중이에요. 끝난 뒤 다시 눌러 주세요');
     const { files } = checkSelected(db, root, ids);
     discarding = true;
     try {
       const noTrash = async () => { throw new Error('휴지통을 쓸 수 없어요'); };
-      const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: makeDriveKindOf(), logger, logKind: 'gallery-trash', logTitle: '갤러리에서 휴지통으로' });
+      const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: makeDriveKindOf(), logger, logKind: 'gallery-trash', logTitle: '갤러리에서 휴지통으로', ...screenLog(root) });
       // DB에 적다가 실패해도 옮긴 결과는 알려요 (다음에 백업 폴더를 읽으면 "사라짐"으로 맞춰져요)
       if (r.done.length) {
         try {
@@ -1051,6 +1089,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
           errorLog('갤러리 휴지통 사라짐 표시', err);
         }
       }
+      countScreenRemoved(root, r);
       send('gallery:library-changed');
       return { trashed: r.trashed, moved: r.moved, fail: r.fail, pairs: r.pairs, pairFail: r.pairFail, logFail: r.logFail, logName: path.basename(r.logPath || '') };
     } finally {
@@ -1257,9 +1296,117 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     }
   });
 
+  // ---------- 가져오기 전 거르기: 시작 · 끝 ----------
+  let screenNotice = null; // 끝낸 거르기 결과 { name, removed } → 가져오기 화면이 한 번 읽어 가요
+  // 시작: main.js 가 검사를 마친 가져올 폴더만 넘겨요. 지문 · AI 계산기는 이 폴더 몫으로 새로 만들어요
+  function startScreening(dir) {
+    if (!db || !thumbs) throw new Error('목록 파일(library.db)을 열지 못해서 거를 수 없어요. 프로그램을 다시 켜 보세요');
+    const root = path.resolve(String(dir || ''));
+    if (!dir || !isDir(root)) throw new Error('가져올 폴더를 찾지 못했어요. 연결을 확인해 주세요');
+    if (screen && screen.root === root) return { name: screen.name };
+    endScreening();
+    // 라이브러리 지문 · AI 계산이 돌고 있으면(AI 는 몇 시간 걸리기도 해요) 거르기 폴더 계산이 그 뒤로 밀려요
+    //   → 라이브러리 계산기는 지금 회차를 멈추고 새것으로 바꿔요. 남은 일은 거르기를 끝낸 뒤 다시 읽을 때 이어서 해요
+    if (hashing && hasher) {
+      const old = hasher;
+      hasher = createHasher({ db, thumbs });
+      old.stop().catch(() => {});
+    }
+    if (embedding && embedder) {
+      const old = embedder;
+      embedder = ai.createEmbedder({ db, thumbs, base });
+      old.stop().catch(() => {});
+    }
+    screen = {
+      root,
+      name: path.basename(root) || root,
+      removed: 0,
+      hasher: createHasher({ db, thumbs }),
+      embedder: ai.createEmbedder({ db, thumbs, base }),
+    };
+    screenNotice = null;
+    try {
+      logger.newLog('screen', `가져오기 전 거르기 시작 ${now()}\n폴더: ${root}`);
+    } catch (e) { /* 로그를 못 써도 계속 */ }
+    send('gallery:library-changed');
+    runScan(root, {}).catch((e) => errorLog('거르기 폴더 읽기', e));
+    return { name: screen.name };
+  }
+  // 끝: 거르기 폴더 값을 비우고 그 폴더 계산을 멈춰요 → 갤러리는 다시 백업 폴더. 거르기가 없으면 아무것도 안 해요
+  //   DB 의 거르기 폴더 줄은 지우지 않아요 (같은 폴더를 다시 거르면 썸네일 · 지문을 다시 안 만들어도 돼요, 설계 4-1)
+  function endScreening() {
+    if (!screen) return null;
+    const s = screen;
+    screen = null;
+    if (hashAgain && hashAgain.root === s.root) hashAgain = null;
+    if (embedAgain && embedAgain.root === s.root) embedAgain = null;
+    s.hasher.stop().catch(() => {});
+    s.embedder.stop().catch(() => {});
+    screenNotice = { name: s.name, removed: s.removed };
+    try {
+      logger.newLog('screen', `가져오기 전 거르기 끝 ${now()}\n폴더: ${s.root}\n옮긴 사진 ${s.removed}장`);
+    } catch (e) { /* 로그를 못 써도 계속 */ }
+    if (!closed) {
+      send('gallery:library-changed');
+      const root = libRoot();
+      if (root) runScan(root, {}).catch((e) => errorLog('거르기 끝낸 뒤 백업 폴더 읽기', e)); // 멈춘 라이브러리 계산을 다시 이어요
+    }
+    return screenNotice;
+  }
+
+  // ---------- 가져올 때 태그 한 번에 (설계 4-3) ----------
+  //   name: 작업에 적어 둔 태그 이름, paths: 이번 회차에 백업 폴더에 들어온(또는 이미 있던 같은) 파일 경로
+  //   백업 폴더 안에서 DB 에 있는(갤러리가 읽은) 사진만 붙여요. 지금 태그 붙이기와 같은 길(기록 파일 → DB → 로그, 묶음 1개)이라
+  //   되돌리기 줄로 한 번에 뗄 수 있어요. 이미 붙은 사진은 그대로. 사진 파일에는 쓰지 않아요
+  //   → { batchId, count: 새로 붙인 장수, name, matched: DB 에서 찾은 장수, unknown: 못 찾은 장수 }
+  function tagImported(rawName, paths) {
+    if (!db) throw new Error('목록 파일(library.db)을 열지 못해서 태그를 붙이지 못했어요');
+    const root = libRoot();
+    if (!root) throw new Error('백업 폴더가 없어서 태그를 붙이지 못했어요');
+    const name = cleanTagName(rawName);
+    const low = (p) => path.resolve(p).toLowerCase(); // Windows 경로는 대소문자를 가리지 않아요
+    const known = new Map();
+    for (const [p, k] of db.knownFiles(root)) if (!k.missing) known.set(low(p), p);
+    const rootLow = low(root);
+    const seen = new Set();
+    const rows = [];
+    let unknown = 0;
+    for (const raw of paths || []) {
+      if (typeof raw !== 'string' || !raw) continue;
+      const key = low(raw);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const rel = path.relative(rootLow, key);
+      if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) continue; // 백업 폴더 밖은 붙이지 않아요
+      const p = known.get(key);
+      if (!p) {
+        unknown++;
+        continue;
+      }
+      rows.push({ id: 0, name: path.basename(p), path: p, root, missing: false });
+    }
+    const plan = planTagEdit(rows, { kind: 'tagAdd', name }, (p) => db.getManualTags(p), root);
+    const changed = plan.items.filter((it) => it.status === 'changed');
+    if (!changed.length) return { batchId: null, count: 0, name, matched: rows.length, unknown };
+    const items = changed.map((it) => ({ path: it.path, before: it.before, after: it.after }));
+    const defs = !db.tagDef(root, name) ? [{ name, before: null, after: { hotkey: null } }] : [];
+    const batchId = saveTagBatch(root, 'tagAdd', items, defs, '가져올 때 태그 붙이기', `\n태그 ${name}`);
+    return { batchId, count: items.length, name, matched: rows.length, unknown };
+  }
+
   // ---------- main.js가 부르는 것들 ----------
   let started = false;
   return {
+    startScreening,
+    endScreening,
+    isScreening: () => !!screen,
+    // 끝낸 거르기 결과를 한 번만 돌려줘요 (가져오기 화면 상태 줄용) → { name, removed } 또는 null
+    takeScreenNotice() {
+      const n = screenNotice;
+      screenNotice = null;
+      return n;
+    },
+    tagImported,
     // 창이 처음 열리고 도구를 찾았으면: 백업 폴더가 있으면 읽기 시작
     //   창은 도구를 찾기 전에 먼저 떠요. 그래서 화면이 도구 정보(tools)를 다시 읽도록 한 번 알려요
     onWindowReady() {
@@ -1270,14 +1417,20 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       if (root) runScan(root, {}).catch((e) => errorLog('시작 읽기', e));
     },
     // 가져오기 묶음이 끝나면: 읽는 중이어도 새 파일을 놓치지 않게 changed 로 다시 읽어요
+    //   늘 백업 폴더를 읽어요 (거르기 폴더가 아니라. main.js 가 가져오기 전에 거르기를 끄지만 한 번 더, 설계 5-1)
+    //   돌려주는 값: 다시 읽기 결과 Promise<{ status }> (태그 붙이기가 읽기가 끝난 뒤에 붙으려고 기다려요). 실패해도 거절하지 않아요
     onBatchDone() {
-      const root = rootNow();
-      if (root) runScan(root, { changed: true }).catch((e) => errorLog('가져오기 뒤 다시 읽기', e));
+      const root = libRoot();
+      if (!root) return Promise.resolve({ status: 'no-root' });
+      return runScan(root, { changed: true }).catch((e) => {
+        errorLog('가져오기 뒤 다시 읽기', e);
+        return { status: 'error' };
+      });
     },
     // 설정에서 백업 폴더가 바뀌면: 새 폴더를 읽어요 (읽던 다른 폴더는 library가 멈춰요)
     onRootChanged() {
       send('gallery:library-changed');
-      const root = rootNow();
+      const root = libRoot();
       if (root) runScan(root, {}).catch((e) => errorLog('백업 폴더 바뀐 뒤 읽기', e));
     },
     // 도구(exiftool)를 새로 찾아 바뀌었으면: 옛 도구로 읽다 오류로 끝났거나 'exiftool 없음'이던 읽기를 한 번 다시 해요
@@ -1289,6 +1442,9 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     // 프로그램을 끌 때: 진행 중인 FFmpeg를 기다리지 않고 멈추라고만 하고 DB를 닫아요
     close() {
       closed = true;
+      try {
+        endScreening(); // 거르기 중이면 그 계산도 멈춰요 (값은 메모리에만 있어서 다음에 켜면 백업 폴더)
+      } catch (e) { /* 끄는 중이라 무시 */ }
       try {
 
         if (hasher) hasher.stop().catch(() => {});

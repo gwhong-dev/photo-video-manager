@@ -179,6 +179,8 @@
       <span class="label">📥 가져올 폴더</span>
       <button id="srcBtn">폴더 선택</button>
       <span class="path" id="srcPath">선택 안 함</span>
+      <!-- 가져오기 전에 이 폴더 안의 중복 · 비슷한 사진을 갤러리의 비슷한 사진 화면으로 먼저 걸러요 (버린 사진은 이 폴더 쪽 휴지통으로) -->
+      <button id="screenBtn" hidden>비슷한 사진 먼저 거르기</button>
     </div>
     <div class="row">
       <span class="label">💾 백업 폴더</span>
@@ -212,6 +214,11 @@
     </div>
     <div id="status" class="muted">가져올 폴더와 백업 폴더를 고르고 미리보기를 눌러 주세요.</div>
     <div class="chips" id="chips"></div>
+    <!-- 가져올 때 태그 한 번에: 미리보기가 끝나면 보여요. 기본 이름 = 가져올 폴더 이름 (실행이 끝난 사진에 붙고 갤러리에서 되돌릴 수 있어요) -->
+    <div class="row" id="tagRow" hidden>
+      <label><input type="checkbox" id="tagOn"> 가져온 사진에 태그 붙이기</label>
+      <input type="text" id="tagName" maxlength="40" placeholder="태그 이름" style="min-width:260px">
+    </div>
   </div>
 
   <!-- 5. 표 -->
@@ -302,7 +309,7 @@
     // 버튼 켜고 끄기
     function setBusy(on, isRunning = false) {
       busy = on;
-      ['previewBtn', 'srcBtn', 'destBtn', 'nextBtn', 'trashBtn', 'finishBtn', 'cancelBtn', 'includeSub', 'batchSize', 'recheckBtn', 'retryBtn']
+      ['previewBtn', 'srcBtn', 'destBtn', 'nextBtn', 'trashBtn', 'finishBtn', 'cancelBtn', 'includeSub', 'batchSize', 'recheckBtn', 'retryBtn', 'screenBtn', 'tagOn', 'tagName']
         .forEach((id) => ($(id).disabled = on));
       document.querySelectorAll('#tools button').forEach((b) => (b.disabled = on)); // "위치 지정"도 작업 중에는 막아요 (쓰던 exiftool을 닫으면 안 돼서)
       $('runBtn').disabled = on || !planReady;
@@ -462,6 +469,7 @@
     // ---------- 폴더 & 옵션 ----------
     function renderPaths() {
       $('srcPath').textContent = state.source || '선택 안 함';
+      $('screenBtn').hidden = !state.source; // 가져올 폴더를 골랐을 때만
       $('destPath').textContent = state.backupRoot || '선택 안 함';
       renderFolderNote();
     }
@@ -488,7 +496,45 @@
       cleanOnly = false;
       $('runBtn').disabled = true;
       $('runBtn').textContent = '✅ 실행'; // 원본 정리만 할 때 바꾼 글자를 되돌려요
+      $('tagRow').hidden = true; // 태그 칸은 미리보기가 끝나면 다시 보여요
     }
+    // 미리보기가 끝나면 태그 칸을 보여 줘요. 기본 이름 = 가져올 폴더 이름 (태그 이름 규칙에 안 맞으면 빈칸 + 끔)
+    function showTagRow(name) {
+      $('tagName').value = name || '';
+      $('tagOn').checked = !!name;
+      $('tagRow').hidden = false;
+    }
+    // 실행할 때 작업에 적을 태그 이름. 켰는데 비었으면 undefined (실행하지 않고 알려요)
+    function tagForRun() {
+      if ($('tagRow').hidden || !$('tagOn').checked) return null;
+      const name = $('tagName').value.trim();
+      if (!name) {
+        alert('태그 이름을 적거나 "가져온 사진에 태그 붙이기"를 꺼 주세요');
+        return undefined;
+      }
+      return name;
+    }
+
+    // ---------- 비슷한 사진 먼저 거르기 ----------
+    // 갤러리의 비슷한 사진 화면을 가져올 폴더로 열어요. 폴더 검사 · 진행 중인 작업과 겹치는지는 main 이 봐요
+    $('screenBtn').onclick = async () => {
+      if (busy) return;
+      try {
+        await api.screenStart(); // 성공하면 갤러리 화면으로 바뀌어요
+      } catch (e) {
+        setStatus('⛔ ' + cleanErr(e));
+      }
+    };
+    // 가져올 때 태그를 붙인 결과 (회차가 끝나고 갤러리가 새 파일을 다 읽은 뒤 와요)
+    api.onImportTag((r) => {
+      if (!r) return;
+      const line = !r.ok
+        ? `⚠ ${r.text}`
+        : r.count
+          ? `🏷 '${r.name}' 태그를 ${num(r.count)}장에 붙였어요 (갤러리 정보 없는 사진 화면의 "내가 넣은 정보"에서 되돌릴 수 있어요)`
+          : `🏷 '${r.name}' 태그는 이미 붙어 있어요`;
+      setStatus($('status').textContent + '\n' + line);
+    });
     // 고르는 순간 폴더 조합 확인 → 안 되면 이유를 보여주고 고른 것을 취소
     async function folderRejected(source, backupRoot) {
       const v = await api.checkFolders(source, backupRoot);
@@ -562,11 +608,13 @@
           cleanOnly = true;
           // 버튼 글자는 누르면 생기는 일을 말해요 (CLAUDE.md 화면 디자인)
           $('runBtn').textContent = `🧹 원본 ${num(res.cleanable)}개 정리하기`;
+          showTagRow(res.tagName); // 이미 백업에 있는 같은 사진에 붙여요
           setStatus(`✅ 새로 처리할 파일이 없어요 (전부 중복이에요)\n🧹 백업 폴더에 이미 있는 원본 ${num(res.cleanable)}개는 정리할 수 있어요. 아래 "원본 ${num(res.cleanable)}개 정리하기"를 누르면 하나씩 확인한 뒤 물어볼게요`);
         } else if (res.stats.todo === 0) {
           setStatus('✅ 새로 처리할 파일이 없어요' + (res.stats.dup ? ' (전부 중복이에요)' : ''));
         } else {
           planReady = true;
+          showTagRow(res.tagName);
           setStatus(`👀 미리보기 완료! 아직 아무것도 안 바꿨어요.\n처리 예정 ${num(res.stats.todo)}개 → 실행을 누르면 ${num(Math.min(batchSize(), res.stats.todo))}개부터 처리해요.`);
         }
       } catch (e) {
@@ -579,6 +627,8 @@
     // ---------- 실행 ----------
     $('runBtn').onclick = async () => {
       if (!planReady) return;
+      const tag = tagForRun();
+      if (tag === undefined) return;
       if (cleanOnly) {
         const ok = confirm(
           `새로 만들 파일은 없어요.\n\n` +
@@ -589,7 +639,7 @@
         if (!ok) return;
         resetPlan(); // 작업을 만드는 동안 한 번 더 눌러도 두 번 가지 않게 버튼부터 꺼요 (글자도 되돌려요)
         try {
-          setJob(await api.startJob());
+          setJob(await api.startJob({ tag }));
           await askTrash();
           await maybeFinish();
         } catch (e) {
@@ -610,8 +660,9 @@
       );
       if (!ok) return;
       try {
-        setJob(await api.startJob());
+        setJob(await api.startJob({ tag }));
         planReady = false;
+        $('tagRow').hidden = true;
         await runBatch();
       } catch (e) {
         setStatus('❌ ' + cleanErr(e));
@@ -1136,6 +1187,13 @@
       if (s.job) {
         setStatus('📌 이전 작업을 불러왔어요. 위쪽 버튼으로 이어서 할 수 있어요.');
         renderTable(await api.getRows('all'));
+      }
+      // 거르기를 끝내고 돌아왔으면 결과 한 줄 (휴지통이 없는 드라이브면 가져올 폴더의 _정리완료원본으로 옮겨요)
+      if (s.screenNotice) {
+        const n = s.screenNotice.removed;
+        setStatus(n
+          ? `거르기에서 ${num(n)}장을 휴지통으로 옮겼어요. 미리보기를 눌러 남은 사진을 확인해 주세요`
+          : '거르기를 끝냈어요 (옮긴 사진 없음). 미리보기를 눌러 가져올 사진을 확인해 주세요');
       }
     })();
   </script>

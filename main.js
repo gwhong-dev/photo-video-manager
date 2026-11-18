@@ -31,6 +31,7 @@ const { guardWindow } = require('./lib/window-guard');
 const { writePlanLog, nextTodo, requeueFailed, checkSpace, runBatch, DEFAULT_CONCURRENCY } = require('./lib/runner');
 const { createMemoryGuard, lowMessage } = require('./lib/memory-guard');
 const { setupGallery, registerScheme } = require('./gallery-main');
+const { screenConflict, defaultTagName, importTagOf, isFirstRun, tagTargets } = require('./lib/import-screening');
 
 // ---------- 상태 ----------
 let win = null;
@@ -254,15 +255,55 @@ const send = (ch, data) => {
   if (win && !win.isDestroyed()) win.webContents.send(ch, data);
 };
 
+// ---------- 가져오기 전 거르기 (docs/superpowers/specs/2026-11-18-import-screening-design.md) ----------
+// 가져오기(미리보기 · 실행 · 원본 정리)를 시작할 때 거르기가 켜져 있으면 먼저 꺼요
+//   켜진 채 회차가 끝나면 갤러리가 백업 폴더 대신 거르기 폴더를 다시 읽게 돼요 (설계 5-1)
+function endScreeningIfOn() {
+  if (!gallery || !gallery.isScreening()) return;
+  try {
+    gallery.endScreening();
+  } catch (err) {
+    try { logger.newLog('gallery-error', `거르기 끝내기 오류: ${err && err.message ? err.message : err}`); } catch (e2) { /* 로그 실패는 무시 */ }
+  }
+}
+
+// 가져올 때 태그 한 번에: 회차 끝 다시 읽기(갤러리)가 끝난 뒤 이번 회차 파일에 태그를 붙여요 (설계 4-3)
+//   scanDone: 갤러리 다시 읽기 Promise<{ status }>. 읽기가 끝까지(done) 안 됐으면 붙이지 않고 안내만 해요
+//   붙이기가 실패해도 가져오기 결과는 그대로예요. 결과는 로그 + 화면 상태 줄 한 줄 ('import-tag')
+function applyImportTag(name, paths, scanDone) {
+  if (!name || !paths.length || !gallery) return;
+  const tell = (msg) => {
+    try { logger.newLog('import-tag', `가져올 때 태그 ${now()}\n태그 ${name}\n대상 ${paths.length}개\n${msg.log}`); } catch (e) { /* 로그 실패는 무시 */ }
+    send('import-tag', msg.view);
+  };
+  Promise.resolve(scanDone)
+    .then((r) => {
+      if (!r || r.status !== 'done') {
+        tell({ log: `붙이지 않음: 갤러리 다시 읽기 결과 ${r ? r.status : '없음'}`, view: { ok: false, name, text: `태그 '${name}'를 붙이지 못했어요 (백업 폴더를 끝까지 읽지 못함). 갤러리에서 직접 붙여 주세요` } });
+        return;
+      }
+      const t = gallery.tagImported(name, paths);
+      tell({
+        log: `붙임 ${t.count}장 (찾은 사진 ${t.matched}장, 이미 붙어 있음 ${t.matched - t.count}장, 목록에 없음 ${t.unknown}장) 묶음 ${t.batchId || '-'}`,
+        view: { ok: true, name, count: t.count, matched: t.matched, unknown: t.unknown },
+      });
+    })
+    .catch((err) => {
+      tell({ log: `붙이기 실패: ${err && err.message ? err.message : err}`, view: { ok: false, name, text: `태그 '${name}'를 붙이지 못했어요. 갤러리에서 직접 붙여 주세요` } });
+    });
+}
+
 // ---------- 화면에서 오는 부탁들 ----------
 
 // 처음 켤 때 상태
 ipcMain.handle('get-state', async () => {
   if (toolsReady) await toolsReady; // 처음 찾기가 아직이면 끝날 때까지 기다려요 (찾는 중에 "없음"으로 보이지 않게)
   if (!tools) await refreshTools();
-  if (!job) return { settings, tools, job: null };
+  // 방금 끝낸 거르기 결과 (한 번만): 가져오기 화면 상태 줄에 "거르기에서 N장을 옮겼어요"
+  const screenNotice = gallery ? gallery.takeScreenNotice() : null;
+  if (!job) return { settings, tools, job: null, screenNotice };
   sendJobInfoLater(); // 정리할 원본 개수는 다 세면 따로 보내요
-  return { settings, tools, job: infoOf(job, null) };
+  return { settings, tools, job: infoOf(job, null), screenNotice };
 });
 
 // 도구 다시 찾기
@@ -312,9 +353,31 @@ ipcMain.handle('save-settings', async (e, patch) => {
 // 폴더를 고르는 순간 확인 (둘 다 골랐을 때만 판단)
 ipcMain.handle('check-folders', async (e, source, backupRoot) => validatePick(source, backupRoot));
 
+// 비슷한 사진 먼저 거르기: 설정의 가져올 폴더를 갤러리의 거르기 폴더로 정하고 비슷한 사진 화면을 열어요
+//   화면은 경로를 보내지 않아요 (가져올 폴더는 고를 때 설정에 저장돼요). 미리보기와 같은 폴더 검사를 해요
+ipcMain.handle('screen-start', async () => {
+  if (running) throw new Error('작업이 끝난 뒤에 거를 수 있어요');
+  if (planning) throw new Error('미리보기가 끝난 뒤에 거를 수 있어요');
+  if (!gallery) throw new Error('갤러리를 열지 못해서 거를 수 없어요. 프로그램을 다시 켜 보세요');
+  const source = settings.source;
+  const v = validateFolders(source, settings.backupRoot);
+  if (!v.ok) throw new Error(v.reason);
+  if (job && screenConflict(job.source, source)) throw new Error('진행 중인 작업의 가져올 폴더예요. 진행 중인 작업을 먼저 끝내 주세요');
+  lastPlan = null; // 거르면 폴더가 바뀌어서 지난 미리보기는 쓰지 않아요 (돌아오면 미리보기를 다시)
+  const r = gallery.startScreening(source);
+  try {
+    await loadScreen('gallery');
+  } catch (err) {
+    gallery.endScreening(); // 갤러리 화면을 못 열면 거르기도 끝내요
+    throw err;
+  }
+  return r;
+});
+
 // 미리보기 (읽기만 함!)
 ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
   if (running) throw new Error('실행 중에는 미리보기를 할 수 없어요');
+  endScreeningIfOn();
   if (!et) throw new Error('exiftool을 찾지 못했어요. 위쪽 도구 상태를 확인해 주세요.');
   // 폴더 조합 확인 (같은 폴더, 백업 안쪽/상위, 후가공 폴더 → 거부). 화면에서도 고를 때 확인하지만 한 번 더
   const v = validateFolders(source, backupRoot);
@@ -343,7 +406,8 @@ ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
   // 새로 처리할 파일이 없어도(전부 중복) 백업에 이미 있는 원본은 정리할 수 있게 개수를 같이 보내요 (실사용 테스트 10-4)
   //   정리 직전에는 지금처럼 cleanTargets 로 지문까지 다시 확인해요
   const cleanable = lastPlan.stats.todo === 0 ? (await cleanCandidatesAsync(lastPlan)).length : 0;
-  return { stats: lastPlan.stats, cleanable, ...rowsOf(lastPlan, 'all') };
+  // tagName: "가져온 사진에 태그 붙이기" 칸의 기본 이름 (가져올 폴더 이름, 규칙에 안 맞으면 '')
+  return { stats: lastPlan.stats, cleanable, tagName: defaultTagName(source), ...rowsOf(lastPlan, 'all') };
 });
 
 // 표 필터 바꾸기
@@ -354,14 +418,19 @@ ipcMain.handle('get-rows', async (e, filter) => {
 });
 
 // 미리보기 → 작업 목록으로 저장 (실행 시작)
-ipcMain.handle('start-job', async () => {
+//   opts.tag: 가져온 사진에 붙일 태그 이름 (없으면 안 붙임). 작업 파일에 tag 로 적어요 (옛 작업은 tag 가 없어서 안 붙여요)
+ipcMain.handle('start-job', async (e, opts = {}) => {
   if (running) throw new Error('실행 중이거나 원본 정리 중에는 새 작업을 시작할 수 없어요');
   if (!lastPlan) throw new Error('먼저 미리보기를 해 주세요');
+  endScreeningIfOn();
+  const tag = importTagOf(opts && opts.tag); // 규칙에 안 맞으면 여기서 거절 (작업을 만들기 전에)
   if (store.exists()) store.close('replaced'); // 이전 작업은 보관
-  job = store.create(lastPlan);
+  job = store.create(tag ? { ...lastPlan, tag } : lastPlan);
   lastPlan = null;
   resetCleanCheck(); // 이전 작업의 샘플 후보가 남지 않게
   writePlanLog(job, logger); // 계획 로그 (날짜없음 참고 날짜, 중복, 확인 필요 목록)
+  // 새로 처리할 파일이 없으면(전부 중복) 회차가 없어요 → 이미 있던 같은 사진에 지금 붙여요 (갤러리가 이미 읽어 둔 파일)
+  if (job.tag && !job.items.some((it) => it.status === 'todo')) applyImportTag(job.tag, tagTargets(job, [], { withPlanDups: true }), { status: 'done' });
   return await jobInfo();
 });
 
@@ -381,6 +450,7 @@ ipcMain.handle('pause', async () => {
 ipcMain.handle('retry-failed', async () => {
   if (!job) throw new Error('작업이 없어요');
   if (running) throw new Error('이미 실행 중이에요');
+  endScreeningIfOn();
   const r = requeueFailed(job, store);
   try { logger.newLog('retry', `# 실패 다시 시도 / ${now()} / 대기로 되돌림 ${r.requeued}개, 임시 파일 정리 ${r.cleaned}개`); } catch (e) { /* 로그 실패는 무시 */ }
   // 화면은 이어서 바로 실행해요 → 원본 개수를 기다리지 않고 돌려줘요 (몇 분 걸릴 수 있어요)
@@ -394,8 +464,10 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
   if (!job) throw new Error('작업이 없어요');
   if (running) throw new Error('이미 실행 중이에요');
 
+  endScreeningIfOn();
   const n = Math.max(1, Number(batchSize) || 2000);
   const todo = nextTodo(job, n);
+  const firstRun = isFirstRun(job); // 첫 회차면 미리보기 때부터 중복이던 사진에도 태그를 붙여요
 
   // 필요한 도구가 있는지 먼저 확인
   if (todo.some((it) => it.kind === 'heic2jpg') && !tools.magick.ok) throw new Error('ImageMagick이 없어서 HEIC를 변환할 수 없어요');
@@ -441,7 +513,9 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
     //   갤러리 쪽 오류가 가져오기 결과를 바꾸면 안 돼서 여기서 잡고 로그만 남겨요
     if (gallery) {
       try {
-        gallery.onBatchDone();
+        const scanDone = gallery.onBatchDone();
+        // 가져올 때 태그: 이번 회차에 끝난 사진만 (옛 작업은 tag 가 없어서 안 붙여요)
+        if (job && job.tag) applyImportTag(job.tag, tagTargets(job, todo, { withPlanDups: firstRun }), scanDone);
       } catch (err) {
         try { logger.newLog('gallery-error', `onBatchDone 오류: ${err && err.message ? err.message : err}`); } catch (e2) { /* 로그 실패는 무시 */ }
       }
@@ -485,6 +559,7 @@ function resetCleanCheck() {
 }
 ipcMain.handle('trash-info', async () => {
   if (running) throw new Error('다른 작업이 끝난 뒤에 해 주세요');
+  endScreeningIfOn();
   running = true;
   infoSeq++; // 처음 켤 때 세던 원본 개수는 그만둬요 (아래 확인이 같은 파일을 다시 읽어요)
   try {
@@ -518,6 +593,7 @@ ipcMain.handle('trash-info', async () => {
 //   opts.keep: 중복 비교에서 "남기기"한 줄 번호들 → 이번 정리에서 빼고 작업 기록에 "사용자가 남김" (원본은 그대로)
 ipcMain.handle('trash-originals', async (e, opts = {}) => {
   if (running) throw new Error('실행 중에는 할 수 없어요');
+  endScreeningIfOn();
   // 정리하는 동안에는 "실행 중"으로 표시 → 미리보기·새 작업·작업 끝내기를 막아요 (기록이 섞이지 않게)
   running = true;
   try {

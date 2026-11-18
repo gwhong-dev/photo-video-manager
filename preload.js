@@ -22,7 +22,10 @@ contextBridge.exposeInMainWorld('api', {
   // 미리보기 → 실행
   makePlan: (opts) => ipcRenderer.invoke('make-plan', opts),
   getRows: (filter) => ipcRenderer.invoke('get-rows', filter),
-  startJob: () => ipcRenderer.invoke('start-job'),
+  // opts.tag: 가져온 사진에 붙일 태그 이름 (글자만 넘겨요. 없으면 안 붙임, main 이 이름 규칙으로 다시 확인해요)
+  startJob: (opts) => ipcRenderer.invoke('start-job', { tag: opts && typeof opts.tag === 'string' ? opts.tag : null }),
+  // 비슷한 사진 먼저 거르기: 경로를 보내지 않아요 (main 이 설정의 가져올 폴더로 정해요)
+  screenStart: () => ipcRenderer.invoke('screen-start'),
   spaceInfo: (batchSize) => ipcRenderer.invoke('space-info', batchSize),
   runBatch: (batchSize) => ipcRenderer.invoke('run-batch', batchSize),
   retryFailed: () => ipcRenderer.invoke('retry-failed'),
@@ -54,6 +57,8 @@ contextBridge.exposeInMainWorld('api', {
   onProgress: (cb) => ipcRenderer.on('progress', (e, data) => cb(data)),
   // 처음 켤 때 정리할 원본 개수를 다 세면 받아요 (수만 개면 몇 분 걸려서 화면은 먼저 열어요)
   onJobInfo: (cb) => subscribe('job-info', cb),
+  // 가져올 때 태그를 붙인 결과 (회차 끝 다시 읽기가 끝난 뒤 와요)
+  onImportTag: (cb) => subscribe('import-tag', cb),
   onTrashProgress: (cb) => ipcRenderer.on('trash-progress', (e, data) => cb(data)),
   onCleanCheckProgress: (cb) => ipcRenderer.on('clean-check-progress', (e, data) => cb(data)),
 

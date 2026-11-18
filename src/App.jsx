@@ -13,6 +13,8 @@
 //   지도에서 마지막으로 고른 곳(lastPin)은 다음에 지도 창을 열 때의 처음 위치예요. 프로그램을 끄면 사라져요
 //   태그 (단계 5): 우클릭 메뉴나 오른쪽 패널 -> 태그 창(TagDialog) -> 붙이기·떼기 -> 같은 되돌리기 줄
 //   태그 화면(TagsView)에서 태그를 누르면 갤러리 화면으로 가서 그 태그의 사진만 보여요
+//   가져오기 전 거르기 (2026-11-18, state.screening): 가져올 폴더를 비슷한 사진 화면으로 열어요. 쓸 수 있는 건 비슷한 사진 · 갤러리 격자 ·
+//   휴지통으로 옮기기뿐이에요 (날짜 · 위치 · 태그 · 지도 · 정리는 main 도 막아요). 맨 위 띠의 "거르기 끝내고 가져오기로"로 가져오기 화면으로
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from './api.js';
@@ -105,6 +107,15 @@ export default function App() {
   // "위치 제안" 탭을 보는 중인지. filter.info 에 넣으면 격자 목록을 헛되이 읽어서 따로 둬요
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestFocus, setSuggestFocus] = useState(null); // 위치 제안에서 오른쪽 패널에 보여 줄 사진 번호
+  const screening = !!(state && state.screening); // 가져오기 전 거르기 중인지
+  // 거르기로 열리면 처음 한 번 비슷한 사진 화면부터 보여 줘요 (거르기 중에 갤러리로 가도 다시 돌려놓지 않아요)
+  const screenOpened = useRef(false);
+  useEffect(() => {
+    if (screening && !screenOpened.current) {
+      screenOpened.current = true;
+      setScreen('similar');
+    }
+  }, [screening]);
 
   // ---------- 상태 읽기 ----------
   const refresh = useCallback(async () => {
@@ -239,6 +250,10 @@ export default function App() {
   //   (갤러리에서 날짜를 찾아 복사한 뒤 정보 없는 사진 화면으로 가도 그 검색이 남아 있게). 고른 사진은 화면이 바뀌어서 비워져요
   const goScreen = (next) => {
     if (next === screen) return;
+    if (screening && next !== 'gallery' && next !== 'similar') {
+      setNotice('가져오기 전 거르기 중에는 갤러리와 비슷한 사진 화면만 쓸 수 있어요. 거르기를 끝낸 뒤에 해 주세요.');
+      return;
+    }
     setSuggestOpen(false);
     setSimilarFocus(null);
     setScreen(next);
@@ -493,7 +508,7 @@ export default function App() {
       const open = !!(dialog || fillOpen || trashIds || cellMenuAt || tagEdit);
       const act = tagKeyAction(e, document.activeElement, open);
       if (!act) return;
-      if (!showTools || !trashScreen || suggestOpen || selection.ids.size === 0) return;
+      if (!showTools || !trashScreen || suggestOpen || screening || selection.ids.size === 0) return; // 거르기 중에는 태그를 붙이지 않아요
       e.preventDefault();
       if (act.type === 'open') openDialog('tagAdd');
       else quickTag(act.key);
@@ -558,6 +573,16 @@ export default function App() {
         가져오기 화면에서 백업 폴더를 정하면, 그 안의 사진과 영상이 날짜별로 여기에 모여요.
       </EmptyState>
     );
+  } else if (screening && state.total === 0) {
+    // 거르기 중: 가져올 폴더를 읽는 중이거나 사진이 없어요
+    const scanning = (state.scan && state.scan.scanning) || !state.tools;
+    center = scanning
+      ? <EmptyState title="가져올 폴더의 사진을 찾는 중이에요">찾는 대로 비슷한 사진을 묶어 보여 줘요.</EmptyState>
+      : (
+        <EmptyState title={state.connected ? '가져올 폴더에 사진이나 영상이 없어요' : '가져올 폴더 연결 안 됨'} action={<button type="button" onClick={openImport}>거르기 끝내고 가져오기로</button>}>
+          {state.connected ? '거를 사진이 없어요. 가져오기 화면으로 돌아가 주세요.' : 'USB나 외장 드라이브를 연결한 뒤 왼쪽 아래 "가져올 폴더 다시 읽기"를 눌러 주세요.'}
+        </EmptyState>
+      );
   } else if (state.total === 0) {
     const scanning = state.scan && state.scan.scanning;
     if (!state.connected) {
@@ -647,6 +672,12 @@ export default function App() {
         rescanning={rescanning}
       />
       <main className="main">
+        {screening && (
+          <div className="area-bar screen-bar">
+            <span>가져오기 전 거르기: {state.screening.name} (사진 {Number(state.total || 0).toLocaleString('en-US')}장)</span>
+            <button type="button" onClick={openImport}>거르기 끝내고 가져오기로</button>
+          </div>
+        )}
         {showTools && screen !== 'similar' && screen !== 'tags' && screen !== 'map' && screen !== 'clean' && (
           <Toolbar
             screen={screen}
@@ -707,6 +738,7 @@ export default function App() {
           onTagAdd={() => openDialog('tagAdd')}
           onTagRemove={() => openDialog('tagRemove')}
           onTrash={trashScreen && !suggestOpen ? openTrash : undefined}
+          trashOnly={screening}
         />
       )}
       {showTools && cellMenuAt && selection.ids.size > 0 && (
@@ -724,6 +756,7 @@ export default function App() {
           onTrash={trashScreen && !suggestOpen ? openTrash : undefined}
           quick={quickTags(state.manualTags)}
           onQuickTag={trashScreen && !suggestOpen ? quickTag : undefined}
+          trashOnly={screening}
           onClose={closeMenu}
         />
       )}
