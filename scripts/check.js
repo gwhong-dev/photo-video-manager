@@ -1753,6 +1753,8 @@ const ITEMS = [
   ...require('./check-korean-hook').items,
   // 58번은 원본 정리 확인 창의 중복 비교 점검 (scripts/check-dup-compare.js)
   ...require('./check-dup-compare').items,
+  // 60번은 가져오기 전 거르기 + 가져올 때 태그 점검 (scripts/check-import-screening.js)
+  ...require('./check-import-screening').items,
 ];
 
 // ---------- 수동 샘플 처리 결과 표 (참고용) ----------

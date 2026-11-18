@@ -33,8 +33,16 @@ function Row({ label, children, sub }) {
 
 // 값 넣기 버튼들: 우클릭 메뉴와 같은 일을 해요. count = 고른 장수
 //   onTrash: 고른 사진을 휴지통으로 (확인 창을 거쳐요, 2026-11-16). 없으면 버튼을 안 그려요
-function Actions({ count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, onTrash }) {
+//   trashOnly: 휴지통으로 옮기기 버튼만 (가져오기 전 거르기 중)
+function Actions({ count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, onTrash, trashOnly = false }) {
   const n = formatCount(count);
+  if (trashOnly) {
+    return onTrash ? (
+      <div className="panel-actions">
+        <button type="button" className="trash-button" onClick={onTrash} title="Delete 키로도 열 수 있어요">{trashMenuLabel(count)}</button>
+      </div>
+    ) : null;
+  }
   return (
     <div className="panel-actions">
       {canCopy && <button type="button" onClick={onCopy}>날짜와 위치 복사</button>}
@@ -144,10 +152,11 @@ function Preview({ file }) {
 // selectedId = 자세히 보여 줄 사진, count = 고른 장수, copySource = 복사해 둔 값 (없으면 null)
 // onCopy / onPaste / onDirect / onMap / onTagAdd / onTagRemove = 버튼을 눌렀을 때 (우클릭 메뉴와 같은 일)
 // readOnly = 사진 정보만 보여 줘요 (위치 제안 화면). 값 넣기 버튼과 복사한 값 칸을 그리지 않아요
-export default function DetailPanel({ selectedId, gen, count = 0, copySource = null, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, onTrash, readOnly = false }) {
+// trashOnly = 휴지통으로 옮기기 버튼만 (가져오기 전 거르기 중, 복사한 값 칸도 그리지 않아요)
+export default function DetailPanel({ selectedId, gen, count = 0, copySource = null, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, onTrash, readOnly = false, trashOnly = false }) {
   const { file, error } = useFileInfo(selectedId, gen);
   const actions = readOnly ? null : (
-    <Actions count={count} canCopy={count === 1} hasCopy={!!copySource} onCopy={onCopy} onPaste={onPaste} onDirect={onDirect} onMap={onMap} onTagAdd={onTagAdd} onTagRemove={onTagRemove} onTrash={count > 0 ? onTrash : undefined} />
+    <Actions count={count} canCopy={count === 1} hasCopy={!!copySource} onCopy={onCopy} onPaste={onPaste} onDirect={onDirect} onMap={onMap} onTagAdd={onTagAdd} onTagRemove={onTagRemove} onTrash={count > 0 ? onTrash : undefined} trashOnly={trashOnly} />
   );
 
   let body;
@@ -202,7 +211,7 @@ export default function DetailPanel({ selectedId, gen, count = 0, copySource = n
   return (
     <aside className="panel" aria-label="사진 정보">
       {body}
-      {copySource && !readOnly && <CopyNote source={copySource} />}
+      {copySource && !readOnly && !trashOnly && <CopyNote source={copySource} />}
     </aside>
   );
 }

@@ -16,7 +16,8 @@ const EDGE = 8; // 창 가장자리에서 띄울 거리
 //   onTrash = 고른 사진을 휴지통으로 (확인 창을 거쳐요, 2026-11-16). 없으면 항목을 안 그려요
 //   quick = 단축키 숫자를 정한 태그 [{ name, hotkey }] (2026-11-18). 항목마다 "N장에 '여행' 붙이기"와 숫자, 누르면 onQuickTag(숫자)
 //   단축키 글자(T, 숫자)는 CSS 로 오른쪽에 그려요 (data-key). 버튼 글자에는 들어가지 않아요
-export default function ContextMenu({ at, count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, onTrash, onClose, quick = [], onQuickTag }) {
+//   trashOnly = 휴지통으로 옮기기만 (가져오기 전 거르기 중. 날짜 · 위치 · 태그는 거르기를 끝낸 뒤에)
+export default function ContextMenu({ at, count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap, onTagAdd, onTagRemove, onTrash, onClose, quick = [], onQuickTag, trashOnly = false }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: at.x, top: at.y });
 
@@ -74,15 +75,19 @@ export default function ContextMenu({ at, count, canCopy, hasCopy, onCopy, onPas
   const n = formatCount(count);
   return (
     <div ref={ref} className="context-menu" role="menu" aria-label="사진 메뉴" style={pos} onKeyDown={onMenuKey} onContextMenu={(e) => e.preventDefault()}>
-      {canCopy && <button type="button" role="menuitem" onClick={onCopy}>날짜와 위치 복사</button>}
-      {hasCopy && <button type="button" role="menuitem" onClick={onPaste}>{n}장에 붙여넣기</button>}
-      <button type="button" role="menuitem" onClick={onDirect}>{n}장에 날짜 직접 넣기</button>
-      <button type="button" role="menuitem" onClick={onMap}>{n}장 위치 지도에서 고르기</button>
-      <button type="button" role="menuitem" data-key="T" onClick={onTagAdd}>{n}장에 태그 붙이기</button>
-      {onQuickTag && quick.map((t) => (
-        <button key={t.name} type="button" role="menuitem" className="quick-tag" data-key={String(t.hotkey)} onClick={() => onQuickTag(t.hotkey)}>{quickTagLabel(count, t.name)}</button>
-      ))}
-      <button type="button" role="menuitem" onClick={onTagRemove}>{n}장에서 태그 떼기</button>
+      {!trashOnly && (
+        <>
+          {canCopy && <button type="button" role="menuitem" onClick={onCopy}>날짜와 위치 복사</button>}
+          {hasCopy && <button type="button" role="menuitem" onClick={onPaste}>{n}장에 붙여넣기</button>}
+          <button type="button" role="menuitem" onClick={onDirect}>{n}장에 날짜 직접 넣기</button>
+          <button type="button" role="menuitem" onClick={onMap}>{n}장 위치 지도에서 고르기</button>
+          <button type="button" role="menuitem" data-key="T" onClick={onTagAdd}>{n}장에 태그 붙이기</button>
+          {onQuickTag && quick.map((t) => (
+            <button key={t.name} type="button" role="menuitem" className="quick-tag" data-key={String(t.hotkey)} onClick={() => onQuickTag(t.hotkey)}>{quickTagLabel(count, t.name)}</button>
+          ))}
+          <button type="button" role="menuitem" onClick={onTagRemove}>{n}장에서 태그 떼기</button>
+        </>
+      )}
       {onTrash && <button type="button" role="menuitem" className="trash-button" onClick={onTrash}>{trashMenuLabel(count)}</button>}
     </div>
   );
