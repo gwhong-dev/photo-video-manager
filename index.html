@@ -362,7 +362,8 @@
     // ---------- 요약 칩 (실행한 뒤 결과) ----------
     // 실행을 시작하면 미리보기 숫자("처리 예정 …") 대신 작업 결과를 보여 줘요
     //   2026-11-18 실사용: 다 끝났는데 칩이 "처리 예정 218개" 그대로라 다 된 건지 알 수 없었음
-    //   s: 작업 숫자(jobStats: 완료 · 중복 · 실패 · 재생 불가 · 남은 것 · 원본 정리한 것)
+    //   s: 작업 숫자(main.js infoOf: 완료 · 중복 · 실패 · 재생 불가 · 남은 것 · 휴지통 trashed · 옮김 moved)
+    //   작업이 열려 있는 동안 위쪽 배너와 숫자가 겹치지만, 작업을 닫으면 배너가 사라져서 여기 결과가 남아요
     //   phase: 'run' 작업이 열려 있음 / 'done' 모든 작업 끝 / 'finish' "작업 끝내기"로 끝냄 / 'cancel' 취소함
     //   돌려주는 값: [글자, 색] 목록 (화면 그리기와 나눠서 점검이 그대로 불러 써요)
     function resultChips(s, phase) {
@@ -372,14 +373,17 @@
       else if (phase === 'finish') out.push(['작업 끝냄', '']);
       else if (phase === 'cancel') out.push(['작업 취소함', '']);
       else if (s.todo) out.push(['지금까지 결과', '']);
+      else if (!s.done && !s.fail && !s.broken) out.push(['새로 처리할 파일 없음', '']); // 전부 중복이라 원본 정리만 하는 작업
       else out.push(['실행 끝', 'green']);
-      out.push([`✅ 완료 ${n(s.done)}`, 'green']);
+      if (s.done || s.todo || s.fail || s.broken) out.push([`✅ 완료 ${n(s.done)}`, 'green']);
       if (s.dup) out.push([`⏭ 중복 ${n(s.dup)}`, '']);
       if (s.skip) out.push([`✔ 이미 정리됨 ${n(s.skip)}`, '']);
       if (s.fail) out.push([`❌ 실패 ${n(s.fail)}`, 'red']);
       if (s.broken) out.push([`⚠ 재생 불가 ${n(s.broken)}`, 'red']);
       if (s.todo) out.push(phase === 'cancel' ? [`✖ 하지 않음 ${n(s.todo)}`, ''] : [`⏳ 남은 ${n(s.todo)}`, 'orange']);
-      if (s.trashed) out.push([`🧹 원본 정리 ${n(s.trashed)}`, 'purple']);
+      // 원본 정리 = 휴지통으로 보낸 것(trashed) + _정리완료원본으로 옮긴 것(moved, USB · SD · 휴지통이 모자란 드라이브)
+      const cleaned = (s.trashed || 0) + (s.moved || 0);
+      if (cleaned) out.push([`🧹 원본 정리 ${n(cleaned)}` + (s.moved ? (s.trashed ? ` (휴지통 ${n(s.trashed)}, _정리완료원본 ${n(s.moved)})` : ' (_정리완료원본으로)') : ''), 'purple']);
       return out;
     }
     function renderJobChips(s, phase) {

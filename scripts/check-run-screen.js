@@ -147,20 +147,31 @@ const items = [
           const st = jobStats(ranJob);
           const real = txt(resultChips(st, 'run'));
           const cancel = txt(resultChips({ total: 10, todo: 4, done: 6, trashed: 0 }, 'cancel'));
-          const all = [done, mid, real, cancel].join(' / ');
-          const rules = !/처리 예정/.test(all) && !/·/.test(all) && !/[A-Z]{2,}/.test(all); // 가운뎃점 · 영어 대문자 라벨 금지 (CLAUDE.md 화면 디자인)
+          // USB · SD 처럼 _정리완료원본으로 옮긴 원본도 "원본 정리"에 세요 (#123 검증 ❌: trashed 만 세서 0 으로 보였음)
+          const usb = txt(resultChips({ total: 12, todo: 0, done: 12, trashed: 0, moved: 12 }, 'done'));
+          const mixed = txt(resultChips({ total: 12, todo: 0, done: 12, trashed: 9, moved: 3 }, 'done'));
+          // 전부 중복이라 원본 정리만 하는 작업: "실행 끝 · 완료 0" 대신 "새로 처리할 파일 없음"
+          const onlyClean = txt(resultChips({ total: 5, todo: 0, done: 0, dup: 5, trashed: 0, moved: 0 }, 'run'));
+          const all = [done, mid, real, cancel, usb, mixed, onlyClean].join(' / ');
+          const rules = !/·/.test(all) && !/[A-Z]{2,}/.test(all) && !/→/.test(all); // 가운뎃점 · 영어 대문자 라벨 · 화살표 금지 (CLAUDE.md 화면 디자인)
           const shape = done === '🎉 모든 작업 끝 | ✅ 완료 218 | ⏭ 중복 10 | 🧹 원본 정리 228' &&
             mid === '지금까지 결과 | ✅ 완료 120 | ⏳ 남은 98' &&
             real.startsWith(`실행 끝 | ✅ 완료 ${st.done.toLocaleString('ko-KR')}`) && !/남은/.test(real) &&
-            cancel === '작업 취소함 | ✅ 완료 6 | ✖ 하지 않음 4';
+            cancel === '작업 취소함 | ✅ 완료 6 | ✖ 하지 않음 4' &&
+            usb === '🎉 모든 작업 끝 | ✅ 완료 12 | 🧹 원본 정리 12 (_정리완료원본으로)' &&
+            mixed === '🎉 모든 작업 끝 | ✅ 완료 12 | 🧹 원본 정리 12 (휴지통 9, _정리완료원본 3)' &&
+            onlyClean === '새로 처리할 파일 없음 | ⏭ 중복 5';
+          // 화면에 보내는 숫자(main.js infoOf)에 옮긴 원본 수(moved)가 들어 있음
+          const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+          const movedSent = /stats: \{ \.\.\.jobStats\(j\), moved: j\.items\.filter\(\(it\) => it\.movedTo\)\.length \}/.test(mainSrc);
           // 연결: 작업이 열리면(setJob) 결과 칩, 작업을 닫을 때는 닫기 전 숫자로 다시 그림 (닫은 뒤 setJob(null) 이 칩을 지우지 않음)
           const setJobSrc = (html.match(/function setJob\(info\) \{[\s\S]*?\n    \}/) || [''])[0];
           const finishSrc = (html.match(/async function maybeFinish\(\) \{[\s\S]*?\n    \}/) || [''])[0];
           const wired = /renderJobChips\(s, 'run'\)/.test(setJobSrc) && !/\$\('chips'\)/.test(setJobSrc.replace(/renderJobChips/g, '')) &&
             /const last = job\.stats;[\s\S]*setJob\(null\);\s*\n\s*renderJobChips\(last, 'done'\)/.test(finishSrc) &&
             /renderJobChips\(last, 'finish'\)/.test(html) && /renderJobChips\(last, 'cancel'\)/.test(html);
-          ok = !!src && rules && shape && wired;
-          detail = `${all}, 규칙 ${rules}, 연결 ${wired}`;
+          ok = !!src && rules && shape && wired && movedSent;
+          detail = `${all}, 규칙 ${rules}, 연결 ${wired}, 옮긴 수 보냄 ${movedSent}`;
         } catch (e) {
           detail = '오류 ' + e.message;
         }
