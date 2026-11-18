@@ -24,6 +24,7 @@ const { JobStore, jobStats } = require('./lib/job');
 const { cleanCandidatesAsync, cleanTargets, recheckTargets, overflowRootsOf, cleanInfo, cleanOriginals, createHashCache, countHashesFrom } = require('./lib/cleaner');
 const { createDriveKindOf } = require('./lib/platform');
 const { samplePool, sampleView, openSample } = require('./lib/clean-sample');
+const { comparePool, compareRows, compareFile, keptItems, markUserKept, createCompareThumbs } = require('./lib/dup-compare');
 const { openFolderOnly } = require('./lib/open-folder');
 const { createLogger, now } = require('./lib/logger');
 const { guardWindow } = require('./lib/window-guard');
@@ -467,6 +468,9 @@ let cleanSample = null; // 🔍 샘플 확인 후보 (확인 창을 띄울 때 �
 let cleanSigs = null; // 확인 창에서 통과한 원본 · 남길 파일의 서명 → 정리 직전에는 이것이 그대로인지만 봐요
 let cleanJob = null; // 위 서명을 만든 작업 (다른 작업으로 바뀌었으면 쓰지 않아요)
 let cleanOverflowRoots = null; // 확인 창에서 휴지통에 다 담기지 않는다고 나온 드라이브들
+let cleanCompare = null; // 중복 비교 목록 (확인 창에서 정리될 중복 원본 ↔ 남는 파일, lib/dup-compare.js)
+let compareThumbs = null; // 중복 비교 줄의 작은 그림 (메모리에만, 임시 파일은 설정 폴더 아래)
+const getCompareThumbs = () => compareThumbs || (compareThumbs = createCompareThumbs({ tempDir: path.join(userDir(), 'compare-tmp'), getTools: () => tools }));
 // 정리 확인 창에서 만든 것들 비우기 (정리를 끝냈을 때, 작업을 끝내거나 새로 시작할 때)
 //   지난 작업의 샘플 후보가 남아 있으면 다른 작업의 파일을 열 수 있어서요
 function resetCleanCheck() {
@@ -476,6 +480,8 @@ function resetCleanCheck() {
   cleanSigs = null;
   cleanJob = null;
   cleanOverflowRoots = null;
+  cleanCompare = null; // 비교 목록 · 그림도 다음 확인 창에서 새로
+  if (compareThumbs) compareThumbs.clear();
 }
 ipcMain.handle('trash-info', async () => {
   if (running) throw new Error('다른 작업이 끝난 뒤에 해 주세요');
@@ -492,11 +498,14 @@ ipcMain.handle('trash-info', async () => {
     cleanSigs = sigs;
     cleanJob = job;
     cleanSample = samplePool(job, targets);
+    // 중복 비교: 중복이라 정리될 원본만 (방금 옮긴 원본은 개수만). 그림은 화면이 보이는 줄만 따로 부탁해요
+    if (compareThumbs) compareThumbs.clear();
+    cleanCompare = comparePool(job, targets);
     // 확인하다 재생 불가를 찾으면 개수가 바뀌어요 → 작업 정보도 새로 보내요
     const info = await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf });
     cleanOverflowRoots = overflowRootsOf(info);
     if (stats && stats.sampleFail) info.warnings = [...(info.warnings || []), `표본 검사에서 기록과 다른 결과 파일 ${stats.sampleFail}개를 찾아서 전부 지문으로 다시 확인했어요 (다른 파일은 정리 대상에서 빠졌어요)`];
-    return { ...info, check: stats, sample: sampleView(cleanSample), job: await jobInfo() };
+    return { ...info, check: stats, sample: sampleView(cleanSample), compare: await compareRows(job, cleanCompare, 0), job: await jobInfo() };
   } finally {
     running = false;
   }
@@ -506,12 +515,18 @@ ipcMain.handle('trash-info', async () => {
 //   opts.binOverflow: 휴지통에 다 담기지 않는 드라이브를 어떻게 할지 (2026-11-15 사용자 결정)
 //     'trash' = 그래도 휴지통 (먼저 넣은 것부터 자동으로 비워져 사실상 되살릴 수 없음)
 //     그 밖(없음 포함) = _정리완료원본으로 옮기기 (되돌리기 쉬운 쪽이 기본)
+//   opts.keep: 중복 비교에서 "남기기"한 줄 번호들 → 이번 정리에서 빼고 작업 기록에 "사용자가 남김" (원본은 그대로)
 ipcMain.handle('trash-originals', async (e, opts = {}) => {
   if (running) throw new Error('실행 중에는 할 수 없어요');
   // 정리하는 동안에는 "실행 중"으로 표시 → 미리보기·새 작업·작업 끝내기를 막아요 (기록이 섞이지 않게)
   running = true;
   try {
     await refuseIfMemoryLow();
+    // 남기기 먼저 적어요 → 아래 정리 직전 확인(mayClean)이 그 원본을 대상에서 빼요
+    //   번호는 이 확인 창의 비교 목록 것만 (다른 작업 · 확인 창을 거치지 않았으면 남길 것을 모르니 멈춰요)
+    const keepKeys = (opts && opts.keep) || [];
+    if (keepKeys.length && !(cleanCompare && cleanJob === job)) throw new Error('확인 창을 다시 열어 주세요 (남기기 목록이 지난 확인 창 것이에요)');
+    const userKept = job && keepKeys.length ? markUserKept(job, store, keptItems(cleanCompare, keepKeys)) : [];
     const hashOf = cleanHashOf || createHashCache();
     const hashCount = countHashesFrom(hashOf); // 정리 직전 확인에서 지문을 다시 계산한 수 · 다시 쓴 수 → 로그 끝 줄
     // 정리 직전 확인: 확인 창에서 통과한 원본 · 남길 파일이 그 뒤로 그대로인지(서명)만 봐요 (2026-11-15 결정)
@@ -538,6 +553,7 @@ ipcMain.handle('trash-originals', async (e, opts = {}) => {
       driveKindOf: cleanDriveKindOf || createDriveKindOf(), // 확인 창과 같은 판단
       onProgress: (p) => send('trash-progress', p),
       moveRoots,
+      userKept,
     });
     return { ...r, job: await jobInfo() };
   } finally {
@@ -553,6 +569,21 @@ ipcMain.handle('clean-sample', async () => sampleView(cleanSample || []));
 // 🔍 샘플 확인: 누른 결과 파일을 크게 열기 (Windows 기본 프로그램, 사진 앱 · 영상 플레이어)
 //   화면은 경로를 모르고 번호만 보내요. 이번 후보 안의 파일만 열어요
 ipcMain.handle('clean-sample-open', async (e, key) => openSample(cleanSample, key, { exists: fs.existsSync, openPath: (x) => shell.openPath(x) }));
+
+// 중복 비교 (확인 창): 다음 줄들 · 줄의 작은 그림 · 크게 열기. 화면은 경로를 모르고 줄 번호와 'keep'(남는 파일) / 'src'(정리될 원본)만 보내요
+ipcMain.handle('clean-compare-rows', async (e, offset) => compareRows(job, cleanCompare, offset));
+ipcMain.handle('clean-compare-thumb', async (e, key, side) => {
+  const p = compareFile(cleanCompare, key, side);
+  return p ? getCompareThumbs().get(p) : null;
+});
+ipcMain.handle('clean-compare-open', async (e, key, side) => {
+  const p = compareFile(cleanCompare, key, side);
+  if (!p) throw new Error('확인 창을 다시 열어 주세요');
+  if (!fs.existsSync(p)) throw new Error('파일을 찾지 못했어요');
+  const err = await shell.openPath(p); // Windows 기본 프로그램(사진 앱 · 영상 플레이어)으로 열기만 해요
+  if (err) throw new Error('파일을 열지 못했어요');
+  return true;
+});
 
 // 작업 끝내기 / 취소
 ipcMain.handle('close-job', async (e, reason) => {

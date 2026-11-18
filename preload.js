@@ -31,10 +31,18 @@ contextBridge.exposeInMainWorld('api', {
   // 원본 정리 / 작업 끝내기
   trashInfo: () => ipcRenderer.invoke('trash-info'),
   // opts.binOverflow: 휴지통이 모자란 드라이브를 'trash'(그래도 휴지통) 또는 'move'(_정리완료원본으로)
-  trashOriginals: (opts) => ipcRenderer.invoke('trash-originals', { binOverflow: opts && opts.binOverflow === 'trash' ? 'trash' : 'move' }),
+  // opts.keep: 중복 비교에서 "남기기"한 줄 번호들 (정수만 넘겨요)
+  trashOriginals: (opts) => ipcRenderer.invoke('trash-originals', {
+    binOverflow: opts && opts.binOverflow === 'trash' ? 'trash' : 'move',
+    keep: opts && Array.isArray(opts.keep) ? opts.keep.filter(Number.isInteger) : [],
+  }),
   // 🔍 샘플 확인: 다시 뽑기, 크게 열기 (경로 없이 번호로만)
   cleanSample: () => ipcRenderer.invoke('clean-sample'),
   openCleanSample: (key) => ipcRenderer.invoke('clean-sample-open', key),
+  // 🔁 중복 비교: 다음 줄들, 줄의 작은 그림(data 주소), 크게 열기. side 는 'keep'(남는 파일) / 'src'(정리될 원본)
+  cleanCompareRows: (offset) => ipcRenderer.invoke('clean-compare-rows', offset),
+  cleanCompareThumb: (key, side) => ipcRenderer.invoke('clean-compare-thumb', key, side === 'src' ? 'src' : 'keep'),
+  openCleanCompare: (key, side) => ipcRenderer.invoke('clean-compare-open', key, side === 'src' ? 'src' : 'keep'),
   closeJob: (reason) => ipcRenderer.invoke('close-job', reason),
 
   // 폴더 열기

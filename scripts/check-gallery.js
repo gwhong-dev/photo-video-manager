@@ -1775,6 +1775,7 @@ const items = [
           loadFile: async () => {},
           isDestroyed: () => false,
         };
+        const trashedPaths = []; // 가짜 휴지통에 보낸 경로 (18h)
         const fakeElectron = {
           app: {
             setPath() {},
@@ -1788,7 +1789,7 @@ const items = [
           BrowserWindow: function FakeWindow() { winCount++; return win; },
           ipcMain: { handle: (ch, fn) => handlers.set(ch, fn) },
           dialog: { showOpenDialog: async () => { dialogCalls++; return { canceled: true, filePaths: [] }; }, showMessageBoxSync: () => 1, showMessageBox: async () => ({}) },
-          shell: { trashItem: async () => {}, openPath: async () => '' },
+          shell: { trashItem: async (p) => { trashedPaths.push(p); }, openPath: async () => '' }, // 휴지통은 가짜 (보낸 경로만 기록, 18h)
           protocol: { registerSchemesAsPrivileged() {}, handle() {} },
           // 맞춤법 검사 끄기 호출을 기록해요 (main.js의 whenReady 첫머리)
           session: { defaultSession: { setSpellCheckerEnabled: (v) => spellCalls.push(['enabled', v]), setSpellCheckerLanguages: (v) => spellCalls.push(['languages', v]) } },
@@ -1897,6 +1898,50 @@ const items = [
               && again.stats.todo === 0 && again.stats.dup === 1 && again.cleanable === 1
               && !!started && started.deletable === 1 && info.count === 1 && fs.existsSync(path.join(src18g, 'IMG_0101.jpg')),
               JSON.stringify({ first: [first.stats.todo, first.cleanable], ran: ran.done, again: [again.stats.todo, again.stats.dup, again.cleanable], deletable: started && started.deletable, count: info.count })));
+          }
+
+          // 18h 중복 비교 (2026-11-18): main.js 통로 그대로 — 확인 창에 중복 원본 1줄(남는 파일 · 정리될 원본 그림),
+          //     "남기기"로 정리하면 원본은 그대로 · 휴지통 안 감, 다음 확인 창에 안 나오고 목록 메모에 "사용자가 남김"
+          {
+            const src18h = path.join(env.tmp, 'main-fake-src-18h');
+            const dest18h = path.join(env.tmp, 'main-fake-dest-18h');
+            for (const d of [src18h, dest18h]) fs.mkdirSync(d, { recursive: true });
+            const orig = path.join(src18h, 'IMG_0101.jpg');
+            fs.copyFileSync(path.join(APP, 'test', 'samples', 'auto', 'IMG_0101.jpg'), orig);
+            await call('make-plan', { source: src18h, backupRoot: dest18h, includeSub: true });
+            await call('start-job');
+            await call('run-batch', 10);
+            await call('close-job', 'done');
+            await call('make-plan', { source: src18h, backupRoot: dest18h, includeSub: true });
+            await call('start-job');
+            const trashCalls = trashedPaths.length;
+            const info = await call('trash-info');
+            const cmp = info.compare || {};
+            const thumb = await call('clean-compare-thumb', 0, 'keep');
+            const badThumb = await call('clean-compare-thumb', 5, 'keep');
+            const r = await call('trash-originals', { binOverflow: 'move', keep: [0] });
+            const after = await call('trash-info');
+            const rows = await call('get-rows', 'all');
+            await call('close-job', 'done');
+            const note = (rows.rows.find((x) => x.statusKey === 'dup') || {}).note || '';
+            // 막는 길 (#125 검증 ⚠️): 작업을 끝낸 뒤 · 확인 창 없이 남기기 번호를 보내면 오류, 원본 그대로, 휴지통 안 감
+            //   미리보기를 새로 하면 새 작업이라 남긴 원본을 다시 물어요 (남기기 되돌리기)
+            const blockedClosed = await errOf(call('trash-originals', { binOverflow: 'move', keep: [0] }));
+            await call('make-plan', { source: src18h, backupRoot: dest18h, includeSub: true });
+            await call('start-job');
+            const blockedNoDialog = await errOf(call('trash-originals', { binOverflow: 'move', keep: [0] }));
+            const asksAgain = await call('trash-info');
+            await call('close-job', 'done');
+            out.push(sub('18i 작업을 끝낸 뒤 · 확인 창 없이 남기기 번호를 보내면 오류 (원본 그대로, 휴지통 안 감), 미리보기를 새로 하면 다시 물음',
+              /확인 창을 다시 열어 주세요/.test(blockedClosed || '') && /확인 창을 다시 열어 주세요/.test(blockedNoDialog || '')
+              && fs.existsSync(orig) && trashedPaths.length === trashCalls && asksAgain.count === 1 && asksAgain.compare && asksAgain.compare.total === 1,
+              JSON.stringify({ blockedClosed, blockedNoDialog, again: asksAgain.count, trash: trashedPaths.length - trashCalls })));
+            out.push(sub('18h 중복 비교: 확인 창에 중복 원본 1줄 (경로 없이 이름만, 남는 파일 그림), 남기기로 정리하면 원본 그대로 · 휴지통 안 감, 다음 확인 창에 안 나오고 메모에 "사용자가 남김"',
+              info.count === 1 && cmp.total === 1 && cmp.rows && cmp.rows[0].srcName === 'IMG_0101.jpg' && !JSON.stringify(cmp).includes(env.tmp)
+              && typeof thumb === 'string' && thumb.startsWith('data:image/webp;base64,') && badThumb === null
+              && r.kept === 1 && r.trashed === 0 && r.moved === 0 && trashedPaths.length === trashCalls && fs.existsSync(orig)
+              && after.count === 0 && (!after.compare || after.compare.total === 0) && note.includes('사용자가 남김'),
+              JSON.stringify({ count: info.count, total: cmp.total, thumb: String(thumb).slice(0, 30), badThumb, r: [r.kept, r.trashed, r.moved], after: after.count, note })));
           }
         }
         // 종료 처리 (갤러리 DB, exiftool 끄기)

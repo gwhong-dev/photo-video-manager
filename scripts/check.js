@@ -1751,6 +1751,8 @@ const ITEMS = [
   ...require('./check-content-type').items,
   // 51번은 한국어 답변 훅 점검 (scripts/check-korean-hook.js)
   ...require('./check-korean-hook').items,
+  // 58번은 원본 정리 확인 창의 중복 비교 점검 (scripts/check-dup-compare.js)
+  ...require('./check-dup-compare').items,
 ];
 
 // ---------- 수동 샘플 처리 결과 표 (참고용) ----------
