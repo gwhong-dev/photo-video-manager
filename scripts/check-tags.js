@@ -615,7 +615,31 @@ const items = [
           await call('gallery:undo-last', rm.batchId); // 다시 붙여 둠 (57j 복구 확인용)
         });
 
+        await scene('57g2', async () => {
+          // 57g2 숫자 있는 태그를 숫자 없는 태그로 합쳤다가 되돌리면 숫자가 원래 태그로 돌아옴 (#122 검증 ❌)
+          await call('gallery:tag-apply', [ids.b], { op: 'add', name: '빨강' });
+          await call('gallery:tag-apply', [ids.b], { op: 'add', name: '파랑' });
+          await call('gallery:tag-hotkey', '빨강', 7);
+          const m = await call('gallery:tag-rename', '빨강', '파랑', true);
+          const mid = JSON.parse(await listMine(call)).find((t) => t.name === '파랑');
+          await call('gallery:undo-last', m.batchId);
+          const back = JSON.parse(await listMine(call));
+          const red = back.find((t) => t.name === '빨강');
+          const blue = back.find((t) => t.name === '파랑');
+          out.push(sub('57g2 숫자 7 인 "빨강"을 숫자 없는 "파랑"에 합치면 파랑이 7, 되돌리면 빨강 7 · 파랑 없음',
+            mid && mid.hotkey === 7 && red && red.hotkey === 7 && blue && blue.hotkey === null,
+            JSON.stringify([mid, red, blue])));
+        });
+
         await scene('57j', async () => {
+          // 묶음으로 생긴 태그를 0장으로 만든 뒤 지우거나(엑스) 이름을 바꾼(와이 → 제트) 경우도 DB 를 새로 만들 때 되살아나지 않아야 해요 (#122 검증 ❌)
+          for (const n of ['엑스', '와이']) {
+            await call('gallery:tag-apply', [ids.b], { op: 'add', name: n });
+            await call('gallery:tag-apply', [ids.b], { op: 'remove', name: n });
+          }
+          await call('gallery:tag-delete', '엑스');
+          await call('gallery:tag-rename', '와이', '제트', false);
+          await call('gallery:tag-hotkey', '제트', 6);
           // 57j DB를 새로 만들어도 기록 파일에서 태그 · 이름 바꾸기 · 합치기 · 지우기 · 되돌리기와 빈 태그 · 숫자가 되살아남. 지운 빈 태그는 안 살아남
           await call('gallery:tag-create', '나중에');
           await call('gallery:tag-hotkey', '나중에', 5);
@@ -630,9 +654,10 @@ const items = [
           const got = { list: await listMine(call), a: mineOf('a.jpg'), b: mineOf('b.mp4') };
           const startLog = logsOf('gallery-start');
           const read = journalLines();
-          out.push(sub('57j DB를 새로 만들어도 기록 파일로 태그 목록(빈 태그 "나중에" 숫자 5, "가족" 2장 숫자 2)이 그대로, 지운 빈 태그는 안 살아남, 건너뛴 줄 없음',
+          out.push(sub('57j DB를 새로 만들어도 기록 파일로 태그 목록(빈 태그 "나중에" 숫자 5, "가족" 2장 숫자 2)이 그대로, 지운 빈 태그 · 0장으로 지우거나 이름을 바꾼 태그는 안 살아남, 건너뛴 줄 없음',
             got.list === want.list && JSON.stringify(got.a) === JSON.stringify(want.a) && JSON.stringify(got.b) === JSON.stringify(want.b)
             && got.list.includes('"name":"나중에","count":0,"hotkey":5') && !got.list.includes('빈태그') && !got.list.includes('오타태그')
+            && !got.list.includes('엑스') && !got.list.includes('와이') && got.list.includes('"name":"제트","count":0,"hotkey":6')
             && read.skipped === 0 && !startLog.includes('건너뜀:'),
             JSON.stringify([want, got, read.skipped, startLog.slice(-300)])));
         });
