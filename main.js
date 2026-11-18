@@ -430,7 +430,12 @@ ipcMain.handle('start-job', async (e, opts = {}) => {
   resetCleanCheck(); // 이전 작업의 샘플 후보가 남지 않게
   writePlanLog(job, logger); // 계획 로그 (날짜없음 참고 날짜, 중복, 확인 필요 목록)
   // 새로 처리할 파일이 없으면(전부 중복) 회차가 없어요 → 이미 있던 같은 사진에 지금 붙여요 (갤러리가 이미 읽어 둔 파일)
-  if (job.tag && !job.items.some((it) => it.status === 'todo')) applyImportTag(job.tag, tagTargets(job, [], { withPlanDups: true }), { status: 'done' });
+  //   갤러리가 아직 백업 폴더를 다 읽기 전일 수 있어서, 회차 끝과 같이 한 번 다시 읽고(바뀐 게 없으면 금방 끝나요) 그 뒤에 붙여요
+  if (job.tag && gallery && !job.items.some((it) => it.status === 'todo')) {
+    let scanDone = { status: 'error' };
+    try { scanDone = gallery.onBatchDone(); } catch (err) { /* 아래 applyImportTag 가 "붙이지 못했어요"로 알려요 */ }
+    applyImportTag(job.tag, tagTargets(job, [], { withPlanDups: true }), scanDone);
+  }
   return await jobInfo();
 });
 

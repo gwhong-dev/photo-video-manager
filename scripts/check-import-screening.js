@@ -172,7 +172,7 @@ const items = [
             before.root === P.lib && before.screening === null && started.name === '무제'
               && during.root === P.src && during.screening && during.screening.name === '무제' && !JSON.stringify(during.screening).includes(base)
               && JSON.stringify(listed) === JSON.stringify([ids.S1, ids.S2, ids.S2v, ids.S3].sort((a, b) => a - b)) && during.total === 4 && note0 === null
-              && ended && ended.removed === 0 && after.root === P.lib && after.screening === null && again === null
+              && ended && ended.removed === 0 && ended.trashed === 0 && ended.moved === 0 && after.root === P.lib && after.screening === null && again === null
               && note1 && note1.name === '무제' && note2 === null && JSON.stringify(settings) === settingsBefore,
             JSON.stringify({ before: before.root, during: during.root, screening: during.screening, listed, after: after.root, note1 })));
         });
@@ -217,7 +217,7 @@ const items = [
             r.trashed === 2 && r.pairs === 1 && r.fail === 0 && bin.length === 3 && !!lib && libFiles
               && JSON.stringify(srcLeft) === JSON.stringify(['S3.jpg']) && st.total === 1
               && logsOf('screen-discard').length === 1 && logsOf('similar-discard').length === 0 && logsOf('gallery-trash').length === 0
-              && ended && ended.removed === 2,
+              && ended && ended.removed === 2 && ended.trashed === 2 && ended.moved === 0,
             JSON.stringify({ r: { trashed: r.trashed, pairs: r.pairs, fail: r.fail }, lib, srcLeft, total: st.total, logs: fs.readdirSync(P.logDir), ended })));
           out.push(sub('60f 거르기에서 "다시 보기"는 거르기 폴더에서 남긴 기억만 비움 (라이브러리 사진의 "모두 남기기" 기억은 그대로)',
             keepsMid.includes('S3.jpg') && keepsMid.includes('L1.jpg') && keepsText.includes('L1.jpg') && !keepsText.includes('S3.jpg'),
@@ -264,11 +264,12 @@ const items = [
           // 60h 거르기 중이었어도 회차 끝 다시 읽기는 백업 폴더를 읽어요 (설계 5-1). 회차 끝 다시 읽기는 결과를 돌려줘요 (태그가 기다려요)
           g.startScreening(P.src);
           const r = await g.onBatchDone();
+          const during = r.status; // 거르기 중에 끝난 다시 읽기는 "백업 폴더를 읽음"으로 보지 않아요 (superseded)
           const scanLogs = logsOf('gallery-scan').map((n) => fs.readFileSync(path.join(P.logDir, n), 'utf8'));
           const lastScan = scanLogs[scanLogs.length - 1] || '';
           g.endScreening();
-          out.push(sub('60h 회차 끝 다시 읽기는 거르기 중이어도 백업 폴더를 읽고, 읽기 결과를 돌려줘요',
-            r && typeof r.status === 'string' && lastScan.includes(P.lib) && !lastScan.includes(P.src),
+          out.push(sub('60h 회차 끝 다시 읽기는 거르기 중이어도 백업 폴더를 읽고, 끝났을 때 거르기 중이면 태그가 믿지 않게 superseded 로 돌려줘요',
+            r && during === 'superseded' && lastScan.includes(P.lib) && !lastScan.includes(P.src),
             JSON.stringify({ r, lastScan: lastScan.split('\n').slice(0, 2) })));
         });
       } finally {

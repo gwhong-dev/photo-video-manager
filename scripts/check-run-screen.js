@@ -123,7 +123,7 @@ const items = [
         const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
         const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
         const cleanerSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'cleaner.js'), 'utf8');
-        const wired = !/[^.\w]cleanCandidates\(/.test(main) && /sendJobInfoLater\(\);[^\n]*\n\s*return \{ settings, tools, job: infoOf\(job, null\) \}/.test(main) &&
+        const wired = !/[^.\w]cleanCandidates\(/.test(main) && /sendJobInfoLater\(\);[^\n]*\n\s*return \{ settings, tools, job: infoOf\(job, null\)(, screenNotice)? \}/.test(main) &&
           /onJobInfo: \(cb\) => subscribe\('job-info', cb\)/.test(preload) && /api\.onJobInfo\(/.test(html) && /원본 세는 중/.test(html) && /await cleanCandidatesAsync\(job\)/.test(cleanerSrc);
         out.push(sub('55f 정리할 원본 세기: 같은 결과, 그만두기, 세는 동안 창이 멈추지 않음, 처음 켤 때 기다리지 않음', same && stopped === null && lagOk && wired,
           `같음 ${same}, 그만둠 ${stopped === null}, 큰 작업 ${bigList.length}개 · 최대 지연 ${maxLag}ms (동기판 ${syncMs}ms), 연결 ${wired}`));

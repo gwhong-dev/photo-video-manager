@@ -519,6 +519,8 @@
     // 갤러리의 비슷한 사진 화면을 가져올 폴더로 열어요. 폴더 검사 · 진행 중인 작업과 겹치는지는 main 이 봐요
     $('screenBtn').onclick = async () => {
       if (busy) return;
+      // 거르기는 하위 폴더 사진도 늘 함께 보여 줘요 ("하위 폴더 포함"을 꺼도). 꺼 뒀으면 한 번 알려요 (#126 검증 ⚠️)
+      if (!$('includeSub').checked && !confirm('거르기 화면에는 하위 폴더의 사진도 함께 나와요 ("하위 폴더 포함"을 꺼도).\n하위 폴더 사진을 버리면 그 사진도 휴지통으로 옮겨져요. 계속할까요?')) return;
       try {
         await api.screenStart(); // 성공하면 갤러리 화면으로 바뀌어요
       } catch (e) {
@@ -528,11 +530,15 @@
     // 가져올 때 태그를 붙인 결과 (회차가 끝나고 갤러리가 새 파일을 다 읽은 뒤 와요)
     api.onImportTag((r) => {
       if (!r) return;
+      // unknown: 갤러리 목록에서 못 찾은 사진 (아직 못 읽음 등) → "이미 붙어 있어요"로 틀리게 말하지 않게 따로 알려요 (#126 검증 ⚠️)
+      const missed = r.unknown ? ` 갤러리 목록에서 못 찾은 ${num(r.unknown)}장은 갤러리에서 직접 붙여 주세요` : '';
       const line = !r.ok
         ? `⚠ ${r.text}`
         : r.count
-          ? `🏷 '${r.name}' 태그를 ${num(r.count)}장에 붙였어요 (갤러리 정보 없는 사진 화면의 "내가 넣은 정보"에서 되돌릴 수 있어요)`
-          : `🏷 '${r.name}' 태그는 이미 붙어 있어요`;
+          ? `🏷 '${r.name}' 태그를 ${num(r.count)}장에 붙였어요 (갤러리 정보 없는 사진 화면의 "내가 넣은 정보"에서 되돌릴 수 있어요).${missed}`
+          : r.unknown
+            ? `⚠ '${r.name}' 태그를 붙이지 못했어요.${missed}`
+            : `🏷 '${r.name}' 태그는 이미 붙어 있어요`;
       setStatus($('status').textContent + '\n' + line);
     });
     // 고르는 순간 폴더 조합 확인 → 안 되면 이유를 보여주고 고른 것을 취소
@@ -1190,9 +1196,12 @@
       }
       // 거르기를 끝내고 돌아왔으면 결과 한 줄 (휴지통이 없는 드라이브면 가져올 폴더의 _정리완료원본으로 옮겨요)
       if (s.screenNotice) {
-        const n = s.screenNotice.removed;
-        setStatus(n
-          ? `거르기에서 ${num(n)}장을 휴지통으로 옮겼어요. 미리보기를 눌러 남은 사진을 확인해 주세요`
+        const { trashed = 0, moved = 0 } = s.screenNotice;
+        const parts = [];
+        if (trashed) parts.push(`${num(trashed)}장을 휴지통으로`);
+        if (moved) parts.push(`${num(moved)}장을 가져올 폴더의 _정리완료원본 폴더로`); // 휴지통이 없는 드라이브 (USB 등)
+        setStatus(parts.length
+          ? `거르기에서 ${parts.join(', ')} 옮겼어요. 미리보기를 눌러 남은 사진을 확인해 주세요`
           : '거르기를 끝냈어요 (옮긴 사진 없음). 미리보기를 눌러 가져올 사진을 확인해 주세요');
       }
     })();

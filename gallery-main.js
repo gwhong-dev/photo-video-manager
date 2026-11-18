@@ -127,7 +127,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   };
   // ---------- 가져오기 전 거르기 (2026-11-18 사용자 결정, docs/superpowers/specs/2026-11-18-import-screening-design.md) ----------
   //   가져올 폴더를 잠깐 "지금 보는 폴더"로 삼아 비슷한 사진 화면 · 사진 보기 · 바로 지우기를 그대로 써요
-  //   screen = { root: 가져올 폴더, name: 폴더 이름, removed: 거르기에서 옮긴 장수, hasher, embedder } 또는 null
+  //   screen = { root: 가져올 폴더, name: 폴더 이름, trashed · moved: 거르기에서 휴지통으로 · _정리완료원본으로 옮긴 장수, hasher, embedder } 또는 null
   //   메모리에만 있어요 (설정 파일에 안 써요). 끝내면(가져오기 화면으로, 앱을 끌 때) 다시 백업 폴더를 봐요
   //   폴더는 main.js 가 설정의 가져올 폴더로만 정해요 (화면이 경로를 보내지 않아요)
   let screen = null;
@@ -1008,7 +1008,9 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // 거르기 중 버리기 · 바로 지우기: 로그 이름을 따로 해요 (정리 기록 화면이 라이브러리 버리기로 세지 않게) + 옮긴 장수 세기
   const screenLog = (root) => (isScreenRoot(root) ? { logKind: 'screen-discard', logTitle: '가져오기 전 거르기' } : {});
   function countScreenRemoved(root, r) {
-    if (isScreenRoot(root)) screen.removed += (r.trashed || 0) + (r.moved || 0);
+    if (!isScreenRoot(root)) return;
+    screen.trashed += r.trashed || 0;
+    screen.moved += r.moved || 0; // 휴지통이 없는 드라이브(USB 등)면 가져올 폴더\_정리완료원본으로 옮겨요 (안내 문구를 나눠요)
   }
 
   //   거르기 중에는 그 폴더 몫으로 따로 적어 둬요 (screenKeepId). "숨긴 묶음 다시 보기"가 그 몫만 비우게 (라이브러리 기억은 그대로)
@@ -1297,7 +1299,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   });
 
   // ---------- 가져오기 전 거르기: 시작 · 끝 ----------
-  let screenNotice = null; // 끝낸 거르기 결과 { name, removed } → 가져오기 화면이 한 번 읽어 가요
+  let screenNotice = null; // 끝낸 거르기 결과 { name, removed, trashed, moved } → 가져오기 화면이 한 번 읽어 가요
   // 시작: main.js 가 검사를 마친 가져올 폴더만 넘겨요. 지문 · AI 계산기는 이 폴더 몫으로 새로 만들어요
   function startScreening(dir) {
     if (!db || !thumbs) throw new Error('목록 파일(library.db)을 열지 못해서 거를 수 없어요. 프로그램을 다시 켜 보세요');
@@ -1320,7 +1322,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     screen = {
       root,
       name: path.basename(root) || root,
-      removed: 0,
+      trashed: 0,
+      moved: 0,
       hasher: createHasher({ db, thumbs }),
       embedder: ai.createEmbedder({ db, thumbs, base }),
     };
@@ -1342,14 +1345,19 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     if (embedAgain && embedAgain.root === s.root) embedAgain = null;
     s.hasher.stop().catch(() => {});
     s.embedder.stop().catch(() => {});
-    screenNotice = { name: s.name, removed: s.removed };
+    screenNotice = { name: s.name, removed: s.trashed + s.moved, trashed: s.trashed, moved: s.moved };
     try {
-      logger.newLog('screen', `가져오기 전 거르기 끝 ${now()}\n폴더: ${s.root}\n옮긴 사진 ${s.removed}장`);
+      logger.newLog('screen', `가져오기 전 거르기 끝 ${now()}\n폴더: ${s.root}\n휴지통 ${s.trashed}장, _정리완료원본 ${s.moved}장`);
     } catch (e) { /* 로그를 못 써도 계속 */ }
     if (!closed) {
       send('gallery:library-changed');
       const root = libRoot();
-      if (root) runScan(root, {}).catch((e) => errorLog('거르기 끝낸 뒤 백업 폴더 읽기', e)); // 멈춘 라이브러리 계산을 다시 이어요
+      // 멈춘 라이브러리 계산을 다시 이어요: 읽기가 끝나면 지문(runScan 안), 지문이 다 있으면 AI 특징값도 (거르기 시작 때 멈췄을 수 있어요, #126 검증 ⚠️)
+      if (root) {
+        runScan(root, {})
+          .then((r) => { if (r && r.status === 'done' && !closed && !screen && root === rootNow() && !hashing) startEmbedding(root, 'bg'); })
+          .catch((e) => errorLog('거르기 끝낸 뒤 백업 폴더 읽기', e));
+      }
     }
     return screenNotice;
   }
@@ -1400,7 +1408,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     startScreening,
     endScreening,
     isScreening: () => !!screen,
-    // 끝낸 거르기 결과를 한 번만 돌려줘요 (가져오기 화면 상태 줄용) → { name, removed } 또는 null
+    // 끝낸 거르기 결과를 한 번만 돌려줘요 (가져오기 화면 상태 줄용) → { name, removed, trashed, moved } 또는 null
     takeScreenNotice() {
       const n = screenNotice;
       screenNotice = null;
@@ -1422,10 +1430,14 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     onBatchDone() {
       const root = libRoot();
       if (!root) return Promise.resolve({ status: 'no-root' });
-      return runScan(root, { changed: true }).catch((e) => {
-        errorLog('가져오기 뒤 다시 읽기', e);
-        return { status: 'error' };
-      });
+      // 기다리는 사이 거르기가 시작되면 합쳐진 다시 읽기가 거르기 폴더를 읽고 끝날 수 있어요 (lib/library.js 의 대기 요청은 마지막 폴더를 읽어요)
+      //   → 끝났을 때 거르기 중이거나 백업 폴더가 바뀌었으면 "백업 폴더를 읽음"으로 보지 않아요 (태그가 엉뚱한 읽기 결과를 믿지 않게, #126 검증 ⚠️)
+      return runScan(root, { changed: true })
+        .then((r) => (screen || libRoot() !== root ? { ...r, status: 'superseded' } : r))
+        .catch((e) => {
+          errorLog('가져오기 뒤 다시 읽기', e);
+          return { status: 'error' };
+        });
     },
     // 설정에서 백업 폴더가 바뀌면: 새 폴더를 읽어요 (읽던 다른 폴더는 library가 멈춰요)
     onRootChanged() {
