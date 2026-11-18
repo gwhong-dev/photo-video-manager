@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:">
   <title>사진/영상 관리 프로그램</title>
   <style>
     :root {
@@ -123,6 +123,25 @@
     .cd-name { flex: 1; word-break: break-all; }
     .cd-folder { flex: none; color: #8C887E; font-size: 12px; }
     .cd-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 22px; border-top: 1px solid #55534E; background: #33322F; border-radius: 0 0 10px 10px; }
+    /* 🔁 중복 원본 비교: 왼쪽 = 라이브러리에 남는 파일, 오른쪽 = 정리될 원본 (2026-11-18) */
+    #cleanDialog.wide { width: min(920px, 94vw); }
+    .cd-cmp-tools { display: flex; gap: 6px; }
+    #cdCompareInfo { white-space: pre-line; line-height: 1.5; }
+    .cd-cmp-cols { display: grid; grid-template-columns: 64px 1fr 1fr; gap: 12px; margin-top: 10px; padding: 0 4px 4px; color: #8C887E; font-size: 12px; border-bottom: 1px solid #55534E; }
+    .cd-cmp { list-style: none; margin: 0; padding: 0; }
+    .cd-cmp li { display: grid; grid-template-columns: 64px 1fr 1fr; gap: 12px; padding: 10px 4px; border-bottom: 1px solid #55534E; }
+    .cd-cmp li.kept .cd-cmp-side.src { opacity: 0.45; }
+    .cd-cmp label { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; color: #B3AFA5; cursor: pointer; padding-top: 4px; }
+    .cd-cmp input[type="checkbox"] { width: 18px; height: 18px; margin: 0; cursor: pointer; }
+    .cd-cmp-side { display: flex; gap: 10px; min-width: 0; }
+    #cleanDialog .cd-thumb { flex: none; position: relative; width: 112px; height: 112px; padding: 0; border: 1px solid #55534E; border-radius: 4px; background: #33322F; overflow: hidden; cursor: zoom-in; color: #8C887E; font-size: 11px; }
+    .cd-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .cd-thumb .cd-vid { position: absolute; left: 4px; bottom: 4px; padding: 1px 5px; border-radius: 3px; background: rgba(0, 0, 0, 0.6); color: #F1EEE6; font-size: 11px; }
+    .cd-cmp-text { min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #B3AFA5; }
+    .cd-cmp-text .nm { color: #F1EEE6; font-size: 13px; word-break: break-all; }
+    .cd-cmp-text .pl { color: #8C887E; word-break: break-all; }
+    .cd-cmp-why { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: #8C887E; }
+    .cd-cmp-state { color: #F1EEE6; }
   </style>
 </head>
 <body>
@@ -217,6 +236,21 @@
     <div class="cd-body">
       <div class="cd-title">🧹 원본 정리</div>
       <div class="cd-msg" id="cdMsg"></div>
+      <!-- 🔁 중복 원본 비교: 중복이라 정리될 원본만, 줄마다 체크를 풀면 이번 정리에서 빼고 남겨요 -->
+      <div id="cdCompareBox" hidden>
+        <div class="cd-sample-head">
+          <b id="cdCompareTitle">🔁 중복 원본 비교</b>
+          <span class="cd-cmp-tools">
+            <button class="small" id="cdCmpAllClean">모두 정리하기로</button>
+            <button class="small" id="cdCmpAllKeep">모두 남기기로</button>
+          </span>
+        </div>
+        <div class="cd-sub" id="cdCompareInfo"></div>
+        <div class="cd-cmp-cols"><span>정리</span><span>라이브러리에 남는 파일</span><span>정리될 원본</span></div>
+        <ul class="cd-cmp" id="cdCompare"></ul>
+        <div class="row"><button class="small" id="cdCmpMore" hidden>더 보기</button></div>
+        <div class="cd-sub" id="cdCompareErr"></div>
+      </div>
       <div class="cd-sample-head">
         <b>🔍 샘플 확인</b>
         <button class="small" id="cdResample">다른 10개 뽑기</button>
@@ -754,8 +788,11 @@
       }
       if (info.warnings.length) msg += '\n\n⚠️ ' + info.warnings.join('\n⚠️ ');
       const binText = over.length ? `휴지통으로 옮기기 (${over.map(capText).join(', ')}만 되살릴 수 있음)` : '';
-      const choice = await confirmClean(msg, cleanGoText(info), info.sample, binText);
+      const cmp = info.compare && info.compare.total ? info.compare : null;
+      if (cmp && cmp.done) msg += `\n- 방금 옮긴 사진의 원본 ${num(cmp.done)}개는 비교 없이 같이 정리해요`;
+      const choice = await confirmClean(msg, (kept) => cleanGoText(info, kept), info.sample, binText, cmp);
       if (!choice) return;
+      const keep = [...cmpState.kept]; // 남기기로 한 중복 원본 (줄 번호)
 
       const before = $('status').textContent; // 이번 회차 결과는 남겨 두기
       setBusy(true);
@@ -765,13 +802,15 @@
       $('bar').value = 0;
       $('progressText').textContent = '🧹 옮기기 전 마지막 확인…';
       try {
-        const r = await api.trashOriginals({ binOverflow: choice === 'bin' ? 'trash' : 'move' });
+        const r = await api.trashOriginals({ binOverflow: choice === 'bin' ? 'trash' : 'move', keep });
         setJob(r.job);
         setStatus(
           before +
             `\n🧹 원본 정리: 휴지통 ${num(r.trashed)}개, _정리완료원본으로 이동 ${num(r.moved)}개` +
-            (r.fail ? ` (실패 ${num(r.fail)}개 — 로그 확인)` : '')
+            (r.fail ? ` (실패 ${num(r.fail)}개 — 로그 확인)` : '') +
+            (r.kept ? `\n🧹 중복 비교에서 남기기로 한 원본 ${num(r.kept)}개는 그대로 두었어요 (목록 메모에 "사용자가 남김", 다음 정리 창에서는 묻지 않아요)` : '')
         );
+        if (r.kept) renderTable(await api.getRows($('filter').value)); // 메모에 남긴 까닭이 보이게
       } finally {
         setBusy(false);
       }
@@ -780,16 +819,22 @@
     //   🔍 샘플 확인으로 백업 폴더에 남을 결과 파일을 직접 열어 보고 정할 수 있어요
     //   binText: 휴지통이 넘칠 때 "그래도 휴지통" 버튼 글자 (없으면 버튼 숨김)
     //   돌려주는 값: 'go' (기본 버튼) / 'bin' (그래도 휴지통) / false (나중에)
-    function confirmClean(msg, goText, sample, binText = '') {
+    //   goTextOf(남김 수): 기본 버튼 글자 (중복 비교에서 남기기를 바꿀 때마다 다시 써요)
+    //   compare: 중복 비교 { rows, total, done, next } (없으면 비교 칸을 숨겨요)
+    function confirmClean(msg, goTextOf, sample, binText = '', compare = null) {
       return new Promise((resolve) => {
         const d = $('cleanDialog');
         $('cdMsg').textContent = msg;
-        $('cdGo').textContent = goText;
+        cmpState.onChange = () => {
+          $('cdGo').textContent = goTextOf(cmpState.kept.size);
+        };
+        renderCompare(compare);
         $('cdGoBin').hidden = !binText;
         $('cdGoBin').textContent = binText;
         renderSample(sample);
         const done = (ok) => {
           d.oncancel = null;
+          stopCompareThumbs();
           d.close();
           resolve(ok);
         };
@@ -806,14 +851,172 @@
     }
 
     // 버튼 문구는 결과를 말해요 (모두 휴지통 / 모두 옮기기 / 섞임)
-    function cleanGoText(info) {
+    //   kept: 중복 비교에서 남기기로 한 수 → 옮길 수에서 빼고 "(2개 남김)" 을 붙여요
+    function cleanGoText(info, kept = 0) {
       // 휴지통에 다 담기지 않는 드라이브는 기본이 _정리완료원본으로 옮기기예요 (되돌리기 쉬운 쪽)
       const methods = new Set(info.drives.map((d) => (d.method === 'trash' && d.overflow ? 'move' : d.method)));
-      const n = num(info.count);
-      if (methods.size === 1 && methods.has('trash')) return `원본 ${n}개 휴지통으로 옮기기`;
-      if (methods.size === 1 && methods.has('move')) return `원본 ${n}개 _정리완료원본으로 옮기기`;
-      return `원본 ${n}개 정리하기`;
+      const left = Math.max(0, info.count - kept);
+      if (!left) return `원본은 옮기지 않고 ${num(kept)}개 남기기`;
+      const n = num(left);
+      const keptText = kept ? ` (${num(kept)}개 남김)` : '';
+      if (methods.size === 1 && methods.has('trash')) return `원본 ${n}개 휴지통으로 옮기기${keptText}`;
+      if (methods.size === 1 && methods.has('move')) return `원본 ${n}개 _정리완료원본으로 옮기기${keptText}`;
+      return `원본 ${n}개 정리하기${keptText}`;
     }
+
+    // 🔁 중복 원본 비교 (2026-11-18 사용자 요청)
+    //   줄마다 왼쪽 = 라이브러리(백업 폴더)에 남는 파일, 오른쪽 = 정리될 원본. 그림을 누르면 Windows 기본 프로그램으로 크게 열어요
+    //   처음에는 모두 정리 체크. 체크를 풀면 "남기기" → 이번 정리에서 빠지고 다음 정리 창에서도 묻지 않아요
+    //   수천 개여도 멈추지 않게: 줄은 100개씩 "더 보기", 그림은 화면에 보이는 줄만 부탁해요
+    const cmpState = { total: 0, next: null, kept: new Set(), onChange: () => {}, observer: null };
+    function stopCompareThumbs() {
+      if (cmpState.observer) cmpState.observer.disconnect();
+      cmpState.observer = null;
+    }
+    function renderCompare(compare) {
+      stopCompareThumbs();
+      cmpState.kept = new Set();
+      cmpState.total = compare ? compare.total : 0;
+      cmpState.next = compare ? compare.next : null;
+      const box = $('cdCompareBox');
+      $('cdCompare').textContent = '';
+      $('cdCompareErr').textContent = '';
+      $('cleanDialog').classList.toggle('wide', !!compare);
+      box.hidden = !compare;
+      if (compare) {
+        $('cdCompareTitle').textContent = `🔁 중복 원본 비교 (${num(compare.total)}개)`;
+        $('cdCompareInfo').textContent =
+          `백업 폴더에 이미 같은 파일이 있어서 정리되는 원본이에요. 왼쪽이 남고 오른쪽이 정리돼요. 그림을 누르면 크게 열려요\n` +
+          `같은 사진이 아니면 체크를 풀어 주세요. 그 원본은 그대로 두고, 다음 정리 창에서도 묻지 않아요`;
+        cmpState.observer = new IntersectionObserver(onThumbsVisible, { root: document.querySelector('#cleanDialog .cd-body'), rootMargin: '300px 0px' });
+        appendCompareRows(compare.rows);
+      }
+      cmpState.onChange();
+    }
+    function appendCompareRows(rows) {
+      const ul = $('cdCompare');
+      for (const r of rows) ul.appendChild(compareRow(r));
+      $('cdCmpMore').hidden = cmpState.next == null;
+      if (cmpState.next != null) $('cdCmpMore').textContent = `더 보기 (${num(cmpState.total - cmpState.next)}개 더 있음)`;
+    }
+    function compareRow(r) {
+      const li = document.createElement('li');
+      li.dataset.key = r.key;
+      const label = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = !cmpState.kept.has(r.key);
+      const state = document.createElement('span');
+      const paint = () => {
+        li.classList.toggle('kept', !box.checked);
+        state.textContent = box.checked ? '정리' : '남김';
+      };
+      box.onchange = () => {
+        if (box.checked) cmpState.kept.delete(r.key);
+        else cmpState.kept.add(r.key);
+        paint();
+        cmpState.onChange();
+      };
+      label.append(box, state);
+      li.appendChild(label);
+      li.appendChild(compareSide(r, 'keep', r.keepName, r.keepSize, r.keepPlace, '백업 폴더'));
+      li.appendChild(compareSide(r, 'src', r.srcName, r.srcSize, r.srcPlace, '가져올 폴더'));
+      const why = document.createElement('div');
+      why.className = 'cd-cmp-why';
+      for (const t of [r.shot ? `촬영 ${r.shot}` : '촬영 시각 모름', r.why]) {
+        const s = document.createElement('span');
+        s.textContent = t;
+        why.appendChild(s);
+      }
+      li.appendChild(why);
+      paint();
+      return li;
+    }
+    function compareSide(r, side, name, size, place, where) {
+      const wrap = document.createElement('div');
+      wrap.className = 'cd-cmp-side ' + side;
+      const t = document.createElement('button');
+      t.type = 'button';
+      t.className = 'cd-thumb';
+      t.title = '크게 열기';
+      t.textContent = '불러오는 중';
+      t.dataset.key = r.key;
+      t.dataset.side = side;
+      t.dataset.video = r.video ? '1' : '';
+      t.onclick = async () => {
+        $('cdCompareErr').textContent = '';
+        try {
+          await api.openCleanCompare(r.key, side);
+        } catch (e) {
+          $('cdCompareErr').textContent = '⚠ ' + cleanErr(e);
+        }
+      };
+      const text = document.createElement('div');
+      text.className = 'cd-cmp-text';
+      const lines = [['nm', name], ['', size == null ? '크기 모름' : fmtBytes(size)], ['pl', `${where} ${place}`]];
+      for (const [cls, v] of lines) {
+        const s = document.createElement('span');
+        if (cls) s.className = cls;
+        s.textContent = v;
+        text.appendChild(s);
+      }
+      wrap.append(t, text);
+      if (cmpState.observer) cmpState.observer.observe(t);
+      return wrap;
+    }
+    // 보이는 줄의 그림만 부탁해요 (한 번 부탁한 그림은 다시 부탁하지 않아요)
+    function onThumbsVisible(entries, observer) {
+      for (const en of entries) {
+        if (!en.isIntersecting) continue;
+        const t = en.target;
+        observer.unobserve(t);
+        api.cleanCompareThumb(Number(t.dataset.key), t.dataset.side)
+          .then((url) => {
+            t.textContent = '';
+            if (url) {
+              const img = document.createElement('img');
+              img.alt = '';
+              img.src = url;
+              t.appendChild(img);
+            } else {
+              t.textContent = '그림 없음 (눌러서 열기)';
+            }
+            if (t.dataset.video) {
+              const v = document.createElement('span');
+              v.className = 'cd-vid';
+              v.textContent = '▶ 영상';
+              t.appendChild(v);
+            }
+          })
+          .catch(() => {
+            t.textContent = '그림 없음 (눌러서 열기)';
+          });
+      }
+    }
+    $('cdCmpMore').onclick = async () => {
+      if (cmpState.next == null) return;
+      $('cdCmpMore').disabled = true;
+      try {
+        const page = await api.cleanCompareRows(cmpState.next);
+        cmpState.next = page.next;
+        appendCompareRows(page.rows);
+      } catch (e) {
+        $('cdCompareErr').textContent = '⚠ ' + cleanErr(e);
+      } finally {
+        $('cdCmpMore').disabled = false;
+      }
+    };
+    // 모두 남기기 · 모두 정리하기: 아직 안 보인 줄까지 전부 (줄 번호는 0 ~ 전체-1)
+    const setAllCompare = (keepAll) => {
+      cmpState.kept = keepAll ? new Set(Array.from({ length: cmpState.total }, (_, k) => k)) : new Set();
+      for (const box of document.querySelectorAll('#cdCompare input[type="checkbox"]')) {
+        box.checked = !keepAll;
+        box.dispatchEvent(new Event('change'));
+      }
+      cmpState.onChange();
+    };
+    $('cdCmpAllKeep').onclick = () => setAllCompare(true);
+    $('cdCmpAllClean').onclick = () => setAllCompare(false);
 
     // 🔍 샘플 목록 그리기 (종류, 이름, 백업 폴더 안의 위치). 누르면 Windows 기본 프로그램으로 크게 열어요
     //   sample = { items: 뽑은 목록, total: 후보 전체 수 }
