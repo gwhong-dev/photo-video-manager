@@ -1924,6 +1924,18 @@ const items = [
             const rows = await call('get-rows', 'all');
             await call('close-job', 'done');
             const note = (rows.rows.find((x) => x.statusKey === 'dup') || {}).note || '';
+            // 막는 길 (#125 검증 ⚠️): 작업을 끝낸 뒤 · 확인 창 없이 남기기 번호를 보내면 오류, 원본 그대로, 휴지통 안 감
+            //   미리보기를 새로 하면 새 작업이라 남긴 원본을 다시 물어요 (남기기 되돌리기)
+            const blockedClosed = await errOf(call('trash-originals', { binOverflow: 'move', keep: [0] }));
+            await call('make-plan', { source: src18h, backupRoot: dest18h, includeSub: true });
+            await call('start-job');
+            const blockedNoDialog = await errOf(call('trash-originals', { binOverflow: 'move', keep: [0] }));
+            const asksAgain = await call('trash-info');
+            await call('close-job', 'done');
+            out.push(sub('18i 작업을 끝낸 뒤 · 확인 창 없이 남기기 번호를 보내면 오류 (원본 그대로, 휴지통 안 감), 미리보기를 새로 하면 다시 물음',
+              /확인 창을 다시 열어 주세요/.test(blockedClosed || '') && /확인 창을 다시 열어 주세요/.test(blockedNoDialog || '')
+              && fs.existsSync(orig) && trashedPaths.length === trashCalls && asksAgain.count === 1 && asksAgain.compare && asksAgain.compare.total === 1,
+              JSON.stringify({ blockedClosed, blockedNoDialog, again: asksAgain.count, trash: trashedPaths.length - trashCalls })));
             out.push(sub('18h 중복 비교: 확인 창에 중복 원본 1줄 (경로 없이 이름만, 남는 파일 그림), 남기기로 정리하면 원본 그대로 · 휴지통 안 감, 다음 확인 창에 안 나오고 메모에 "사용자가 남김"',
               info.count === 1 && cmp.total === 1 && cmp.rows && cmp.rows[0].srcName === 'IMG_0101.jpg' && !JSON.stringify(cmp).includes(env.tmp)
               && typeof thumb === 'string' && thumb.startsWith('data:image/webp;base64,') && badThumb === null

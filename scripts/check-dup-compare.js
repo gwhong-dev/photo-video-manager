@@ -212,9 +212,16 @@ const items = [
         const cv = await c;
         while (gates.length) gates.shift()();
         const [av, a2v, bv] = await Promise.all([a, a2, b]);
-        out.push(sub('58g 같은 그림은 한 번만 만들고 동시에 2개까지, 창을 닫으면(clear) 기다리던 것은 만들지 않음',
-          peakBefore === 2 && made === 2 && cv === null && av === a2v && typeof bv === 'string' && fake.stats().cached === 0,
-          JSON.stringify({ peakBefore, made, cv, av: String(av).slice(0, 25), cached: fake.stats().cached })));
+        // 앱이 꺼지며 남은 임시 파일(cmp-*)은 다음에 만들 때 치움, 다른 이름은 그대로 (#125 검증 ⚠️)
+        fs.mkdirSync(tempDir, { recursive: true });
+        fs.writeFileSync(path.join(tempDir, 'cmp-1-1.frame.jpg'), 'x');
+        fs.writeFileSync(path.join(tempDir, 'other.txt'), 'x');
+        C.createCompareThumbs({ tempDir });
+        const swept = listAll(tempDir);
+        fs.rmSync(path.join(tempDir, 'other.txt'), { force: true });
+        out.push(sub('58g 같은 그림은 한 번만 만들고 동시에 2개까지, 창을 닫으면(clear) 기다리던 것은 만들지 않음, 꺼지며 남은 임시 파일은 다음에 치움',
+          peakBefore === 2 && made === 2 && cv === null && av === a2v && typeof bv === 'string' && fake.stats().cached === 0 && JSON.stringify(swept) === '["other.txt"]',
+          JSON.stringify({ peakBefore, made, cv, av: String(av).slice(0, 25), cached: fake.stats().cached, swept })));
       }
 
       // 58h 화면 · 통로 연결: 확인 창 비교 칸 (남는 파일 · 정리될 원본 · 정리 체크 · 모두 남기기 · 더 보기), 버튼 글자에 남김 수,
@@ -248,7 +255,10 @@ const items = [
           && tr.indexOf('markUserKept(') > 0 && tr.indexOf('markUserKept(') < tr.indexOf('recheckTargets(') && tr.includes('userKept,')
           && /function resetCleanCheck\(\) \{[^}]*cleanCompare = null;[^}]*compareThumbs\.clear\(\)/.test(main)
           && block('trash-info').includes('cleanCompare = comparePool(job, targets);') && block('trash-info').includes('compare: await compareRows(job, cleanCompare, 0)');
-        const readOnly = !/\.(rename|rm|unlink|rmdir|copyFile|cp|truncate)(Sync)?\(|trashItem/.test(lib) && !/writeFile/.test(lib);
+        // 지우기는 설정 폴더 아래 임시 폴더(tempDir)의 cmp-* 치우기 한 곳뿐이어야 해요
+        const rmCalls = lib.match(/\.rm(Sync)?\(/g) || [];
+        const readOnly = !/\.(rename|unlink|rmdir|copyFile|cp|truncate)(Sync)?\(|trashItem/.test(lib) && !/writeFile/.test(lib)
+          && rmCalls.length === 1 && lib.includes("if (name.startsWith('cmp-')) fs.rmSync(path.join(tempDir, name), { force: true });");
         out.push(sub('58h 확인 창 비교 칸 · 버튼 글자에 남김 수 · CSP · 통로 · 남기기를 정리 직전 확인보다 먼저 · 비우기 · 비교 코드는 옮기기 · 지우기 없음',
           htmlOk && textOk && preOk && mainOk && readOnly,
           JSON.stringify({ htmlOk, texts, preOk, mainOk, readOnly })));
