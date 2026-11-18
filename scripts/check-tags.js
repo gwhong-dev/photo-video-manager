@@ -179,7 +179,7 @@ const items = [
           const savedBefore = withDb((db) => db.getManualTags(path.join(P.root, 'a.jpg')).length);
           const r = await call('gallery:tag-apply', [ids.a, ids.b], { op: 'add', name: ' 여행 ' });
           const j = createJournal(path.join(P.ud, 'manual-edits.jsonl')).read().lines;
-          const last = j[j.length - 1];
+          const last = j.filter((l) => l.type === 'apply').pop(); // 새 이름이라 뒤에 태그 목록 줄(tagDefs)이 하나 더 있어요
           const log = logsOf('manual-edit');
           out.push(sub('40c 미리보기는 저장 안 함, 붙이기는 기록 파일(tagAdd, 이름 목록)과 로그(태그 붙이기)에 남음',
             pv.counts.changed === 2 && pv.name === '여행' && savedBefore === 0 && r.count === 2 && r.kind === 'tagAdd'
@@ -193,7 +193,7 @@ const items = [
           const list = await call('gallery:tag-list');
           const onlyTag = await call('gallery:list-ids', { tag: '여행' });
           out.push(sub('40d 패널에 manual 태그, 태그 목록에 내가 붙인 2장과 앨범 1장, 태그 필터는 둘 다 찾음 (3장), 태그 수는 이름 하나',
-            file.tags.some((t) => t.name === '여행' && t.source === 'manual') && JSON.stringify(list.manual) === '[{"name":"여행","count":2}]'
+            file.tags.some((t) => t.name === '여행' && t.source === 'manual') && JSON.stringify(list.manual) === '[{"name":"여행","count":2,"hotkey":null}]'
             && JSON.stringify(list.album) === '[{"name":"여행","count":1}]' && onlyTag.length === 3 && state.tagCount === 1 && JSON.stringify(state.manualTags) === JSON.stringify(list.manual)
             && state.lastBatch && state.lastBatch.kind === 'tagAdd',
             JSON.stringify([file.tags, list, onlyTag.length, state.tagCount])));
@@ -371,15 +371,336 @@ const items = [
       const seen = JSON.stringify(q).slice(0, 600);
       out.push(sub('41a 우클릭 메뉴와 패널에 태그 버튼', q.menuAdd === '1장에 태그 붙이기' && q.menuRemove === '1장에서 태그 떼기' && q.panelAdd === '1장에 태그 붙이기', seen));
       out.push(sub('41b 태그 창: 이름을 적기 전에는 버튼이 꺼져 있고, 적으면 "1장에 \'여행\' 태그 붙이기"', q.startButton === '태그 이름을 적어 주세요' && q.startDisabled === true && q.readyButton === "1장에 '여행' 태그 붙이기", seen));
-      out.push(sub('41c 붙인 뒤 알림과 되돌리기 버튼, 패널에 태그', q.applied === '1장에 태그를 붙였어요' && q.undoButton === '1장 태그 붙이기 되돌리기' && q.chip === '여행', seen));
-      out.push(sub('41d 태그 메뉴: 내가 붙인 태그 목록, 누르면 갤러리에 그 태그 사진만', q.tagsScreen === true && q.tagRow === '여행1' && q.filteredCells === 1, seen));
-      out.push(sub('41e 떼기 창: 고른 사진의 태그를 골라 "1장에서 \'여행\' 태그 떼기", 떼면 알림', q.removeButton === "1장에서 '여행' 태그 떼기" && q.removed === '1장에서 태그를 뗐어요', seen));
-      out.push(sub('41f 기록 파일에 붙이기와 떼기 두 줄, 사진 파일은 그대로', (() => {
+      out.push(sub('41c 붙인 뒤 알림(태그 이름까지)과 되돌리기 버튼, 패널에 태그', q.applied === "1장에 '여행' 붙였어요" && q.undoButton === '1장 태그 붙이기 되돌리기' && q.chip === '여행', seen));
+      out.push(sub('41d 태그 메뉴: 내가 만든 태그 목록, 누르면 갤러리에 그 태그 사진만', q.tagsScreen === true && q.tagRow === '여행1' && q.filteredCells === 1, seen));
+      out.push(sub('41e 떼기 창: 고른 사진의 태그를 골라 "1장에서 \'여행\' 태그 떼기", 떼면 알림', q.removeButton === "1장에서 '여행' 태그 떼기" && q.removed === "1장에서 '여행' 뗐어요", seen));
+      const seen2 = JSON.stringify(q).slice(600, 1500);
+      out.push(sub('41h 왼쪽 메뉴 "새 태그" → 이름을 적기 전에는 꺼짐, "\'가족\' 태그 만들기" → 0장으로 목록에 남음',
+        q.createStart === '태그 이름을 적어 주세요' && q.createButton === "'가족' 태그 만들기" && q.sideNew === '가족0', seen2));
+      out.push(sub('41i 태그 화면에서 숫자 1 정하기 → 왼쪽 메뉴에 1 표시, 우클릭 메뉴에 "1장에 \'가족\' 붙이기"', q.sideKey === '1' && q.quickMenu === "1장에 '가족' 붙이기", seen2));
+      out.push(sub('41j 갤러리에서 T = 붙이기 창, 검색 칸에서 1 은 무시, 1 = "1장에 \'가족\' 붙였어요" + 되돌리기',
+        q.tKey === true && q.typingIgnored === true && q.quick === "1장에 '가족' 붙였어요" && q.quickUndo === '1장 태그 붙이기 되돌리기', seen2));
+      out.push(sub('41k 이름 바꾸기 "1장의 태그 이름 바꾸기" → 알림, 지우기 "1장에서 \'친구\' 태그 지우기" → 되돌리면 태그와 숫자가 돌아옴',
+        q.renameButton === '1장의 태그 이름 바꾸기' && q.renamed === "1장의 태그를 '친구' 이름으로 바꿨어요" && q.deleteButton === "1장에서 '친구' 태그 지우기"
+        && q.deleted === "1장에서 '친구' 태그를 지웠어요" && q.deleteUndo === '1장 태그 지우기 되돌리기' && q.undone === true && q.backKey === '친구1', seen2));
+      out.push(sub('41f 기록 파일: 붙이기 · 떼기 · 숫자로 붙이기 · 이름 바꾸기 · 지우기 묶음, 되돌리기, 태그 목록 줄. 사진 파일은 그대로', (() => {
         const p = path.join(ud, 'manual-edits.jsonl');
         const lines = fs.existsSync(p) ? fs.readFileSync(p, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : [];
-        return lines.length === 2 && lines[0].kind === 'tagAdd' && lines[1].kind === 'tagRemove' && bytes() === before;
+        const kinds = lines.filter((l) => l.type === 'apply').map((l) => l.kind).join(',');
+        return kinds === 'tagAdd,tagRemove,tagAdd,tagRename,tagDelete' && lines.filter((l) => l.type === 'undo').length === 1
+          && lines.some((l) => l.type === 'tagDefs') && bytes() === before;
+      })(), (() => {
+        const p = path.join(ud, 'manual-edits.jsonl');
+        return fs.existsSync(p) ? fs.readFileSync(p, 'utf8').trim().split('\n').map((l) => { const o = JSON.parse(l); return o.kind || o.type; }).join(',') : '기록 파일 없음';
       })()));
       out.push(sub('41g 화면 오류 없음, 정상 종료', r.errors.length === 0 && r.exitCode === 0 && !q.stop, `${r.errors.join(' / ')} 종료 코드 ${r.exitCode} ${q.stop || ''}`));
+      return out;
+    },
+  },
+  {
+    no: 57,
+    name: '태그 만들기 · 이름 바꾸기 · 지우기 · 단축키 (규칙, DB, 기록 파일, 되돌리기)',
+    async run(env) {
+      const out = [];
+      const { cleanHotkey, normalizeRename, planTagRename } = require('../lib/manual-tags');
+
+      // 57a 규칙: 숫자 1~9, 이름 바꾸기 검사, 합칠 때 같은 이름은 한 번만
+      {
+        const keys = [cleanHotkey(null), cleanHotkey(''), cleanHotkey(1), cleanHotkey('9')];
+        const badKeys = [0, 10, 1.5, 'a', -1].map((k) => throwsText(() => cleanHotkey(k)));
+        const same = throwsText(() => normalizeRename('여행', ' 여행 '));
+        const reserved = throwsText(() => normalizeRename('여행', '사진'));
+        const ok = normalizeRename('여행', '  제주  여행 ');
+        const tagged = [{ path: 'a', tags: ['여행'] }, { path: 'b', tags: ['가족', '여행'] }, { path: 'c', tags: ['가족'] }];
+        const mv = planTagRename(tagged, '여행', '가족');
+        const del = planTagRename(tagged, '여행', null);
+        out.push(sub('57a 숫자는 없음 또는 1~9만, 같은 이름 · 종류 태그 이름으로 바꾸기는 거절, 합치면 같은 이름은 한 번, 지우기는 그 이름만 뺌',
+          JSON.stringify(keys) === '[null,null,1,9]' && badKeys.every((t) => typeof t === 'string') && !!same && !!reserved && ok.to === '제주 여행'
+          && JSON.stringify(mv.items.map((i) => i.after)) === '[["가족"],["가족"]]' && mv.items.length === 2
+          && JSON.stringify(del.items.map((i) => i.after)) === '[[],["가족"]]',
+          JSON.stringify([keys, badKeys, same, reserved, ok, mv.items, del.items])));
+      }
+
+      // 57b 단축키 판단: T 와 숫자(위 줄 · 숫자판), 한글 입력 상태(code 로), 글 쓰는 칸 · 열린 창 · Ctrl/Alt/Shift · 누르고 있기는 무시, Delete 는 안 건드림
+      {
+        const K = await import('../src/tag-keys.mjs');
+        const el = (tagName, extra = {}) => ({ tagName, ...extra });
+        const a = (e, t = el('BUTTON'), open = false) => JSON.stringify(K.tagKeyAction(e, t, open));
+        const res = [
+          a({ code: 'KeyT', key: 't' }), a({ code: 'KeyT', key: 'ㅅ' }), a({ key: 'T' }), a({ code: 'Digit1', key: '1' }), a({ code: 'Numpad9', key: '9' }),
+          a({ code: 'Digit0', key: '0' }), a({ code: 'Digit1', key: '1' }, el('INPUT')), a({ code: 'KeyT', key: 't' }, el('textarea')),
+          a({ code: 'Digit2', key: '2' }, el('SELECT')), a({ code: 'Digit2', key: '2' }, el('DIV', { isContentEditable: true })),
+          a({ code: 'Digit2', key: '2' }, el('DIV'), true), a({ code: 'Digit2', key: '2', ctrlKey: true }), a({ code: 'KeyT', key: 'T', shiftKey: true }),
+          a({ code: 'Digit3', key: '3', repeat: true }), a({ code: 'Delete', key: 'Delete' }), a({ code: 'Digit3', key: '3', altKey: true }),
+        ];
+        const want = ['{"type":"open"}', '{"type":"open"}', '{"type":"open"}', '{"type":"apply","key":1}', '{"type":"apply","key":9}',
+          'null', 'null', 'null', 'null', 'null', 'null', 'null', 'null', 'null', 'null', 'null'];
+        const tags = [{ name: '여행', hotkey: 2 }, { name: '가족', hotkey: null }, { name: '공연', hotkey: 1 }];
+        out.push(sub('57b 단축키: T(한글 상태 포함) = 창, 1~9(숫자판 포함) = 붙이기, 입력 칸 · 고르기 칸 · 열린 창 · Ctrl/Alt/Shift · 누르고 있기 · 0 · Delete 는 무시',
+          JSON.stringify(res) === JSON.stringify(want) && K.tagOfKey(tags, 2) === '여행' && K.tagOfKey(tags, 5) === null
+          && K.quickTags(tags).map((t) => t.name).join(',') === '공연,여행' && K.quickTagLabel(3, '여행') === "3장에 '여행' 붙이기",
+          JSON.stringify(res)));
+      }
+
+      // 57c~ 가짜 setupGallery 로 저장, 다시 읽기, 되돌리기, DB 새로 만들기
+      const { openDb } = require('../lib/db');
+      const { createLogger } = require('../lib/logger');
+      const { createJournal } = require('../lib/manual-journal');
+      const gmPath = require.resolve('../gallery-main');
+      delete require.cache[gmPath];
+      const gm = require('../gallery-main');
+      delete require.cache[gmPath];
+      const dir = path.join(env.tmp, 'tags-manage');
+      const P = { root: path.resolve(dir, 'photos'), ud: path.join(dir, 'ud'), logDir: path.join(dir, 'logs') };
+      fs.mkdirSync(P.root, { recursive: true });
+      fs.mkdirSync(P.ud, { recursive: true });
+      const names = ['a.jpg', 'b.mp4', 'c.jpg'];
+      const fileRows = () => names.map((name) => row({
+        root: P.root, path: path.join(P.root, name), name, mediaType: name.endsWith('.mp4') ? 'video' : 'photo',
+        tags: name === 'c.jpg' ? [{ name: '바다', source: 'album' }] : [],
+      }));
+      for (const n of names) fs.writeFileSync(path.join(P.root, n), `파일 ${n}`);
+      const bytes = () => names.map((n) => fs.readFileSync(path.join(P.root, n), 'utf8')).join('|');
+      const before = bytes();
+      const withDb = (fn) => {
+        const o = openDb(path.join(P.ud, 'library.db'));
+        try {
+          return fn(o.db);
+        } finally {
+          o.db.close();
+        }
+      };
+      withDb((db) => db.upsertFiles(fileRows()));
+      const fakes = [];
+      const makeFake = () => {
+        const handlers = new Map();
+        const g = gm.setupGallery({
+          ipcMain: { handle: (ch, fn) => handlers.set(ch, fn) },
+          protocol: { handle() {} },
+          getWin: () => ({ isDestroyed: () => false, webContents: { send() {} } }),
+          getSettings: () => ({ backupRoot: P.root }),
+          getTools: () => ({}),
+          getEt: () => null,
+          isRunning: () => false,
+          isPlanning: () => false,
+          logger: createLogger(P.logDir),
+          userDir: P.ud,
+          loadScreen: async () => {},
+          getJobPending: () => false,
+        });
+        fakes.push(g);
+        return (ch, ...a) => handlers.get(ch)(null, ...a);
+      };
+      const idOf = (db, name) => db.listSuggestionRows(P.root).find((x) => x.name === name).id;
+      const mineOf = (name) => withDb((db) => db.getManualTags(path.join(P.root, name)));
+      const listMine = async (call) => JSON.stringify((await call('gallery:tag-list')).manual);
+      const journalLines = () => createJournal(path.join(P.ud, 'manual-edits.jsonl')).read();
+      const logsOf = (prefix) => (fs.existsSync(P.logDir) ? fs.readdirSync(P.logDir) : []).filter((n) => n.startsWith(prefix))
+        .map((n) => fs.readFileSync(path.join(P.logDir, n), 'utf8')).join('\n');
+      const scene = async (label, fn) => {
+        try {
+          await fn();
+        } catch (e) {
+          out.push(sub(`${label} 실행 중 오류`, false, String(e.stack).split('\n').slice(0, 3).join(' | ')));
+        }
+      };
+
+      try {
+        const ids = withDb((db) => ({ a: idOf(db, 'a.jpg'), b: idOf(db, 'b.mp4'), c: idOf(db, 'c.jpg') }));
+        let call = makeFake();
+
+        await scene('57c', async () => {
+          // 57c 빈 태그 만들기: 0장으로 목록에 남음, 같은 이름 · 종류 태그 이름은 거절, 기록 파일에 태그 목록 줄과 로그
+          const r = await call('gallery:tag-create', '  가족 ');
+          const dup = await errOf(() => call('gallery:tag-create', '가족'));
+          const reserved = await errOf(() => call('gallery:tag-create', '비디오'));
+          const st = await call('gallery:get-state');
+          const j = journalLines().lines;
+          out.push(sub('57c 새 태그 "가족" 은 0장으로 목록 · 사이드바에 남고 태그 수에 셈. 같은 이름 · 종류 태그는 거절. 기록 파일에 태그 목록 줄, 로그에 태그 만들기',
+            r.name === '가족' && (await listMine(call)) === '[{"name":"가족","count":0,"hotkey":null}]' && st.tagCount === 2
+            && JSON.stringify(st.manualTags) === '[{"name":"가족","count":0,"hotkey":null}]' && !!dup && dup.includes('이미') && !!reserved
+            && j.length === 1 && j[0].type === 'tagDefs' && JSON.stringify(j[0].defs) === '[{"name":"가족","hotkey":null}]' && logsOf('manual-edit').includes('태그 만들기'),
+            JSON.stringify([r, dup, reserved, st.manualTags, j])));
+
+          // 57d 폴더를 다시 읽어도, 프로그램을 다시 켜도 빈 태그가 남음
+          withDb((db) => db.upsertFiles(fileRows()));
+          for (const g of fakes.splice(0)) g.close();
+          call = makeFake();
+          out.push(sub('57d 폴더를 다시 읽고 프로그램을 다시 켜도 빈 태그가 그대로', (await listMine(call)) === '[{"name":"가족","count":0,"hotkey":null}]', await listMine(call)));
+        });
+
+        await scene('57e', async () => {
+          // 57e 단축키 숫자: 정하기, 다른 태그로 옮기면 앞 태그는 숫자가 빠짐, 0 · 10 · 앨범 태그는 거절
+          await call('gallery:tag-apply', [ids.a, ids.b], { op: 'add', name: '여행' }); // 사진과 영상에 '여행'
+          const k1 = await call('gallery:tag-hotkey', '가족', 1);
+          const k2 = await call('gallery:tag-hotkey', '여행', 1);
+          const k3 = await call('gallery:tag-hotkey', '가족', 2);
+          const bad = await errOf(() => call('gallery:tag-hotkey', '가족', 10));
+          const album = await errOf(() => call('gallery:tag-hotkey', '바다', 3));
+          const list = JSON.parse(await listMine(call));
+          out.push(sub('57e 숫자 1을 "여행"으로 옮기면 "가족"은 숫자가 빠짐, 10 과 앨범 태그(읽기 전용)는 거절',
+            k1.moved === null && k2.moved === '가족' && k3.hotkey === 2 && !!bad && !!album && album.includes('읽기 전용')
+            && list.find((t) => t.name === '여행').hotkey === 1 && list.find((t) => t.name === '가족').hotkey === 2 && list.find((t) => t.name === '여행').count === 2,
+            JSON.stringify([k1, k2, k3, bad, album, list])));
+        });
+
+        await scene('57f', async () => {
+          // 57f 이름 바꾸기: 사진 · 영상 모두 새 이름, 숫자도 옮겨감, 되돌리면 옛 이름과 숫자로
+          const pv = await call('gallery:tag-rename-preview', '여행', '휴가');
+          const r = await call('gallery:tag-rename', '여행', ' 휴가 ', false);
+          const aFile = await call('gallery:get-file', ids.a);
+          const bFile = await call('gallery:get-file', ids.b);
+          const list = JSON.parse(await listMine(call));
+          const last = journalLines().lines.filter((l) => l.type === 'apply').pop();
+          const st = await call('gallery:get-state');
+          const u = await call('gallery:undo-last', st.lastBatch.id);
+          const back = JSON.parse(await listMine(call));
+          out.push(sub('57f 이름 바꾸기: 사진과 영상 모두 "휴가", 숫자 1도 옮겨감, 기록 파일에 tagRename(정의 전후), 되돌리면 "여행"과 숫자 1로 돌아오고 "휴가"는 사라짐',
+            pv.merge === false && pv.count === 2 && r.count === 2 && r.kind === 'tagRename' && r.name === '휴가'
+            && aFile.tags.some((t) => t.name === '휴가' && t.source === 'manual') && bFile.tags.some((t) => t.name === '휴가') && !aFile.tags.some((t) => t.name === '여행')
+            && list.find((t) => t.name === '휴가').hotkey === 1 && !list.some((t) => t.name === '여행')
+            && last.kind === 'tagRename' && Array.isArray(last.defs) && last.defs.length === 2
+            && u.kind === 'tagRename' && back.find((t) => t.name === '여행').hotkey === 1 && back.find((t) => t.name === '여행').count === 2 && !back.some((t) => t.name === '휴가')
+            && JSON.stringify(mineOf('a.jpg')) === '["여행"]',
+            JSON.stringify([pv, r, list, back])));
+        });
+
+        await scene('57g', async () => {
+          // 57g 합치기: 같은 이름이 있으면 묻지 않고는 거절, 합치면 겹친 사진은 이름 하나, 합친 쪽 숫자는 남음
+          await call('gallery:tag-apply', [ids.a], { op: 'add', name: '가족' }); // a: 가족, 여행 / b: 여행
+          const refuse = await errOf(() => call('gallery:tag-rename', '여행', '가족', false));
+          const pv = await call('gallery:tag-rename-preview', '여행', '가족');
+          const r = await call('gallery:tag-rename', '여행', '가족', true);
+          const list = JSON.parse(await listMine(call));
+          out.push(sub('57g 합치기: 확인 없이는 거절, 미리보기는 merge, 합치면 a 는 "가족" 하나 · b 는 "가족", "여행"은 목록에서 빠지고 "가족"의 숫자 2는 그대로',
+            !!refuse && refuse.includes('합칠지') && pv.merge === true && pv.toCount === 1 && r.count === 2
+            && JSON.stringify(mineOf('a.jpg')) === '["가족"]' && JSON.stringify(mineOf('b.mp4')) === '["가족"]'
+            && !list.some((t) => t.name === '여행') && list.find((t) => t.name === '가족').hotkey === 2 && list.find((t) => t.name === '가족').count === 2,
+            JSON.stringify([refuse, pv, r, list])));
+        });
+
+        await scene('57h', async () => {
+          // 57h 지우기: 태그만 떼고 파일은 그대로, 앨범 태그는 지울 수 없음, 되돌리면 태그와 숫자가 돌아옴. 사진이 없는 태그는 묶음 없이 지움
+          const album = await errOf(() => call('gallery:tag-delete', '바다'));
+          const r = await call('gallery:tag-delete', '가족');
+          const gone = { a: mineOf('a.jpg'), b: mineOf('b.mp4'), list: JSON.parse(await listMine(call)) };
+          const filter = await call('gallery:list-ids', { tag: '가족' });
+          const st = await call('gallery:get-state');
+          const u = await call('gallery:undo-last', st.lastBatch.id);
+          const back = JSON.parse(await listMine(call));
+          await call('gallery:tag-create', '빈태그');
+          const lastBefore = (await call('gallery:get-state')).lastBatch;
+          const linesBefore = journalLines().lines.filter((l) => l.type === 'apply').length;
+          const e0 = await call('gallery:tag-delete', '빈태그');
+          const linesAfter = journalLines().lines.filter((l) => l.type === 'apply').length;
+          const st2 = await call('gallery:get-state');
+          out.push(sub('57h 지우기: 2장(사진 · 영상)에서 떼고 목록 · 필터에서 빠짐, 앨범 태그는 거절, 되돌리면 "가족" 2장과 숫자 2가 돌아옴. 빈 태그 지우기는 되돌리기 줄을 차지하지 않음',
+            !!album && album.includes('읽기 전용') && r.count === 2 && r.kind === 'tagDelete' && gone.a.length === 0 && gone.b.length === 0
+            && !gone.list.some((t) => t.name === '가족') && filter.length === 0 && u.kind === 'tagDelete'
+            && back.find((t) => t.name === '가족').count === 2 && back.find((t) => t.name === '가족').hotkey === 2
+            && e0.batchId === null && e0.count === 0 && linesBefore === linesAfter && !!lastBefore && st2.lastBatch && st2.lastBatch.id === lastBefore.id && !JSON.parse(await listMine(call)).some((t) => t.name === '빈태그'),
+            JSON.stringify([album, r, gone, u, back, e0, st2.lastBatch])));
+        });
+
+        await scene('57i', async () => {
+          // 57i 새 이름으로 붙인 뒤 되돌리면 그 빈 태그도 같이 사라짐 (오타로 만든 태그가 남지 않게). 있던 태그는 붙인 사진을 다 떼도 남음
+          const r = await call('gallery:tag-apply', [ids.c], { op: 'add', name: '오타태그' });
+          const mid = JSON.parse(await listMine(call)).some((t) => t.name === '오타태그');
+          await call('gallery:undo-last', r.batchId);
+          const after = JSON.parse(await listMine(call)).some((t) => t.name === '오타태그');
+          const rm = await call('gallery:tag-apply', [ids.a, ids.b], { op: 'remove', name: '가족' });
+          const kept = JSON.parse(await listMine(call)).find((t) => t.name === '가족');
+          out.push(sub('57i 새 이름으로 붙였다 되돌리면 그 태그도 사라짐, 있던 "가족"은 사진을 다 떼도 0장 · 숫자 2로 남음',
+            mid && !after && rm.count === 2 && kept && kept.count === 0 && kept.hotkey === 2, JSON.stringify([mid, after, rm, kept])));
+          await call('gallery:undo-last', rm.batchId); // 다시 붙여 둠 (57j 복구 확인용)
+        });
+
+        await scene('57g2', async () => {
+          // 57g2 숫자 있는 태그를 숫자 없는 태그로 합쳤다가 되돌리면 숫자가 원래 태그로 돌아옴 (#122 검증 ❌)
+          await call('gallery:tag-apply', [ids.b], { op: 'add', name: '빨강' });
+          await call('gallery:tag-apply', [ids.b], { op: 'add', name: '파랑' });
+          await call('gallery:tag-hotkey', '빨강', 7);
+          const m = await call('gallery:tag-rename', '빨강', '파랑', true);
+          const mid = JSON.parse(await listMine(call)).find((t) => t.name === '파랑');
+          await call('gallery:undo-last', m.batchId);
+          const back = JSON.parse(await listMine(call));
+          const red = back.find((t) => t.name === '빨강');
+          const blue = back.find((t) => t.name === '파랑');
+          out.push(sub('57g2 숫자 7 인 "빨강"을 숫자 없는 "파랑"에 합치면 파랑이 7, 되돌리면 빨강 7 · 파랑 없음',
+            mid && mid.hotkey === 7 && red && red.hotkey === 7 && blue && blue.hotkey === null,
+            JSON.stringify([mid, red, blue])));
+        });
+
+        await scene('57j', async () => {
+          // 묶음으로 생긴 태그를 0장으로 만든 뒤 지우거나(엑스) 이름을 바꾼(와이 → 제트) 경우도 DB 를 새로 만들 때 되살아나지 않아야 해요 (#122 검증 ❌)
+          for (const n of ['엑스', '와이']) {
+            await call('gallery:tag-apply', [ids.b], { op: 'add', name: n });
+            await call('gallery:tag-apply', [ids.b], { op: 'remove', name: n });
+          }
+          await call('gallery:tag-delete', '엑스');
+          await call('gallery:tag-rename', '와이', '제트', false);
+          await call('gallery:tag-hotkey', '제트', 6);
+          // 57j DB를 새로 만들어도 기록 파일에서 태그 · 이름 바꾸기 · 합치기 · 지우기 · 되돌리기와 빈 태그 · 숫자가 되살아남. 지운 빈 태그는 안 살아남
+          await call('gallery:tag-create', '나중에');
+          await call('gallery:tag-hotkey', '나중에', 5);
+          const want = { list: await listMine(call), a: mineOf('a.jpg'), b: mineOf('b.mp4') };
+          for (const g of fakes.splice(0)) g.close();
+          const dbFile = path.join(P.ud, 'library.db');
+          for (const ext of ['', '-wal', '-shm']) {
+            if (fs.existsSync(dbFile + ext)) fs.rmSync(dbFile + ext); // 점검 임시 폴더 안의 DB
+          }
+          call = makeFake(); // 빈 DB 에서 기록 파일로 복구
+          withDb((db) => db.upsertFiles(fileRows())); // 그다음 폴더 읽기
+          const got = { list: await listMine(call), a: mineOf('a.jpg'), b: mineOf('b.mp4') };
+          const startLog = logsOf('gallery-start');
+          const read = journalLines();
+          out.push(sub('57j DB를 새로 만들어도 기록 파일로 태그 목록(빈 태그 "나중에" 숫자 5, "가족" 2장 숫자 2)이 그대로, 지운 빈 태그 · 0장으로 지우거나 이름을 바꾼 태그는 안 살아남, 건너뛴 줄 없음',
+            got.list === want.list && JSON.stringify(got.a) === JSON.stringify(want.a) && JSON.stringify(got.b) === JSON.stringify(want.b)
+            && got.list.includes('"name":"나중에","count":0,"hotkey":5') && !got.list.includes('빈태그') && !got.list.includes('오타태그')
+            && !got.list.includes('엑스') && !got.list.includes('와이') && got.list.includes('"name":"제트","count":0,"hotkey":6')
+            && read.skipped === 0 && !startLog.includes('건너뜀:'),
+            JSON.stringify([want, got, read.skipped, startLog.slice(-300)])));
+        });
+
+        await scene('57k', async () => {
+          // 57k 옛 DB: 이 기능 전에 붙인 태그(정의 없음)는 켤 때 목록에 채워져 바꿀 수 있음. 사진 파일은 처음 그대로
+          const { DatabaseSync } = require('node:sqlite');
+          for (const g of fakes.splice(0)) g.close();
+          const raw = new DatabaseSync(path.join(P.ud, 'library.db'));
+          raw.exec("INSERT INTO manual_tags (path, root, name) VALUES ('" + path.join(P.root, 'c.jpg').replace(/'/g, "''") + "', '" + P.root.replace(/'/g, "''") + "', '옛태그')");
+          raw.exec("DELETE FROM tag_names WHERE name = '옛태그'");
+          raw.close();
+          call = makeFake();
+          const list = JSON.parse(await listMine(call));
+          const r = await call('gallery:tag-rename', '옛태그', '새태그', false);
+          out.push(sub('57k 옛 DB 의 정의 없는 태그도 켤 때 목록에 채워지고(시작 로그) 이름을 바꿀 수 있음, 사진 · 영상 파일은 처음 그대로',
+            list.some((t) => t.name === '옛태그' && t.count === 1) && r.count === 1 && JSON.stringify(mineOf('c.jpg')) === '["새태그"]'
+            && logsOf('gallery-start').includes('태그 목록에 채웠어요') && bytes() === before,
+            JSON.stringify([list, r])));
+        });
+      } finally {
+        for (const g of fakes) {
+          try {
+            g.close();
+          } catch (e) { /* 이미 닫힘 */ }
+        }
+      }
+
+      // 57l 화면 글과 연결 (빌드 전 원본 글자로 확인)
+      {
+        const F = await import('../src/format.mjs');
+        const texts = [F.appliedText(3, 'tagAdd', '여행'), F.appliedText(2, 'tagDelete', '여행'), F.appliedText(2, 'tagRename', '휴가'),
+          F.undoLabel(2, 'tagDelete'), F.undoneText(2, 'tagRename'), F.appliedText(3, 'tagAdd')];
+        const want = ["3장에 '여행' 붙였어요", "2장에서 '여행' 태그를 지웠어요", "2장의 태그를 '휴가' 이름으로 바꿨어요", '2장 태그 지우기 되돌리기', '2장 태그 이름 바꾸기를 되돌렸어요', '3장에 태그를 붙였어요'];
+        const src = (f) => fs.readFileSync(path.join(__dirname, '..', 'src', f), 'utf8');
+        const pre = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+        const wired = src('components/Sidebar.jsx').includes('onNewTag') && src('components/TagsView.jsx').includes('이름 바꾸기')
+          && src('components/TagsView.jsx').includes('<select') && src('components/ContextMenu.jsx').includes('quickTagLabel')
+          && src('App.jsx').includes('tagKeyAction(') && src('App.jsx').includes('<TagManageDialog') && src('components/DetailPanel.jsx').includes('data-key="T"')
+          && ['gallery:tag-create', 'gallery:tag-hotkey', 'gallery:tag-rename-preview', 'gallery:tag-rename', 'gallery:tag-delete'].every((c) => pre.includes(`'${c}'`));
+        out.push(sub('57l 알림 글 ("3장에 \'여행\' 붙였어요" 등)과 화면 연결 (새 태그 버튼, 숫자 고르기, 우클릭 바로 붙이기, 단축키, preload 다섯 통로)',
+          JSON.stringify(texts) === JSON.stringify(want) && wired, JSON.stringify(texts)));
+      }
       return out;
     },
   },
@@ -421,7 +742,7 @@ async function tagProbe() {
   await wait(() => !foot().disabled);
   q.readyButton = foot().innerText;
   foot().click();
-  const applied = await wait(() => byText('.banner', '태그를 붙였어요'));
+  const applied = await wait(() => byText('.banner', '붙였어요'));
   q.applied = applied ? applied.querySelector('strong').innerText : '';
   q.undoButton = applied ? (applied.querySelector('button') || {}).innerText : '';
   const chip = await wait(() => document.querySelector('.panel .chip.mine'));
@@ -455,8 +776,107 @@ async function tagProbe() {
   await wait(() => !rfoot().disabled);
   q.removeButton = rfoot().innerText;
   rfoot().click();
-  const removed = await wait(() => byText('.banner', '태그를 뗐어요'));
+  const removed = await wait(() => byText('.banner', '뗐어요'));
   q.removed = removed ? removed.querySelector('strong').innerText : '';
+
+  // ---------- 2026-11-18: 새 태그 만들기, 숫자 정하기, 단축키(T, 숫자), 이름 바꾸기, 지우기 · 되돌리기 ----------
+  const setVal = (el, v) => {
+    const sel = el.tagName === 'SELECT';
+    Object.getOwnPropertyDescriptor(sel ? HTMLSelectElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, v);
+    el.dispatchEvent(new Event(sel ? 'change' : 'input', { bubbles: true }));
+  };
+  const press = (code, key) => document.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true }));
+  const bannerText = (text) => {
+    const b = byText('.banner', text);
+    return b ? b.querySelector('strong').innerText : '';
+  };
+  const flat = (el) => (el ? el.innerText.replace(/\s+/g, '') : '');
+  const sideRow = (name) => [...document.querySelectorAll('.side .tag-row')].find((b) => b.querySelector('.menu-label').innerText === name);
+  const manageRow = (name) => [...document.querySelectorAll('.tag-manage-row')].find((r) => r.querySelector('.menu-label').innerText === name);
+
+  // 새 태그 (왼쪽 메뉴)
+  const newBtn = await wait(() => document.querySelector('.side .side-new'));
+  if (!newBtn) return { ...q, stop: '새 태그 버튼이 없어요' };
+  newBtn.click();
+  const md = await wait(() => document.querySelector('.tag-manage'));
+  if (!md) return { ...q, stop: '새 태그 창이 없어요' };
+  const mfoot = () => document.querySelector('.tag-manage .dialog-foot button.primary');
+  q.createStart = mfoot().innerText;
+  setVal(md.querySelector('input.tag-input'), '가족');
+  await wait(() => mfoot().innerText.includes('가족'));
+  q.createButton = mfoot().innerText;
+  mfoot().click();
+  q.sideNew = flat(await wait(() => sideRow('가족')));
+
+  // 태그 화면에서 숫자 1
+  byText('.menu button.menu-row', '태그').click();
+  const row = await wait(() => manageRow('가족'));
+  if (!row) return { ...q, stop: '태그 화면에 가족 줄이 없어요' };
+  setVal(row.querySelector('select'), '1');
+  const key = await wait(() => { const r = sideRow('가족'); return r && r.querySelector('.tag-key'); });
+  q.sideKey = key ? key.innerText : '';
+
+  // 갤러리: 사진 하나 고르고 T, 검색 칸에서 1, 그다음 1
+  byText('.menu button.menu-row', '갤러리').click();
+  const cell2 = await wait(() => document.querySelector('button.cell'));
+  if (!cell2) return { ...q, stop: '갤러리 칸이 없어요' };
+  cell2.click();
+  await wait(() => document.querySelector('button.cell.selected'));
+  cell2.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 200, clientY: 200 }));
+  const qm = await wait(() => document.querySelector('.context-menu button.quick-tag'));
+  q.quickMenu = qm ? qm.innerText : '';
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await wait(() => !document.querySelector('.context-menu'));
+  cell2.focus();
+  press('KeyT', 't');
+  const td = await wait(() => document.querySelector('.tag-dialog:not(.tag-manage)'), 5000);
+  q.tKey = !!td;
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await wait(() => !document.querySelector('.tag-dialog'));
+  const search = document.querySelector('.search input');
+  if (search) {
+    search.focus();
+    press('Digit1', '1');
+    await new Promise((res) => setTimeout(res, 800));
+    q.typingIgnored = !bannerText("'가족' 붙였어요");
+    search.blur();
+  }
+  press('Digit1', '1');
+  await wait(() => bannerText("'가족' 붙였어요"));
+  q.quick = bannerText("'가족' 붙였어요");
+  const qb = byText('.banner', "'가족' 붙였어요");
+  q.quickUndo = qb ? (qb.querySelector('button') || {}).innerText : '';
+
+  // 이름 바꾸기 → 지우기 → 되돌리기 (태그 화면)
+  byText('.menu button.menu-row', '태그').click();
+  const row2 = await wait(() => manageRow('가족'));
+  if (!row2) return { ...q, stop: '태그 화면에 가족 줄이 없어요 (두 번째)' };
+  [...row2.querySelectorAll('.link-button')].find((b) => b.innerText === '이름 바꾸기').click();
+  const rd2 = await wait(() => document.querySelector('.tag-manage'));
+  if (!rd2) return { ...q, stop: '이름 바꾸기 창이 없어요' };
+  setVal(rd2.querySelector('input.tag-input'), '친구');
+  q.renameButton = mfoot().innerText;
+  mfoot().click();
+  await wait(() => bannerText("'친구' 이름으로"));
+  q.renamed = bannerText("'친구' 이름으로");
+  const row3 = await wait(() => manageRow('친구'));
+  if (!row3) return { ...q, stop: '바꾼 이름 줄이 없어요' };
+  [...row3.querySelectorAll('.link-button')].find((b) => b.innerText === '지우기').click();
+  await wait(() => document.querySelector('.tag-manage'));
+  q.deleteButton = mfoot().innerText;
+  mfoot().click();
+  await wait(() => bannerText("'친구' 태그를 지웠어요"));
+  q.deleted = bannerText("'친구' 태그를 지웠어요");
+  const db2 = byText('.banner', "'친구' 태그를 지웠어요");
+  const undoBtn = db2 && db2.querySelector('button');
+  q.deleteUndo = undoBtn ? undoBtn.innerText : '';
+  if (undoBtn) {
+    await wait(() => !undoBtn.disabled);
+    undoBtn.click();
+    q.undone = !!(await wait(() => bannerText('태그 지우기를 되돌렸어요')));
+    const back = await wait(() => { const r = sideRow('친구'); return r && r.querySelector('.tag-key') ? r : null; });
+    q.backKey = back ? `${back.querySelector('.menu-label').innerText}${back.querySelector('.tag-key').innerText}` : '';
+  }
   return q;
 }
 

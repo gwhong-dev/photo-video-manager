@@ -77,6 +77,12 @@ contextBridge.exposeInMainWorld('api', {
     selectionTags: (ids) => ipcRenderer.invoke('gallery:selection-tags', ids),
     previewTag: (ids, edit) => ipcRenderer.invoke('gallery:tag-preview', ids, edit),
     applyTag: (ids, edit) => ipcRenderer.invoke('gallery:tag-apply', ids, edit),
+    // 태그 만들기 · 이름 바꾸기 · 지우기 · 단축키 숫자 (2026-11-18). 이름과 숫자만 넘겨요
+    createTag: (name) => ipcRenderer.invoke('gallery:tag-create', name),
+    setTagHotkey: (name, key) => ipcRenderer.invoke('gallery:tag-hotkey', name, key),
+    previewTagRename: (from, to) => ipcRenderer.invoke('gallery:tag-rename-preview', from, to),
+    renameTag: (from, to, merge) => ipcRenderer.invoke('gallery:tag-rename', from, to, merge === true),
+    deleteTag: (name) => ipcRenderer.invoke('gallery:tag-delete', name),
     openMapCredit: () => ipcRenderer.invoke('gallery:open-map-credit'),
     // 비슷한 사진: 묶음 목록, 버리기 미리보기, 버리기 (id로만)
     listSimilar: () => ipcRenderer.invoke('gallery:similar-list'),

@@ -41,7 +41,7 @@ function Actions({ count, canCopy, hasCopy, onCopy, onPaste, onDirect, onMap, on
       {hasCopy && <button type="button" onClick={onPaste}>{n}장에 붙여넣기</button>}
       <button type="button" onClick={onDirect}>{n}장에 날짜 직접 넣기</button>
       <button type="button" onClick={onMap}>{n}장 위치 지도에서 고르기</button>
-      <button type="button" onClick={onTagAdd}>{n}장에 태그 붙이기</button>
+      <button type="button" data-key="T" onClick={onTagAdd} title="T 키로도 열 수 있어요">{n}장에 태그 붙이기</button>
       <button type="button" onClick={onTagRemove}>{n}장에서 태그 떼기</button>
       {onTrash && <button type="button" className="trash-button" onClick={onTrash} title="Delete 키로도 열 수 있어요">{trashMenuLabel(count)}</button>}
     </div>

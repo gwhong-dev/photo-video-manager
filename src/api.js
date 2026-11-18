@@ -40,6 +40,11 @@ export const api = {
   selectionTags: (ids) => gallery().selectionTags(ids),
   previewTag: (ids, edit) => gallery().previewTag(ids, edit),
   applyTag: (ids, edit) => gallery().applyTag(ids, edit),
+  createTag: (name) => gallery().createTag(name),
+  setTagHotkey: (name, key) => gallery().setTagHotkey(name, key), // key: 1~9 또는 null(빼기)
+  previewTagRename: (from, to) => gallery().previewTagRename(from, to), // { merge } = 같은 이름의 내 태그가 있으면 합치기
+  renameTag: (from, to, merge) => gallery().renameTag(from, to, merge),
+  deleteTag: (name) => gallery().deleteTag(name),
   openMapCredit: () => gallery().openMapCredit(),
   // 비슷한 사진
   listSimilar: () => gallery().listSimilar(),

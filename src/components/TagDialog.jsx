@@ -13,10 +13,11 @@ import { formatCount, manyCheckText, needsManyCheck, tagApplyLabel } from '../fo
 const NAME_DELAY_MS = 200; // 입력을 멈추고 이 시간이 지나면 미리보기
 
 // mode, ids(열 때 고른 사진 번호들), onClose(), onApplied(결과)
-export default function TagDialog({ mode, ids, onClose, onApplied }) {
+//   initialName = 처음부터 적어 둘 이름 (숫자 단축키로 100장 이상을 붙일 때, 장수 확인을 이 창에서 받으려고)
+export default function TagDialog({ mode, ids, onClose, onApplied, initialName = '' }) {
   const adding = mode === 'tagAdd';
-  const [text, setText] = useState(''); // 붙이기: 적고 있는 이름
-  const [name, setName] = useState(''); // 미리보기를 부탁할 이름 (붙이기는 입력을 멈춘 뒤, 떼기는 고른 것)
+  const [text, setText] = useState(initialName); // 붙이기: 적고 있는 이름
+  const [name, setName] = useState(initialName); // 미리보기를 부탁할 이름 (붙이기는 입력을 멈춘 뒤, 떼기는 고른 것)
   const [known, setKnown] = useState([]); // 붙이기: 있는 태그 이름들, 떼기: 고른 사진들의 태그와 장수
   const [knownError, setKnownError] = useState('');
   const [pv, setPv] = useState({ key: null, loading: false, preview: null, error: '' });

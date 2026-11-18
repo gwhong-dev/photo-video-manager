@@ -463,6 +463,28 @@ button.primary:disabled { background: var(--panel); color: var(--sub); border-co
 .tag-choice { padding: 4px 10px; font-size: 13px; }
 .tag-choice.on { border-color: var(--sub); color: var(--text); }
 
+/* 태그 만들기 · 이름 바꾸기 · 지우기 · 단축키 (2026-11-18) */
+.tags-view { max-width: 680px; }
+.tags-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.tags-head .panel-heading { margin: 0; }
+.tags-new { padding: 5px 12px; font-size: 13px; }
+.tag-manage-row { display: flex; align-items: center; gap: 4px 12px; border-bottom: 1px solid var(--line); }
+.tag-manage-row .tag-row { flex: 1; min-width: 0; }
+.tag-manage-row .link-button { padding: 4px 2px; font-size: 12px; flex: none; }
+.tag-key-pick { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); flex: none; }
+.tag-key-pick select { padding: 2px 4px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--text); font: inherit; }
+/* 단축키 숫자 표시 (왼쪽 메뉴): 작은 네모 칸 */
+.tag-key { flex: none; margin-left: auto; min-width: 18px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; line-height: 16px; text-align: center; color: var(--sub); }
+.tag-key + .menu-count { margin-left: 0; }
+.side-heading-row { display: flex; align-items: baseline; justify-content: space-between; }
+.side-heading-row .side-new { padding: 0 10px; font-size: 12px; }
+/* 단축키 글자(T, 숫자)를 버튼 오른쪽에 (버튼 글자에는 안 들어가요) */
+.context-menu button[data-key], .panel-actions button[data-key] { display: flex; align-items: center; gap: 16px; }
+.context-menu button[data-key]::after, .panel-actions button[data-key]::after {
+  content: attr(data-key); margin-left: auto; min-width: 18px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px;
+  font-size: 11px; line-height: 16px; text-align: center; color: var(--faint);
+}
+
 /* ---------- 지도 화면 (단계 6, Figma "지도") ---------- */
 /* 지도는 색을 빼고 숫자 핀만 또렷하게. 핀을 누르면 그 장소에서 찍은 사진이 오른쪽 패널에 나와요 */
 .map-view { position: relative; flex: 1; min-height: 0; isolation: isolate; }
