@@ -42,6 +42,7 @@ const items = [
       const rules = [
         ['.jpg', 'MOV', '.mov'], ['.heic', 'JPEG', '.jpg'], ['.jpg', 'HEIC', '.heic'], ['.png', 'MP4', '.mp4'],
         ['.jpg', 'JPEG', '.jpg'], ['.jpeg', 'JPEG', '.jpeg'], ['.tiff', 'TIFF', '.tiff'],
+        ['.heic', 'HEIF', '.heic'], ['.heif', 'HEIC', '.heif'], ['.heif', 'HEIF', '.heif'], ['.jpg', 'HEIF', '.heic'],
         ['.mp4', 'MOV', '.mp4'], ['.jpg', undefined, '.jpg'], ['.jpg', 'MPO', '.jpg'],
       ];
       const wrong = rules.filter(([ext, ft, want]) => contentExt(ext, ft) !== want).map(([ext, ft, want]) => `${ext}+${ft}→${contentExt(ext, ft)}(기대 ${want})`);
