@@ -1747,6 +1747,8 @@ const ITEMS = [
   ...require('./check-run-screen').items,
   // 56번은 갤러리에서 고른 사진 휴지통으로 옮기기 점검 (scripts/check-gallery-trash.js)
   ...require('./check-gallery-trash').items,
+  // 59번은 확장자와 내용이 다른 파일 점검 (scripts/check-content-type.js)
+  ...require('./check-content-type').items,
   // 51번은 한국어 답변 훅 점검 (scripts/check-korean-hook.js)
   ...require('./check-korean-hook').items,
   // 58번은 원본 정리 확인 창의 중복 비교 점검 (scripts/check-dup-compare.js)
