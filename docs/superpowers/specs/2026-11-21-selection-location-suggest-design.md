@@ -34,4 +34,4 @@
 - 제안 표는 기존 `listSuggestions` 응답에 `picks` · `pickSources` 를 더해 받는다 (preload 를 바꾸지 않으려고). 목록 번호(gen)마다 한 번, 사진을 고른 동안만
 
 ## 5. 점검
-`scripts/check-pick-suggest.js` (62): 규칙 a~d, 묶기 · 글자 e~f, 연결 g, 진짜 앱 h (샘플 복사본, 그만두기로 닫음)
+`scripts/check-pick-suggest.js` (63): 규칙 a~d, 묶기 · 글자 e~f, 연결 g, 진짜 앱 h (샘플 복사본, 그만두기로 닫음)
