@@ -498,6 +498,7 @@ export default function App() {
       const files = await api.listFiles(day, view.filter);
       const ids = Array.isArray(files) ? files.map((f) => f.id) : [];
       if (scopeRef.current !== at || openWindowsRef.current || ids.length === 0) return;
+      setCellMenuAt(null); // 받는 사이 우클릭 메뉴가 열렸으면 닫아요 (그날 전체에 메뉴의 태그가 붙지 않게, #127 검증 ⚠️)
       setSelection(selectionOf(ids)); // 오른쪽 패널도 같은 장수를 보여 줘요
       setNotice('');
       setTrashIds(ids);

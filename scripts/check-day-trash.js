@@ -28,6 +28,7 @@ const items = [
 
       // 61b 화면 연결: 휴지통이 있는 화면(갤러리 · 정보 없는 사진)에서 위치 제안이 닫혀 있을 때만 링크를 넘기고,
       //     누르면 그날 번호를 받아 선택 + 같은 확인 창(trashIds → TrashDialog). 색은 "이 날 모두 선택"과 같음
+      //     받는 사이 화면 · 필터가 바뀌거나 다른 창이 열리면 안 열고, 두 번 눌러도 한 번만 (#127 검증 ⚠️로 막기까지 확인)
       {
         const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
         const app = read('src/App.jsx');
@@ -36,8 +37,11 @@ const items = [
         const fn = (app.match(/const trashDay = async \(day\) => \{[\s\S]*?\n {2}\};/) || [''])[0];
         const dayTrashCss = (css.match(/\.day-trash \{[^}]*\}/) || [''])[0];
         const ok = /onTrashDay=\{trashScreen && !suggestOpen \? trashDay : undefined\}/.test(app)
-          && /!trashScreen \|\| suggestOpen/.test(fn) && /api\.listFiles\(day, view\.filter\)/.test(fn)
-          && /scopeRef\.current !== at/.test(fn) && /setSelection\(selectionOf\(ids\)\)/.test(fn) && /setTrashIds\(ids\)/.test(fn)
+          && /!viewCurrent \|\| !trashScreen \|\| suggestOpen \|\| openWindowsRef\.current \|\| dayTrashBusy\.current/.test(fn)
+          && /api\.listFiles\(day, view\.filter\)/.test(fn)
+          && /scopeRef\.current !== at \|\| openWindowsRef\.current \|\| ids\.length === 0/.test(fn) // 받는 사이 바뀌었으면 안 열어요
+          && /dayTrashBusy\.current = false/.test(fn) && /setCellMenuAt\(null\); \/\/ 받는 사이/.test(fn)
+          && /setSelection\(selectionOf\(ids\)\)/.test(fn) && /setTrashIds\(ids\)/.test(fn)
           && !/trashSelected/.test(fn) // 링크가 바로 옮기지 않아요 (확인 창만 열어요)
           && /onTrashDay && row\.dayCount > 0/.test(grid) && /dayTrashLabel\(row\.dayCount\)/.test(grid)
           && dayTrashCss !== '' && !/color/.test(dayTrashCss);
@@ -45,7 +49,7 @@ const items = [
           `trashDay ${fn ? '있음' : '없음'}, .day-trash ${dayTrashCss || '없음'}`));
       }
 
-      // 61c 진짜 앱: 정보 없는 사진(날짜 없음 3장) 날짜 칸에 "이 날 3장 휴지통으로" → 누르면 3장 고른 확인 창,
+      // 61c 진짜 앱: 갤러리 화면에서 같은 날 3장의 날짜 칸에 "이 날 3장 휴지통으로" → 누르면 3장 고른 확인 창,
       //     오른쪽 패널도 3장, "그만두기"로 닫으면 파일 그대로
       {
         const { launchCheck } = require('./launch-check');
