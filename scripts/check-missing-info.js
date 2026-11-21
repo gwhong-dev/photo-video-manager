@@ -1690,7 +1690,7 @@ const items = [
   {
     no: 25,
     name: '여러 장 선택 계산',
-    async run() {
+    async run(env) {
       const out = [];
       // src/selection.mjs 는 React가 없는 순수 계산이에요 (grid-layout.mjs 점검과 같이 file:// 주소로 불러와요)
       const { pathToFileURL } = require('url');
@@ -1700,7 +1700,7 @@ const items = [
       } catch (e) {
         return [sub('src/selection.mjs 불러오기', false, e.message)];
       }
-      const { nextSelection, EMPTY_SELECTION, selectionOf, selectionForMenu, filterScope, viewMatches } = m;
+      const { nextSelection, needsWholeList, EMPTY_SELECTION, selectionOf, selectionForMenu, filterScope, viewMatches } = m;
       const sorted = (sel) => [...sel.ids].sort((a, b) => a - b).join();
       const D = [10, 11, 12, 13, 14].map((id) => ({ id })); // 한 날의 파일 5장
       const none = EMPTY_SELECTION;
@@ -1765,6 +1765,50 @@ const items = [
           && viewMatches(null, F()) === false,
       ));
       out.push(sub('25h filterScope: 빈 값 info/tag는 없는 것과 같음', filterScope(F()) === filterScope(F({ info: undefined, tag: null })) && filterScope(F({ info: 'noDate' })) !== filterScope(F())));
+
+      // 25i 날을 넘는 Shift 범위 (2026-11-21 사용자 지적 "쉬프트로 범위 선택이 안 됨"): anchor 가 그 날에 없으면 목록 전체 번호로 범위를 세요
+      const W = [10, 11, 12, 13, 14, 20, 21, 22]; // 목록 전체 번호 (화면 순서: D 의 날 → other 의 날)
+      out.push(sub('25i needsWholeList: Shift 이고 anchor 가 다른 날일 때만 목록 전체가 필요',
+        needsWholeList(c1, { shift: true, dayFiles: other }) === true
+          && needsWholeList(c1, { shift: true, dayFiles: D }) === false
+          && needsWholeList(c1, { shift: false, dayFiles: other }) === false
+          && needsWholeList(none, { shift: true, dayFiles: other }) === false
+          && needsWholeList(selectionOf([10, 11]), { shift: true, dayFiles: other }) === false));
+      const i1 = nextSelection(a1, { id: 21, shift: true, dayFiles: W });
+      const i2 = nextSelection(nextSelection(none, { id: 21, dayFiles: other }), { id: 12, shift: true, dayFiles: W });
+      const i3 = nextSelection(b1, { id: 20, ctrl: true, shift: true, dayFiles: W }); // b1 = 11, 13 고름 (anchor 13)
+      out.push(sub('25i 목록 전체 번호로는 날을 넘어 anchor 부터 누른 칸까지 (거꾸로도), Ctrl+Shift 는 기존 선택에 더함',
+        sorted(i1) === '11,12,13,14,20,21' && i1.anchor === 11 && i1.focus === 21 && sorted(i2) === '12,13,14,20,21' && sorted(i3) === '11,13,14,20',
+        JSON.stringify([[...i1.ids], [...i2.ids], [...i3.ids]])));
+      {
+        const app = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.jsx'), 'utf8');
+        const start = app.indexOf('const onCellClick = useCallback(');
+        const body = start < 0 ? '' : app.slice(start, app.indexOf('}, []);', start));
+        out.push(sub('25i App 칸 클릭: needsWholeList 면 api.listIds(지금 목록 필터)로 받아 범위, 받는 사이 필터가 바뀌면 버림',
+          body.includes('needsWholeList(selectionRef.current') && body.includes('api.listIds(viewFilterRef.current)') && body.includes('scopeRef.current !== at')));
+      }
+
+      // 25j 진짜 앱: 다른 두 날의 사진에서 클릭 → Shift+클릭하면 두 날에 걸친 범위가 모두 골라짐, Ctrl+클릭은 더하기
+      {
+        const { launchCheck } = require('./launch-check');
+        const { makeImage } = require('./check-similar');
+        const root = path.join(env.tmp, 'launch-range-root');
+        // 이름의 날짜로 찍은 날이 정해져요: 03.05 에 3장, 03.01 에 3장 (화면은 최근 날이 위)
+        for (let i = 1; i <= 6; i++) await makeImage(path.join(root, `KakaoTalk_2026030${i <= 3 ? 1 : 5}_10000${i}.jpg`), { seed: i * 7 });
+        const ud = path.join(env.tmp, 'launch-range-ud');
+        fs.mkdirSync(ud, { recursive: true });
+        fs.writeFileSync(path.join(ud, 'settings.json'), JSON.stringify({ backupRoot: root }), 'utf8');
+        const r = await launchCheck(path.join(__dirname, '..'), {
+          env: { PVM_USER_DATA: ud },
+          until: '백업 폴더 다시 읽기',
+          untilMs: 30000,
+          probe: `(${rangeProbe.toString()})()`,
+        });
+        const q = r.probed || {};
+        out.push(sub('25j 진짜 앱: 03.05 첫 칸 클릭 → 03.01 두 번째 칸 Shift+클릭 = 5장, Ctrl+클릭으로 1장 더해 6장, 화면 오류 없음',
+          q.days === '03.05,03.01' && q.afterClick === '100000' && q.afterShift === '111110' && q.afterCtrl === '111111' && !(r.errors || []).some((e) => !/Failed to load resource/.test(e)),
+          `${JSON.stringify(q).slice(0, 300)} / 오류 ${(r.errors || []).length}개`));
+      }
       return out;
     },
   },
@@ -1828,6 +1872,26 @@ const items = [
     },
   },
 ];
+
+// 25j 진짜 앱 창 안에서 도는 확인 (launch-check 의 probe). 칸을 누르기만 하고 옮기기 · 지우기는 하지 않아요
+async function rangeProbe() {
+  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+  const cells = () => [...document.querySelectorAll('button.cell')];
+  for (let i = 0; i < 150 && cells().length < 6; i++) await sleep(200);
+  const state = () => cells().map((b) => (b.getAttribute('aria-pressed') === 'true' ? 1 : 0)).join('');
+  const click = async (i, opts = {}) => {
+    cells()[i].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ...opts }));
+    await sleep(600); // 날을 넘는 범위는 목록 번호를 받아 오는 시간이 있어요
+  };
+  const days = [...document.querySelectorAll('.day-date')].map((d) => d.innerText).join(',');
+  await click(0);
+  const afterClick = state();
+  await click(4, { shiftKey: true });
+  const afterShift = state();
+  await click(5, { ctrlKey: true });
+  const afterCtrl = state();
+  return { days, afterClick, afterShift, afterCtrl };
+}
 
 module.exports = { items };
 
