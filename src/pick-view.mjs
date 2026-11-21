@@ -17,6 +17,12 @@ function kmBetween(a, b) {
   return 2 * 6371 * Math.asin(Math.sqrt(h));
 }
 
+// 'YYYY-MM-DDTHH:MM:SS' → 초 (시간대 없이 글자 그대로, lib/location-suggest.js 와 같음). 모양이 다르면 null
+function secondsOf(text) {
+  const m = typeof text === 'string' ? /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(text) : null;
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : null;
+}
+
 // listSuggestions 응답 → 찾기 쉬운 표 { byId: Map(사진 번호 → 제안), sources: { 번호: 근거 사진 } }. 응답이 이상하면 빈 표
 export function pickTable(res) {
   const byId = new Map();
@@ -28,6 +34,7 @@ export function pickTable(res) {
 
 // 고른 사진(ids: Set 또는 배열)의 제안. 제안 받을 사진이 없으면 null
 //   돌려주는 값: { count: 제안 받는 장수, places: [{ source, ids, kind: 'near'|'between'|'mixed', gapMin, gapMax }] }
+//   gapMin · gapMax 는 그곳의 근거 사진(source, 넣을 위치의 주인)과 각 사진의 실제 시간 차이예요 (분). 창에 보이는 근거 사진과 맞아요
 //   places 는 장수가 많은 곳부터. 같으면 근거 사진 시각, 그다음 번호 순
 export function selectionPick(ids, table) {
   if (!table) return null;
@@ -38,8 +45,12 @@ export function selectionPick(ids, table) {
   }
   if (!mine.length) return null;
   const src = (p) => table.sources[p.sourceId];
-  // 근거 사진 시각 순서로 보며 묶어요 (탭처럼 먼저 만든 곳의 근거 사진이 그곳의 위치가 돼요)
-  mine.sort((a, b) => String(src(a).takenAt).localeCompare(String(src(b).takenAt)) || a.sourceId - b.sourceId || a.id - b.id);
+  // 먼저 만든 곳의 근거 사진이 그곳의 위치가 돼요. 고른 사진 중 가장 많은 사진의 근거 사진부터 보아서,
+  //   되도록 많은 사진이 자기와 가장 가까운 사진의 좌표를 그대로 받게 해요 (같으면 근거 사진 시각, 그다음 번호)
+  const uses = new Map();
+  for (const p of mine) uses.set(p.sourceId, (uses.get(p.sourceId) || 0) + 1);
+  mine.sort((a, b) => uses.get(b.sourceId) - uses.get(a.sourceId)
+    || String(src(a).takenAt).localeCompare(String(src(b).takenAt)) || a.sourceId - b.sourceId || a.id - b.id);
   const places = [];
   for (const p of mine) {
     const s = src(p);
@@ -50,8 +61,12 @@ export function selectionPick(ids, table) {
     }
     place.ids.push(p.id);
     place.kinds.add(p.kind);
-    place.gapMin = Math.min(place.gapMin, p.gapMinutes);
-    place.gapMax = Math.max(place.gapMax, p.gapMinutes);
+    // 묶이면 위치는 그곳의 근거 사진 것을 받아서, 시간 차이도 그 사진과 다시 재요 (대상 시각이 없으면 원래 차이)
+    const a = secondsOf(p.takenAt);
+    const b = secondsOf(place.source.takenAt);
+    const gap = a !== null && b !== null ? Math.round(Math.abs(a - b) / 60) : p.gapMinutes;
+    place.gapMin = Math.min(place.gapMin, gap);
+    place.gapMax = Math.max(place.gapMax, gap);
   }
   places.sort((a, b) => b.ids.length - a.ids.length
     || String(a.source.takenAt).localeCompare(String(b.source.takenAt)) || a.source.id - b.source.id);
@@ -59,6 +74,12 @@ export function selectionPick(ids, table) {
     count: mine.length,
     places: places.map(({ kinds, ...g }) => ({ ...g, kind: kinds.size > 1 ? 'mixed' : [...kinds][0] })),
   };
+}
+
+// 한 곳을 넣은 뒤 남길 선택: 지금 선택에서 넣은 사진을 뺀 번호들 (넣은 사진이 목록에서 빠져도 보이지 않는 사진이 선택에 남지 않게)
+export function remainingAfter(selectedIds, placeIds) {
+  const done = new Set(placeIds);
+  return [...selectedIds].filter((id) => !done.has(id));
 }
 
 // 버튼 글자: 결과를 말해요. 한 번에 넣는 것은 첫 곳의 장수예요 ("3장에 근처 사진 위치 넣기")

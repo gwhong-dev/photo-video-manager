@@ -59,7 +59,7 @@ const items = [
         const a = located({ takenAt: at('10:00') });
         const b = located({ takenAt: at('16:00'), lat: 37.505 }); // 약 0.6km
         const t = file({ takenAt: at('12:00') });
-        const t2 = file({ takenAt: at('13:00') });
+        const t2 = file({ takenAt: at('13:00') }); // 앞 10:00 · 뒤 16:00 과 똑같이 180분 → 앞 사진
         const r = pickSuggestions([a, b, t, t2]);
         const p = pickOf(r, t.id);
         const p2 = pickOf(r, t2.id);
@@ -100,11 +100,13 @@ const items = [
       {
         const res = {
           picks: [
-            { id: 1, kind: 'near', sourceId: 100, gapMinutes: 0 },
-            { id: 2, kind: 'near', sourceId: 100, gapMinutes: 0 },
-            { id: 3, kind: 'near', sourceId: 101, gapMinutes: 21 }, // 0.6km → 같은 곳
-            { id: 4, kind: 'between', sourceId: 102, gapMinutes: 90 }, // 다른 날
-            { id: 5, kind: 'near', sourceId: 103, gapMinutes: 5 }, // 서울 → 다른 곳
+            { id: 1, takenAt: at('13:21'), kind: 'near', sourceId: 100, gapMinutes: 0 },
+            { id: 2, takenAt: at('13:21'), kind: 'near', sourceId: 100, gapMinutes: 0 },
+            { id: 3, takenAt: at('19:23'), kind: 'near', sourceId: 101, gapMinutes: 21 }, // 0.6km → 같은 곳
+            { id: 4, takenAt: '2026-10-26T11:30:00', kind: 'between', sourceId: 102, gapMinutes: 90 }, // 다른 날
+            { id: 5, takenAt: at('20:05'), kind: 'near', sourceId: 103, gapMinutes: 5 }, // 서울 → 다른 곳
+            { id: 6, takenAt: at('19:00'), kind: 'near', sourceId: 101, gapMinutes: 2 },
+            { id: 7, takenAt: at('19:05'), kind: 'near', sourceId: 101, gapMinutes: 3 },
           ],
           pickSources: {
             100: { id: 100, name: 'a.mp4', takenAt: at('13:21'), takenDay: '2026-10-25', ...PLACE },
@@ -117,18 +119,25 @@ const items = [
         const one = V.selectionPick(new Set([1, 2, 3, 99]), table);
         const many = V.selectionPick([5, 4, 1, 2], table);
         const none = V.selectionPick([99], table);
+        const later = V.selectionPick([1, 6, 7], table); // 근거 101 을 고른 사진이 더 많아요 → 그곳의 위치 = 101
         const ok = one && one.count === 3 && one.places.length === 1 && one.places[0].source.id === 100 && one.places[0].ids.join() === '1,2,3'
-          && one.places[0].kind === 'near' && one.places[0].gapMax === 21
+          && one.places[0].kind === 'near' && one.places[0].gapMin === 0 && one.places[0].gapMax === 362 // 3번은 묶인 근거(13:21)와 다시 잼
+          && later && later.places.length === 1 && later.places[0].source.id === 101 && later.places[0].gapMin === 2 && later.places[0].gapMax === 341
           && many && many.places.length === 3 && many.places[0].ids.join() === '1,2' && none === null && V.selectionPick([1], null) === null;
-        out.push(sub('62e 같은 날 1km 안은 한 곳(근거 = 먼저 찍은 사진), 다른 날 · 먼 곳은 따로, 장수 많은 곳부터', !!ok, JSON.stringify([one, many && many.places.map((g) => g.ids)])));
+        out.push(sub('62e 같은 날 1km 안은 한 곳(근거 = 가장 많은 사진의 근거 사진), 시간 차이는 그 근거와 다시 잼, 다른 날 · 먼 곳은 따로, 장수 많은 곳부터', !!ok,
+          JSON.stringify([one, later, many && many.places.map((g) => g.ids)]).slice(0, 600)));
+
+        // 62e2 한 곳을 넣은 뒤 남길 선택: 넣은 사진만 빼요 (검증 ❌: 목록에서 빠진 사진이 휴지통 · 지도 대상에 남던 것)
+        const rest = V.remainingAfter(new Set([1, 2, 3, 4, 5]), [1, 2, 3]);
+        out.push(sub('62e2 넣은 뒤 선택은 넣은 사진만 빼고 남김', rest.join() === '4,5', rest.join()));
 
         // 62f 버튼 · 안내 글자: 결과를 말하고(장수), 끝에 → · 가운뎃점 없음. 여러 곳이면 한 곳씩 넣는다고 알림
         const label = V.pickButtonLabel(one);
-        const note = V.pickNote(one);
+        const note = V.pickNote(V.selectionPick([6, 7], table));
         const noteMany = V.pickNote(many);
         const noteBetween = V.pickNote(V.selectionPick([4], table));
-        out.push(sub('62f 버튼 "3장에 근처 사진 위치 넣기", 안내 "같은 날 21분 안에 찍은 사진 위치예요", 여러 곳 · 앞뒤 사진 안내 (→ · 가운뎃점 없음)',
-          label === '3장에 근처 사진 위치 넣기' && note === '같은 날 21분 안에 찍은 사진 위치예요'
+        out.push(sub('62f 버튼 "3장에 근처 사진 위치 넣기", 안내 "같은 날 3분 안에 찍은 사진 위치예요", 여러 곳 · 앞뒤 사진 안내 (→ · 가운뎃점 없음)',
+          label === '3장에 근처 사진 위치 넣기' && note === '같은 날 3분 안에 찍은 사진 위치예요'
             && /3곳이라 한 곳씩 넣어요$/.test(noteMany) && noteBetween === '앞뒤로 찍은 사진이 같은 곳이에요'
             && ![label, note, noteMany, noteBetween].some((t) => /[→·]/.test(t)),
           `${label} / ${note} / ${noteMany} / ${noteBetween}`));
@@ -147,15 +156,18 @@ const items = [
           && /edit = \{ source: 'copy', sourceId: source\.id, date: false, time: false, location: true, via: 'suggest' \}/.test(dlg)
           && /const pickScreen = \(screen === 'gallery' \|\| screen === 'missing'\) && !suggestOpen && !screening/.test(app)
           && /mode === 'map' && pick \? \{ lat: pick\.places\[0\]\.source\.lat, lng: pick\.places\[0\]\.source\.lng \}/.test(app)
-          && /onApplied\(r, \{ keep: dialog\.mode === 'suggest' && dialog\.more \}\)/.test(app)
-          && /if \(!keep\) setSelection\(EMPTY_SELECTION\)/.test(app)
+          && /onApplied\(r, \{ keep: dialog\.mode === 'suggest' && dialog\.more \? dialog\.ids : null \}\)/.test(app)
+          && /if \(keep && changed\) \{\s*const rest = remainingAfter\(selection\.ids, keep\);/.test(app) // 넣은 사진만 빼고 남겨요
+          && /if \(result\.dropped\) setNotice\(/.test(app) // 그 사이 위치가 생겨 뺀 장수 안내
+          && /const wantPick = pickScreen && !scanningNow && selection\.ids\.size > 0;/.test(app) // 폴더를 읽는 동안에는 받지 않음
           && /\{pick && onSuggest && \(\s*<div className="pick-suggest">/.test(panel)
           && /<>\s*\{pick && onSuggest && <button type="button" role="menuitem" onClick=\{onSuggest\}>/.test(menu);
-        out.push(sub('62g main 은 제안 표만 더 주고 넣기는 위치 제안 검사 그대로, 패널 · 메뉴 맨 위 버튼, 지도는 제안 위치에서, 남은 곳 있으면 선택 유지', ok));
+        out.push(sub('62g main 은 제안 표만 더 주고 넣기는 위치 제안 검사 그대로, 패널 · 메뉴 맨 위 버튼, 지도는 제안 위치에서, 남은 곳 있으면 넣은 사진만 빼고 선택 유지, 뺀 장수 안내, 읽는 중에는 안 받음', ok));
       }
 
       // 62h 진짜 앱: IMG_0104.jpg 에만 위치를 적은 샘플 복사본에서, 같은 시각의 IMG_0104(1).jpg 를 고르면
       //     오른쪽 패널과 우클릭 메뉴에 "1장에 근처 사진 위치 넣기" → 누르면 근거 사진 IMG_0104.jpg 와 바뀜 1장 미리보기 → 그만두기
+//     → 다시 열어 넣기 (임시 userData DB 에만) → 되돌리기 줄 · 버튼 사라짐
       {
         const { launchCheck } = require('./launch-check');
         const { detectTools, runOrThrow } = require('../lib/tools');
@@ -180,6 +192,8 @@ const items = [
         out.push(sub('62h 누르면 "근처 사진 위치 넣기" 창: 근거 사진 IMG_0104.jpg, 바뀜 1장, 지도 보임, 검색 칸 없음',
           q.title === '근처 사진 위치 넣기' && /근거 사진 IMG_0104\.jpg/.test(q.dialogText || '') && /바뀜 1장/.test(q.dialogText || '')
             && q.map === true && q.search === false && /1장에 위치 넣기|1장 넣기|넣기/.test(q.applyText || ''), seen));
+        out.push(sub('62h 넣기를 누르면 창이 닫히고 되돌리기 줄이 나오고 제안 버튼이 사라짐 (임시 DB 에만 저장)',
+          q.appliedClosed === true && !!q.banner && q.buttonGone === true, seen));
         out.push(sub('62h 그만두기로 닫음, 화면 오류 없음', q.closed === true && !(r.errors || []).some((e) => !/Failed to load resource/.test(e)),
           `${seen} / 오류 ${(r.errors || []).join(' | ').slice(0, 300)}`));
       }
@@ -231,6 +245,21 @@ async function pickProbe() {
   q.applyText = foot[1] ? foot[1].innerText.trim() : null;
   foot[0].click(); // 그만두기
   q.closed = !!(await wait(() => !document.querySelector('[aria-labelledby="edit-title"]')));
+  // 다시 열어 실제로 넣기 (임시 userData 의 DB 에만 저장돼요. 사진 파일은 바꾸지 않아요) → 되돌리기 줄, 버튼 사라짐
+  const again = await wait(() => document.querySelector('.pick-suggest button'));
+  if (!again) return { ...q, stop: '그만두기 뒤 버튼이 다시 안 보여요' };
+  again.click();
+  const ready = await wait(() => {
+    const d = document.querySelector('[aria-labelledby="edit-title"]');
+    const b = d && d.querySelectorAll('.dialog-foot button')[1];
+    return b && !b.disabled ? b : null;
+  });
+  if (!ready) return { ...q, stop: '넣기 버튼이 켜지지 않아요' };
+  ready.click();
+  q.appliedClosed = !!(await wait(() => !document.querySelector('[aria-labelledby="edit-title"]')));
+  const banner = await wait(() => [...document.querySelectorAll('.banner')].find((b) => /되돌/.test(b.innerText)));
+  q.banner = banner ? banner.innerText.replace(/\s+/g, ' ').slice(0, 120) : null;
+  q.buttonGone = !!(await wait(() => !document.querySelector('.pick-suggest')));
   return q;
 }
 
