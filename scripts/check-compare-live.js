@@ -202,6 +202,11 @@ const items = [
           `${seen} / 오류 ${(r.errors || []).join(' | ').slice(0, 300)}`));
         out.push(sub('64f 비교 창 안 재생 버튼: 누르면 재생, 누른 채 움직여도 사진이 끌리지 않음 / 열린 동안 뒤 화면 inert / 고정 칸 테두리는 빨강이 아님',
           q.compareLive === true && q.comparePlayed === true && q.noDrag === true && q.inert === true && !!q.pinColor && !/224, 65, 47/.test(q.pinColor), seen));
+        const st = q.strip || {};
+        out.push(sub('64g 아래 띠: 남김 사진을 보고 있어도 지금 칸은 밝은 바깥 테두리(빨강 아님) + 위로 올라감, 남김 빨강 테두리는 안쪽에 그대로, 다른 남김 칸엔 없음',
+          /241, 238, 230/.test(st.shadow || '') && !/inset/.test(st.shadow || '') && !/224, 65, 47/.test(st.shadow || '')
+            && /224, 65, 47/.test(st.outline || '') && st.otherShadow === 'none' && st.lift >= 3 && st.ariaCurrent === 'true' && st.count === 1,
+          JSON.stringify(st)));
       }
       return out;
     },
@@ -298,6 +303,26 @@ async function compareProbe() {
   // Space 로 다시 열기 (고른 사진이 있을 때)
   key(' ');
   q.spaceOpens = !!(await wait(() => document.querySelector('.compare'), 3000));
+  // 64g 아래 띠: 남김 사진을 지금 보고 있어도 "지금 보는 칸"이 따로 보여야 해요 (빨강이 아닌 밝은 바깥 테두리 + 위로)
+  {
+    const keeps = [...document.querySelectorAll('.compare-thumb.keep')];
+    if (keeps.length >= 2) {
+      keeps[0].click();
+      const cur = await wait(() => document.querySelector('.compare-thumb.keep.current'), 3000);
+      const other = cur && keeps.find((t) => t !== cur);
+      if (cur && other) {
+        const cs = getComputedStyle(cur);
+        q.strip = {
+          shadow: cs.boxShadow,
+          outline: cs.outlineColor,
+          otherShadow: getComputedStyle(other).boxShadow,
+          lift: Math.round(other.getBoundingClientRect().top - cur.getBoundingClientRect().top),
+          ariaCurrent: cur.getAttribute('aria-current'),
+          count: document.querySelectorAll('.compare-thumb.current').length,
+        };
+      }
+    }
+  }
   key('Escape');
   await wait(() => !document.querySelector('.compare'), 3000);
   return q;
