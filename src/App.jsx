@@ -291,12 +291,15 @@ export default function App() {
       return;
     }
     // 다른 날에서 시작한 Shift 범위: 목록 전체 번호(화면 순서)를 받아 그 사이를 모두 골라요
-    //   받는 사이 필터가 바뀌었으면 버려요. 받기에 실패하면 누른 칸 한 장만 (예전처럼)
+    //   받는 사이 필터 · 정렬이 바뀌었거나 다른 칸을 또 눌러 선택이 달라졌으면 버려요 (늦게 온 결과가 새 선택을 덮지 않게)
+    //   받기에 실패하면 누른 칸 한 장만 (예전처럼)
     const at = scopeRef.current;
-    api.listIds(viewFilterRef.current)
+    const before = selectionRef.current;
+    const asked = viewFilterRef.current;
+    api.listIds(asked)
       .then((ids) => ids, () => null)
       .then((ids) => {
-        if (scopeRef.current !== at) return;
+        if (scopeRef.current !== at || selectionRef.current !== before || viewFilterRef.current !== asked) return;
         setSelection((sel) => nextSelection(sel, { ...pick, dayFiles: ids || dayFiles }));
       });
   }, []);

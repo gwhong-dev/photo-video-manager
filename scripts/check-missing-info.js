@@ -1784,8 +1784,8 @@ const items = [
         const app = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.jsx'), 'utf8');
         const start = app.indexOf('const onCellClick = useCallback(');
         const body = start < 0 ? '' : app.slice(start, app.indexOf('}, []);', start));
-        out.push(sub('25i App 칸 클릭: needsWholeList 면 api.listIds(지금 목록 필터)로 받아 범위, 받는 사이 필터가 바뀌면 버림',
-          body.includes('needsWholeList(selectionRef.current') && body.includes('api.listIds(viewFilterRef.current)') && body.includes('scopeRef.current !== at')));
+        out.push(sub('25i App 칸 클릭: needsWholeList 면 api.listIds(지금 목록 필터)로 받아 범위, 받는 사이 필터 · 정렬 · 선택이 바뀌면 버림',
+          body.includes('needsWholeList(selectionRef.current') && body.includes('api.listIds(asked)') && body.includes('scopeRef.current !== at') && body.includes('selectionRef.current !== before') && body.includes('viewFilterRef.current !== asked')));
       }
 
       // 25j 진짜 앱: 다른 두 날의 사진에서 클릭 → Shift+클릭하면 두 날에 걸친 범위가 모두 골라짐, Ctrl+클릭은 더하기
@@ -1880,8 +1880,11 @@ async function rangeProbe() {
   for (let i = 0; i < 150 && cells().length < 6; i++) await sleep(200);
   const state = () => cells().map((b) => (b.getAttribute('aria-pressed') === 'true' ? 1 : 0)).join('');
   const click = async (i, opts = {}) => {
+    const was = state();
     cells()[i].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ...opts }));
-    await sleep(600); // 날을 넘는 범위는 목록 번호를 받아 오는 시간이 있어요
+    // 날을 넘는 범위는 목록 번호를 받아 오는 시간이 있어요. 선택이 바뀔 때까지 최대 3초
+    for (let k = 0; k < 30 && state() === was; k++) await sleep(100);
+    await sleep(100);
   };
   const days = [...document.querySelectorAll('.day-date')].map((d) => d.innerText).join(',');
   await click(0);
