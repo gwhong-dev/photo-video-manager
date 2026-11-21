@@ -29,7 +29,9 @@ const PIN_ICON = L.divIcon({ className: 'map-pin', html: '<span></span>', iconSi
 
 // value = 놓인 핀 { lat, lng, name? } 또는 null, onChange(핀): 사용자가 핀을 골랐을 때. name은 검색 결과를 눌렀을 때만 있어요
 // startAt = 처음 보여 줄 곳 (없으면 대한민국 전체), disabled = 넣는 중 (핀과 검색을 막아요)
-export default function MapPicker({ value, onChange, startAt, disabled }) {
+// readOnly = 보여 주기만 (근처 사진 위치 넣기 창, 2026-11-21). 검색 칸을 숨기고 핀을 옮길 수 없어요 (지도를 움직이는 것은 돼요)
+export default function MapPicker({ value, onChange, startAt, disabled: busy, readOnly = false }) {
+  const disabled = busy || readOnly;
   const holderRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
@@ -173,7 +175,8 @@ export default function MapPicker({ value, onChange, startAt, disabled }) {
   };
 
   return (
-    <div className="map-picker">
+    <div className={`map-picker${readOnly ? ' read-only' : ''}`}>
+      {!readOnly && (<>
       <form className="map-search" onSubmit={runSearch}>
         <input
           type="text"
@@ -201,6 +204,7 @@ export default function MapPicker({ value, onChange, startAt, disabled }) {
           ))}
         </ul>
       )}
+      </>)}
       <div className="map-frame">
         <div ref={holderRef} className="map-canvas" />
         {(mapFailed || clickRefused) && (

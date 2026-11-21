@@ -1759,7 +1759,9 @@ const ITEMS = [
   ...require('./check-day-trash').items,
   // 62번은 휴지통 확인 창 바로 뜨게 + Delete 두 번 점검 (scripts/check-trash-fast.js)
   ...require('./check-trash-fast').items,
-  // 63번은 비슷한 사진 크게 비교 + 라이브 포토 재생 점검 (scripts/check-compare-live.js)
+  // 63번은 고른 사진에 근처 사진 위치 넣기 점검 (scripts/check-pick-suggest.js)
+  ...require('./check-pick-suggest').items,
+  // 64번은 비슷한 사진 크게 비교 + 라이브 포토 재생 점검 (scripts/check-compare-live.js)
   ...require('./check-compare-live').items,
 ];
 

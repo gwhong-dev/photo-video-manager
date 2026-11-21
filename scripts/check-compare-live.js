@@ -1,5 +1,5 @@
 // 파일 위치: scripts/check-compare-live.js
-// 역할: 비슷한 사진 크게 비교 + 라이브 포토 · 모션 포토 재생 점검 (63). scripts/check.js 의 ITEMS 끝에 붙어요
+// 역할: 비슷한 사진 크게 비교 + 라이브 포토 · 모션 포토 재생 점검 (64). scripts/check.js 의 ITEMS 끝에 붙어요
 //   2026-11-21 사용자 요청: "미리보기 크기가 고정이라 자세히 볼 수가 없네" + "라이브 포토인데 재생이 안 되는 거야?"
 //   비교 창: ←/→ 넘기기, Space 로 가장 좋은 사진 왼쪽 고정, 오른쪽에서 ↑ 버림 · ↓ 남김, 두 칸 같이 확대
 //   라이브: 같은 이름의 짝 영상, 또는 JPG 끝에 붙은 영상(모션 포토, XMP MicroVideoOffset · MotionPhoto Item:Length)
@@ -26,7 +26,7 @@ function withMotion(jpg, video, style = 'v1') {
 
 const items = [
   {
-    no: 63,
+    no: 64,
     name: '비슷한 사진 크게 비교 + 라이브 포토 재생',
     async run(env) {
       const out = [];
@@ -39,7 +39,7 @@ const items = [
       fs.mkdirSync(base, { recursive: true });
       const video = fs.readFileSync(SAMPLE_MOV);
 
-      // 63a 모션 포토에서 영상 자리 찾기: 1판 · 2판 표시, 표시 없음 · 자리가 틀림은 없음
+      // 64a 모션 포토에서 영상 자리 찾기: 1판 · 2판 표시, 표시 없음 · 자리가 틀림은 없음
       {
         const plain = path.join(base, 'plain.jpg');
         await makeImage(plain, { seed: 3 });
@@ -56,14 +56,14 @@ const items = [
         const bad = await M.motionVideoOf(files.bad);
         const none = await M.motionVideoOf(plain);
         const buf = await M.readMotionVideo(files.v1);
-        out.push(sub('63a 모션 포토 영상 자리: 1판(MicroVideoOffset) · 2판(MotionPhoto Item:Length)을 읽고, 영상(ftyp)으로 시작할 때만. 표시 없음 · 자리 틀림은 없음',
+        out.push(sub('64a 모션 포토 영상 자리: 1판(MicroVideoOffset) · 2판(MotionPhoto Item:Length)을 읽고, 영상(ftyp)으로 시작할 때만. 표시 없음 · 자리 틀림은 없음',
           v1 && v1.length === video.length && v2 && v2.length === video.length && bad === null && none === null
             && buf && buf.equals(video) && M.tailLengthOf('<GCamera:MicroVideoOffset>123</GCamera:MicroVideoOffset>') === 123,
           JSON.stringify({ v1, v2, bad, none })));
         // 사진 파일은 고치지 않아요
-        out.push(sub('63a 읽기만 함 (사진 파일 크기 · 수정 시각 그대로)', stOf(files.v1) === stBefore));
+        out.push(sub('64a 읽기만 함 (사진 파일 크기 · 수정 시각 그대로)', stOf(files.v1) === stBefore));
 
-        // 63b pvm:// 주소: original(원본 그대로 · 못 그리는 형식은 미리보기), live(짝 영상 > 모션 포토 > 없음), 모르는 호스트는 404
+        // 64b pvm:// 주소: original(원본 그대로 · 못 그리는 형식은 미리보기), live(짝 영상 > 모션 포토 > 없음), 모르는 호스트는 404
         const pair = path.join(base, 'pair.jpg');
         const pairMov = path.join(base, 'pair.mov');
         fs.copyFileSync(plain, pair);
@@ -88,16 +88,16 @@ const items = [
         const l2 = await H('pvm://live/2');
         const l4 = await H('pvm://live/4');
         const odd = await H('pvm://video/1');
-        out.push(sub('63b pvm://original 은 JPG 원본 그대로, HEIC 는 1200px 미리보기로 대신',
+        out.push(sub('64b pvm://original 은 JPG 원본 그대로, HEIC 는 1200px 미리보기로 대신',
           o1.status === 200 && o1.path === plain && o1.type === 'image/jpeg' && o5.status === 200 && !o5.path && o5.type === 'image/webp',
           JSON.stringify({ o1: o1.type, o5: o5.type })));
-        out.push(sub('63b pvm://live 는 짝 영상(같은 이름 · 5초 이하 · 3초 안) 먼저, 없으면 JPG 끝 영상, 보통 사진은 204(화면 오류 로그 없게), 영상 번호 · 모르는 호스트는 404',
+        out.push(sub('64b pvm://live 는 짝 영상(같은 이름 · 5초 이하 · 3초 안) 먼저, 없으면 JPG 끝 영상, 보통 사진은 204(화면 오류 로그 없게), 영상 번호 · 모르는 호스트는 404',
           l3.status === 200 && l3.path === pairMov && l1.status === 200 && l1.buffer && l1.buffer.equals(video) && l1.type === 'video/mp4'
             && l2.status === 204 && l4.status === 404 && odd.status === 404,
           JSON.stringify({ l1: l1.status, l2: l2.status, l3: l3.path && path.basename(l3.path), l4: l4.status, odd: odd.status })));
       }
 
-      // 63c 표시 규칙: Space 고정 = 남김 (아무것도 안 고른 묶음이면 원래 추천은 버림), ↑/↓ 는 정해서 표시, 마지막 남김은 못 버림
+      // 64c 표시 규칙: Space 고정 = 남김 (아무것도 안 고른 묶음이면 원래 추천은 버림), ↑/↓ 는 정해서 표시, 마지막 남김은 못 버림
       {
         const g = { ids: [11, 12, 13, 14], keepId: 12, softIds: [], keptIds: [] };
         const o0 = SV.pinMarks([g], new Map());
@@ -106,22 +106,22 @@ const items = [
         const p2 = SV.pinBest(g, 14, touched);
         const only = SV.setMark(g, 14, 'discard', p); // 14 가 유일한 남김 → 거절
         const same = SV.setMark(g, 11, 'discard', p); // 이미 버림 → 사용자가 고른 것으로 적음
-        out.push(sub('63c Space 고정: 고정한 사진 남김 + (안 고른 묶음이면) 원래 추천 버림, 이미 고른 묶음은 다른 표시 그대로',
+        out.push(sub('64c Space 고정: 고정한 사진 남김 + (안 고른 묶음이면) 원래 추천 버림, 이미 고른 묶음은 다른 표시 그대로',
           SV.markOf(g, 14, p) === 'keep' && SV.markOf(g, 12, p) === 'discard' && SV.discardIds([g], p).length === 3
             && SV.markOf(g, 14, p2) === 'keep' && SV.markOf(g, 12, p2) === 'keep' && SV.markOf(g, 13, p2) === 'keep'));
-        out.push(sub('63c ↑ 버림 · ↓ 남김: 마지막 남김은 버리지 못함, 같은 표시여도 사용자가 고른 것으로 적음',
+        out.push(sub('64c ↑ 버림 · ↓ 남김: 마지막 남김은 버리지 못함, 같은 표시여도 사용자가 고른 것으로 적음',
           only.refused === true && same.refused === false && same.overrides.get(11) === 'discard'));
       }
 
-      // 63d 비교 창 계산: 키, 넘기기, 두 칸 같이 확대 (마우스 자리 고정), 맞춤 ↔ 원본 크기, 끌기
+      // 64d 비교 창 계산: 키, 넘기기, 두 칸 같이 확대 (마우스 자리 고정), 맞춤 ↔ 원본 크기, 끌기
       {
         const K = (key, extra = {}) => C.compareKey({ key, ...extra });
-        out.push(sub('63d 키: ←/→ 넘기기, Space 고정, ↑ 버림, ↓ 남김, Esc 닫기. 꾹 누른 ↑ · ↓ · Space 와 Ctrl 조합은 무시',
+        out.push(sub('64d 키: ←/→ 넘기기, Space 고정, ↑ 버림, ↓ 남김, Esc 닫기. 꾹 누른 ↑ · ↓ · Space 와 Ctrl 조합은 무시',
           K('ArrowLeft') === 'prev' && K('ArrowRight') === 'next' && K(' ') === 'pin' && K('ArrowUp') === 'discard' && K('ArrowDown') === 'keep' && K('Escape') === 'close'
             && K('ArrowRight', { repeat: true }) === 'next' && K('ArrowUp', { repeat: true }) === null && K(' ', { repeat: true }) === null
             && K('ArrowUp', { ctrlKey: true }) === null && K('Enter') === null));
         const g = { ids: [1, 2, 3, 4] };
-        out.push(sub('63d 넘기기: 고정한 사진은 오른쪽 목록에서 빠지고, 끝에서 멈추고, 정한 뒤에는 다음 사진',
+        out.push(sub('64d 넘기기: 고정한 사진은 오른쪽 목록에서 빠지고, 끝에서 멈추고, 정한 뒤에는 다음 사진',
           JSON.stringify(C.browseIds(g, 2)) === '[1,3,4]' && C.stepId([1, 3, 4], 4, 1) === 4 && C.stepId([1, 3, 4], 1, -1) === 1 && C.stepId([1, 3, 4], 9, 1) === 1
             && C.afterDecide([1, 3, 4], 3) === 4));
         const nat = { w: 4000, h: 3000 };
@@ -141,7 +141,7 @@ const items = [
         const tooFar = C.zoomAt(C.FIT_VIEW, nat, box, pt, 1000);
         const tooSmall = C.zoomAt(z, nat, box, pt, 0.01);
         const panned = C.panBy(z, nat, box, 100, 0);
-        out.push(sub('63d 확대: 마우스 자리가 그대로, 크기가 다른 사진도 같은 자리, 더블클릭 = 원본 1:1 ↔ 맞춤, 맞춤보다 작게 · 원본 4배보다 크게는 안 됨, 끌면 옮겨짐',
+        out.push(sub('64d 확대: 마우스 자리가 그대로, 크기가 다른 사진도 같은 자리, 더블클릭 = 원본 1:1 ↔ 맞춤, 맞춤보다 작게 · 원본 4배보다 크게는 안 됨, 끌면 옮겨짐',
           fit.w === 800 && fit.h === 600 && Math.abs(after.x - before.x) < 1e-9 && Math.abs(after.y - before.y) < 1e-9
             && Math.abs(after2.x - before.x) < 1e-9
             && Math.abs(C.fitScale(nat, box) * actual.z - 1) < 1e-9 && back.z === 1
@@ -150,7 +150,7 @@ const items = [
           JSON.stringify({ z, actual: actual.z, tooFar: tooFar.z })));
       }
 
-      // 63e 연결: 화면 보안 설정에 영상(pvm:) 허용, pvm 주소가 영상 재생(stream) 가능, 비슷한 사진 화면 · 오른쪽 패널 연결
+      // 64e 연결: 화면 보안 설정에 영상(pvm:) 허용, pvm 주소가 영상 재생(stream) 가능, 비슷한 사진 화면 · 오른쪽 패널 연결
       {
         const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
         const html = read('src/index.html');
@@ -158,13 +158,13 @@ const items = [
         const gm = read('gallery-main.js');
         const sv = read('src/components/SimilarView.jsx');
         const dp = read('src/components/DetailPanel.jsx');
-        out.push(sub('63e 보안 설정: media-src 는 앱과 pvm: 만 (인터넷 주소 없음), pvm 주소에 stream 권한',
+        out.push(sub('64e 보안 설정: media-src 는 앱과 pvm: 만 (인터넷 주소 없음), pvm 주소에 stream 권한',
           /media-src 'self' pvm:;/.test(csp) && !/https?:/.test(csp) && /privileges: \{[^}]*stream: true/.test(gm), csp));
-        out.push(sub('63e 비슷한 사진 화면: 더블클릭 · Space · "크게 보며 고르기"로 CompareView, 오른쪽 패널에 LivePhoto',
+        out.push(sub('64e 비슷한 사진 화면: 더블클릭 · Space · "크게 보며 고르기"로 CompareView, 오른쪽 패널에 LivePhoto',
           /<CompareView /.test(sv) && /onDoubleClick=/.test(sv) && /e\.key !== ' '/.test(sv) && /크게 보며 고르기/.test(sv) && /<LivePhoto id=\{file\.id\} \/>/.test(dp)));
       }
 
-      // 63f 진짜 앱: 비슷한 묶음(3장, 그중 1장은 모션 포토) → 더블클릭으로 비교 창 → →, Space 고정(두 칸), ↑ · ↓, 휠로 두 칸 같이 확대, Esc
+      // 64f 진짜 앱: 비슷한 묶음(3장, 그중 1장은 모션 포토) → 더블클릭으로 비교 창 → →, Space 고정(두 칸), ↑ · ↓, 휠로 두 칸 같이 확대, Esc
       //     오른쪽 패널에서 모션 포토는 "움직이는 사진" 버튼 → 누르면 재생, 보통 사진은 버튼 없음. 사진 파일은 그대로
       {
         const { launchCheck } = require('./launch-check');
@@ -192,15 +192,15 @@ const items = [
         });
         const q = r.probed || {};
         const seen = JSON.stringify(q).slice(0, 700);
-        out.push(sub('63f 진짜 앱: 오른쪽 패널에서 모션 포토는 "움직이는 사진" 버튼 → 누르고 있으면 재생, 보통 사진은 버튼 없음',
+        out.push(sub('64f 진짜 앱: 오른쪽 패널에서 모션 포토는 "움직이는 사진" 버튼 → 누르고 있으면 재생, 보통 사진은 버튼 없음',
           q.panelLive === true && q.played === true && q.plainLive === false, seen));
-        out.push(sub('63f 더블클릭 → 비교 창(한 장, 원본 그림) → → 로 넘김 → Space 로 왼쪽 고정(두 칸) → ↑ 버림 · ↓ 남김 → 표시가 화면과 같음',
+        out.push(sub('64f 더블클릭 → 비교 창(한 장, 원본 그림) → → 로 넘김 → Space 로 왼쪽 고정(두 칸) → ↑ 버림 · ↓ 남김 → 표시가 화면과 같음',
           q.opened === true && q.single === true && q.origin === true && q.moved === true && q.two === true && q.pinnedThumb === true
             && q.keepsAfter === 2 && q.gridKeeps === 2 && q.closed === true, seen));
-        out.push(sub('63f 휠로 확대하면 두 칸이 같은 배율로 커짐, Space 로 다시 열림, 사진 파일 그대로, 화면 오류 없음',
+        out.push(sub('64f 휠로 확대하면 두 칸이 같은 배율로 커짐, Space 로 다시 열림, 사진 파일 그대로, 화면 오류 없음',
           q.zoomSync === true && q.spaceOpens === true && snap() === before && (r.errors || []).length === 0,
           `${seen} / 오류 ${(r.errors || []).join(' | ').slice(0, 300)}`));
-        out.push(sub('63f 비교 창 안 재생 버튼: 누르면 재생, 누른 채 움직여도 사진이 끌리지 않음 / 열린 동안 뒤 화면 inert / 고정 칸 테두리는 빨강이 아님',
+        out.push(sub('64f 비교 창 안 재생 버튼: 누르면 재생, 누른 채 움직여도 사진이 끌리지 않음 / 열린 동안 뒤 화면 inert / 고정 칸 테두리는 빨강이 아님',
           q.compareLive === true && q.comparePlayed === true && q.noDrag === true && q.inert === true && !!q.pinColor && !/224, 65, 47/.test(q.pinColor), seen));
       }
       return out;
