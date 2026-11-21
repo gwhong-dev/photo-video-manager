@@ -174,7 +174,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
     const onKey = (e) => {
       if (e.key !== ' ' || e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
       const S = spaceRef.current;
-      if (S.open || !S.data || S.focusId === null || S.focusId === undefined) return;
+      if (S.open || busyRef.current || !S.data || S.focusId === null || S.focusId === undefined) return; // 확인 창을 준비하는 중에도 안 열어요
       const t = document.activeElement;
       const tag = t && t.tagName ? String(t.tagName).toUpperCase() : '';
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
@@ -320,7 +320,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
             <div className="similar-grid">
               {g.files.map((f) => (
                 <SimilarCell key={f.id} file={f} mark={markOf(g, f.id, overrides)} best={f.id === g.keepId} focused
-={focusId === f.id} onFocus={onFocus} onToggle={(id) => toggle(g, id)} onOpen={(id) => { onFocus(id); setCompare({ key: g.ids.join(','), startId: id }); }} disabled={busy} />
+={focusId === f.id} onFocus={onFocus} onToggle={(id) => toggle(g, id)} onOpen={(id) => { if (busyRef.current) return; onFocus(id); setCompare({ key: g.ids.join(','), startId: id }); }} disabled={busy} />
               ))}
             </div>
           </div>

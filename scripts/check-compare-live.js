@@ -176,6 +176,31 @@ const items = [
               && svSrc.includes('(r.trashed || 0) + (r.moved || 0) > 0 && keepIds.length') && svSrc.includes('await api.keepAllSimilar(keepIds)')
               && svSrc.includes('setCompare(null); reviewGroup(g);') && cvSrc.includes("else if (a === 'review') A.review();")));
         }
+        {
+          // 진짜 휴지통은 쓰지 않아요: "옮겨짐"은 점검 임시 폴더 안의 다른 폴더로 옮겨서 흉내 내요
+          const { launchCheck } = require('./launch-check');
+          const sharp = require('sharp');
+          const hroot = path.join(env.tmp, 'launch-hide-root');
+          fs.mkdirSync(hroot, { recursive: true });
+          const ha = path.join(hroot, 'a.jpg');
+          await makeImage(ha, { seed: 5, w: 800, h: 600 });
+          await sharp(ha).resize(400, 300).modulate({ brightness: 1.1 }).jpeg({ quality: 70 }).toFile(path.join(hroot, 'b.jpg'));
+          await sharp(ha).resize(600, 450).jpeg({ quality: 80 }).toFile(path.join(hroot, 'c.jpg'));
+          const hud = path.join(env.tmp, 'launch-hide-ud');
+          fs.mkdirSync(hud, { recursive: true });
+          fs.writeFileSync(path.join(hud, 'settings.json'), JSON.stringify({ backupRoot: hroot }), 'utf8');
+          const opts = { env: { PVM_USER_DATA: hud }, until: '백업 폴더 다시 읽기', untilMs: 30000 };
+          const r1 = await launchCheck(path.join(__dirname, '..'), { ...opts, probe: `(${hideProbe1.toString()})()` });
+          const p1 = r1.probed || {};
+          const away = path.join(env.tmp, 'launch-hide-away');
+          fs.mkdirSync(away, { recursive: true });
+          if (p1.kept) fs.renameSync(path.join(hroot, 'b.jpg'), path.join(away, 'b.jpg'));
+          const r2 = await launchCheck(path.join(__dirname, '..'), { ...opts, probe: `(${hideProbe2.toString()})()` });
+          const p2 = r2.probed || {};
+          out.push(sub('64h 진짜 앱: 3장 묶음에서 남은 2장을 기억 → 버린 1장이 폴더에서 빠진 뒤 다음 목록에 그 묶음이 없고 숨긴 묶음 1개, 화면 오류 없음',
+            p1.groups === 1 && p1.kept === true && p2.groups === 0 && p2.hiddenKept === 1 && ![...(r1.errors || []), ...(r2.errors || [])].some((e) => !/Failed to load resource/.test(e)),
+            JSON.stringify({ p1, p2 }).slice(0, 300)));
+        }
         out.push(sub('64e 보안 설정: media-src 는 앱과 pvm: 만 (인터넷 주소 없음), pvm 주소에 stream 권한',
           /media-src 'self' pvm:;/.test(csp) && !/https?:/.test(csp) && /privileges: \{[^}]*stream: true/.test(gm), csp));
         out.push(sub('64e 비슷한 사진 화면: 사진 클릭 한 번 · Space · "크게 보며 고르기"로 CompareView, 오른쪽 패널에 LivePhoto, 열자마자 들어온 더블클릭은 확대 안 함',
@@ -183,7 +208,7 @@ const items = [
           && read('src/components/CompareView.jsx').includes('Date.now() - openedAt < DOUBLE_CLICK_GRACE_MS') && /e\.key !== ' '/.test(sv) && /크게 보며 고르기/.test(sv) && /<LivePhoto id=\{file\.id\} \/>/.test(dp)));
       }
 
-      // 64f 진짜 앱: 비슷한 묶음(3장, 그중 1장은 모션 포토) → 더블클릭으로 비교 창 → →, Space 고정(두 칸), ↑ · ↓, 휠로 두 칸 같이 확대, Esc
+      // 64f 진짜 앱: 비슷한 묶음(3장, 그중 1장은 모션 포토) → 사진 클릭 한 번으로 비교 창 → →, Space 고정(두 칸), ↑ · ↓, 휠로 두 칸 같이 확대, Esc
       //     오른쪽 패널에서 모션 포토는 "움직이는 사진" 버튼 → 누르면 재생, 보통 사진은 버튼 없음. 사진 파일은 그대로
       {
         const { launchCheck } = require('./launch-check');
@@ -251,6 +276,8 @@ async function compareProbe() {
   //   모션 포토(c.jpg)
   cellOf('c.jpg').click();
   q.clickOpens = !!(await wait(() => document.querySelector('.compare'), 5000));
+  key('Escape');
+  q.clickClosed = !!(await wait(() => !document.querySelector('.compare'), 3000));
   const btn = await wait(() => document.querySelector('.preview .live-button'), 15000);
   q.panelLive = !!btn;
   if (btn) {
@@ -259,8 +286,6 @@ async function compareProbe() {
     q.played = !!(await wait(() => v && v.classList.contains('playing') && !v.paused && v.currentTime > 0, 5000));
     btn.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 }));
   }
-  key('Escape');
-  q.clickClosed = !!(await wait(() => !document.querySelector('.compare'), 3000));
   // 비교 창: 보통 사진(a.jpg) 클릭 한 번 (오른쪽 패널에는 재생 버튼 없음)
   cellOf('a.jpg').click();
   const cmp = await wait(() => document.querySelector('.compare'));
@@ -336,6 +361,36 @@ async function compareProbe() {
   if (cancel) cancel.click();
   q.confirmCancelled = !!(await wait(() => !document.getElementById('similar-confirm-title'), 3000));
   return q;
+}
+
+// 64h 1번째 실행: 비슷한 묶음이 생길 때까지 기다렸다가 b.jpg 를 뺀 남은 사진을 "모두 남기기"로 기억 (확인 창의 옮기기 뒤와 같은 호출)
+async function hideProbe1() {
+  const g = window.api.gallery;
+  const end = Date.now() + 40000;
+  let list = null;
+  while (Date.now() < end) {
+    list = await g.listSimilar();
+    if (list.groups.length) break;
+    await new Promise((res) => setTimeout(res, 500));
+  }
+  if (!list || !list.groups.length) return { groups: 0 };
+  const grp = list.groups[0];
+  const rest = grp.files.filter((f) => f.name !== 'b.jpg').map((f) => f.id);
+  const r = await g.keepAllSimilar(rest);
+  return { groups: list.groups.length, size: grp.ids.length, kept: !!r.saved && rest.length === grp.ids.length - 1 };
+}
+
+// 64h 2번째 실행: 다시 읽기가 끝나 b.jpg 가 빠지면 그 묶음은 남은 사진이 모두 기억돼 있어 목록에서 빠져요
+async function hideProbe2() {
+  const g = window.api.gallery;
+  const end = Date.now() + 40000;
+  let list = null;
+  while (Date.now() < end) {
+    list = await g.listSimilar();
+    if (!list.groups.length && list.hiddenKept === 1) break;
+    await new Promise((res) => setTimeout(res, 500));
+  }
+  return { groups: list ? list.groups.length : -1, hiddenKept: list ? list.hiddenKept : -1 };
 }
 
 module.exports = { items, withMotion };
