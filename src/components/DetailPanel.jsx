@@ -10,6 +10,7 @@ import React, { useEffect, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { formatBytes, formatCoords, formatCount, formatDuration, formatTakenAt } from '../format.mjs';
 import { PreviewNote, usePreviewNote } from './PreviewNote.jsx';
+import LivePhoto from './LivePhoto.jsx'; // 라이브 포토 · 모션 포토 재생 (2026-11-21)
 import { trashMenuLabel } from '../trash-view.mjs';
 import { pickButtonLabel, pickNote } from '../pick-view.mjs';
 
@@ -152,6 +153,7 @@ function Preview({ file }) {
           <img key={file.id} src={`pvm://preview/${file.id}`} alt="" onLoad={note.onLoad} onError={() => setBroken(true)} />
         )}
         {isVideo && formatDuration(file.durationSec) && <span className="badge">{formatDuration(file.durationSec)}</span>}
+        {!isVideo && !failed && <LivePhoto id={file.id} />}
       </div>
       <PreviewNote show={!failed && note.small} />
     </>

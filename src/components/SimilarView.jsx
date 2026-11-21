@@ -9,12 +9,15 @@
 //   흐린 사진(흐림 점수 0.5 이상)에는 "흐림" 표시. 이어 찍기(1분) 묶음은 AI 로 같은 장면을 확인했을 때만 생겨요
 //   AI 모델이 없으면 맨 위 안내 줄에 "받으면 이어 찍은 사진도 장면별로 묶어요"와 받기 버튼 (받기는 확인 창에서 누를 때만)
 //   지문은 백업 폴더를 읽은 뒤 뒤에서 미리 만들고, 화면을 열 때 남은 것도 만들어요. 다 만들면 목록을 다시 받아요
+//   크게 비교 (2026-11-21 사용자 요청): 사진 더블클릭 · 사진을 고른 뒤 Space · 묶음의 "크게 보며 고르기" → CompareView
+//     ←/→ 넘기기, Space 로 가장 좋은 사진 고정(왼쪽), 오른쪽에서 ↑ 버림 · ↓ 남김. 표시는 이 화면과 같은 값이에요
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { formatCount, formatTakenAt } from '../format.mjs';
 import { aiConfirmLabel, aiConfirmLines, aiLine, discardIds, discardLabel, groupDiscardIds, groupNote, groupReviewLabel, keepAll, markOf, pinMarks, previewLines, progressText, pruneOverrides, recommendText, resultText, reviewLabel, toggleMark } from '../similar-view.mjs';
 import EmptyState from './EmptyState.jsx';
+import CompareView from './CompareView.jsx';
 
 const PAGE = 30; // 한 번에 보여 주는 묶음 수
 
@@ -83,13 +86,13 @@ function AiBar({ onNotice, onChanged }) {
 }
 
 // 사진 한 칸: 사진을 누르면 크게 보기, 아래 버튼으로 남김과 버림 바꾸기
-function SimilarCell({ file, mark, best, focused, onFocus, onToggle, disabled }) {
+function SimilarCell({ file, mark, best, focused, onFocus, onToggle, onOpen, disabled }) {
   const [broken, setBroken] = useState(false);
   const keep = mark === 'keep';
   const size = file.width && file.height ? `${file.width}×${file.height}` : '';
   return (
     <div className={`similar-cell${keep ? ' keep' : ' discard'}`}>
-      <button type="button" className={`cell${focused ? ' selected' : ''}`} aria-label={`${file.name} 크게 보기`} onClick={() => onFocus(file.id)}>
+      <button type="button" className={`cell${focused ? ' selected' : ''}`} aria-label={`${file.name} 고르기, 더블클릭하면 크게 비교`} onClick={() => onFocus(file.id)} onDoubleClick={() => onOpen(file.id)}>
         {broken
           ? <span className="no-preview">미리보기 없음</span>
           : <img src={`pvm://thumb/${file.id}`} alt="" loading="lazy" draggable="false" onError={() => setBroken(true)} />}
@@ -112,6 +115,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
   const [shown, setShown] = useState(PAGE);
   const [confirm, setConfirm] = useState(null); // { ids, info } 확인 창
   const [busy, setBusy] = useState(false);
+  const [compare, setCompare] = useState(null); // { key: 묶음 열쇠, startId } 크게 비교 창
   const busyRef = useRef(false);
   const seq = useRef(0);
 
@@ -161,6 +165,34 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [confirm]);
+
+  // 사진을 고른 뒤 Space → 그 사진의 묶음을 크게 비교 (글 쓰는 칸 · 다른 창이 열려 있으면 안 열어요)
+  const spaceRef = useRef(null);
+  spaceRef.current = { data, shown, focusId, open: !!(compare || confirm) };
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== ' ' || e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+      const S = spaceRef.current;
+      if (S.open || !S.data || S.focusId === null || S.focusId === undefined) return;
+      const t = document.activeElement;
+      const tag = t && t.tagName ? String(t.tagName).toUpperCase() : '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
+      if (document.querySelector('.dialog-backdrop')) return;
+      const g = S.data.groups.slice(0, S.shown).find((x) => x.ids.includes(S.focusId));
+      if (!g) return;
+      e.preventDefault();
+      setCompare({ key: g.ids.join(','), startId: S.focusId });
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  // 크게 비교 중인 묶음이 목록을 다시 받아 없어지면 창 상태도 비워요 (그대로 두면 Space 열기가 막히고, 나중에 묶음이 생기면 창이 갑자기 열려요, #131 검증 ⚠️)
+  useEffect(() => {
+    if (!compare || !data) return;
+    const vis = data.groups.slice(0, shown);
+    if (!vis.some((x) => x.ids.join(',') === compare.key || x.ids.includes(compare.startId))) setCompare(null);
+  }, [compare, data, shown]);
 
   const run = async (fn) => {
     if (busyRef.current) return;
@@ -260,6 +292,9 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
               <span className="similar-count">{formatCount(g.ids.length)}장</span>
               {note && <span className="similar-count">{note}</span>}
               <span className="similar-head-actions">
+                <button type="button" className="link-button" onClick={() => setCompare({ key: g.ids.join(','), startId: g.keepId })}>
+                  크게 보며 고르기
+                </button>
                 <button type="button" className="link-button" disabled={busy || g.ids.every((id) => markOf(g, id, overrides) === 'keep')} onClick={() => keepGroup(g)}>
                   이 묶음은 모두 남기기
                 </button>
@@ -272,7 +307,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
             <div className="similar-grid">
               {g.files.map((f) => (
                 <SimilarCell key={f.id} file={f} mark={markOf(g, f.id, overrides)} best={f.id === g.keepId} focused
-={focusId === f.id} onFocus={onFocus} onToggle={(id) => toggle(g, id)} disabled={busy} />
+={focusId === f.id} onFocus={onFocus} onToggle={(id) => toggle(g, id)} onOpen={(id) => { onFocus(id); setCompare({ key: g.ids.join(','), startId: id }); }} disabled={busy} />
               ))}
             </div>
           </div>
@@ -287,6 +322,13 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
       <div className="similar-actions">
         <button type="button" className="primary" disabled={busy || ids.length === 0} onClick={review}>{reviewLabel(ids.length)}</button>
       </div>
+      {compare && (() => {
+        // 목록을 다시 받아 묶음이 바뀌면 열쇠로 다시 찾아요 (없어지면 창을 그리지 않아요)
+        const g = groups.slice(0, shown).find((x) => x.ids.join(',') === compare.key)
+          || groups.slice(0, shown).find((x) => x.ids.includes(compare.startId));
+        if (!g) return null;
+        return <CompareView group={g} overrides={overrides} onOverrides={setOverrides} startId={compare.startId} onClose={() => setCompare(null)} />;
+      })()}
       {confirm && (
         <div className="dialog-backdrop">
           <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="similar-confirm-title">
