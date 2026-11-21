@@ -16,7 +16,7 @@
 //   가져오기 전 거르기 (2026-11-18, state.screening): 가져올 폴더를 비슷한 사진 화면으로 열어요. 쓸 수 있는 건 비슷한 사진 · 갤러리 격자 ·
 //   휴지통으로 옮기기뿐이에요 (날짜 · 위치 · 태그 · 지도 · 정리는 main 도 막아요). 맨 위 띠의 "거르기 끝내고 가져오기로"로 가져오기 화면으로
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, errorText } from './api.js';
 import ContextMenu from './components/ContextMenu.jsx';
 import DayGrid from './components/DayGrid.jsx';
@@ -43,6 +43,7 @@ import { deleteKeyOpens } from './trash-view.mjs';
 import { needsManyCheck, undoneText } from './format.mjs';
 import { alreadyText, noKeyText, quickTags, tagKeyAction, tagOfKey } from './tag-keys.mjs';
 import { EMPTY_SELECTION, filterScope, nextSelection, selectionForMenu, selectionOf, viewMatches } from './selection.mjs';
+import { pickTable, selectionPick } from './pick-view.mjs';
 
 const START_FILTER = { tab: 'all', sort: 'newest', query: '', tag: null, area: null }; // area: 지도에서 고른 곳 { rects, year }
 const SEARCH_DELAY_MS = 200; // 입력을 멈추고 이 시간이 지나면 검색
@@ -93,7 +94,7 @@ export default function App() {
   const [selection, setSelection] = useState(EMPTY_SELECTION); // { ids, anchor, focus }
   const [cellMenuAt, setCellMenuAt] = useState(null); // 우클릭한 자리 { x, y }. 있으면 우클릭 메뉴를 그려요
   const [copySource, setCopySource] = useState(null); // 복사해 둔 값 { id, name, takenAt, lat, lng } (파일 경로 없음)
-  const [dialog, setDialog] = useState(null); // 미리보기 창: { mode: 'copy' | 'direct' | 'map' | 'tagAdd' | 'tagRemove', ids, prefer }. 열 때의 선택을 그대로 담아요
+  const [dialog, setDialog] = useState(null); // 미리보기 창: { mode: 'copy' | 'direct' | 'map' | 'suggest' | 'tagAdd' | 'tagRemove', ids, prefer, startAt, place, more }. 열 때의 선택을 그대로 담아요
   const [lastPin, setLastPin] = useState(null); // 이번 실행에서 지도로 마지막에 넣은 곳 { lat, lng }
   const [justApplied, setJustApplied] = useState(null); // 방금 넣은 묶음 { batchId }. 넣은 직후 알림 줄을 보여 줘요
   const [undoing, setUndoing] = useState(false);
@@ -356,17 +357,46 @@ export default function App() {
       setNotice(errorText(e));
     }
   };
+  // ---------- 고른 사진에 근처 사진 위치 제안 (2026-11-21) ----------
+  //   갤러리 · 정보 없는 사진 화면에서 사진을 고르면, 그 백업 폴더의 제안 표를 목록 번호(gen)마다 한 번 받아요
+  //   (위치 제안 탭이 쓰는 listSuggestions 응답의 picks). 고른 사진 중 위치 없는 사진에 제안이 있으면 버튼이 생겨요
+  const pickScreen = (screen === 'gallery' || screen === 'missing') && !suggestOpen && !screening && !!(state && state.root);
+  const wantPick = pickScreen && selection.ids.size > 0;
+  const [pickTab, setPickTab] = useState({ gen: -1, table: null });
+  useEffect(() => {
+    if (!wantPick || pickTab.gen === gen) return undefined;
+    let alive = true;
+    api.listSuggestions().then(
+      (res) => { if (alive) setPickTab({ gen, table: pickTable(res) }); },
+      () => { if (alive) setPickTab({ gen, table: null }); }, // 못 받으면 버튼만 안 보여요 (지도에서 고르기는 그대로)
+    );
+    return () => { alive = false; };
+  }, [wantPick, gen]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pick = useMemo(
+    () => (wantPick && pickTab.gen === gen ? selectionPick(selection.ids, pickTab.table) : null),
+    [wantPick, pickTab, gen, selection.ids],
+  );
+
   // 미리보기 창 열기. 열 때 고른 사진 번호를 그대로 담아 두어서, 창이 열린 동안 선택이 바뀌어도 대상은 같아요
+  //   지도 창은 근처 사진 제안이 있으면 그 위치에서 열려요 (없으면 마지막으로 고른 곳)
+  //   근처 사진 위치 넣기(suggest)는 첫 곳의 사진만 담아요. 남은 곳이 있으면 넣은 뒤에도 선택을 남겨요
   const openDialog = (mode) => {
     setCellMenuAt(null);
     if (selection.ids.size === 0 || (mode === 'copy' && !copySource)) return;
+    if (mode === 'suggest' && !pick) return;
     setNotice('');
-    setDialog({ mode, ids: [...selection.ids], prefer: filter.info === 'noDate' ? 'date' : 'location' });
+    if (mode === 'suggest') {
+      setDialog({ mode, ids: pick.places[0].ids, place: pick.places[0], more: pick.places.length > 1 });
+      return;
+    }
+    const startAt = mode === 'map' && pick ? { lat: pick.places[0].source.lat, lng: pick.places[0].source.lng } : null;
+    setDialog({ mode, ids: [...selection.ids], prefer: filter.info === 'noDate' ? 'date' : 'location', startAt });
   };
   // 넣기가 끝났을 때: 창을 닫고 선택을 비우고, 상태와 목록을 바로 다시 읽어요 (되돌리기 줄이 곧 나타나도록)
-  const onApplied = async (result) => {
+  //   keep: 근처 사진 위치 넣기가 아직 남은 곳이 있으면 선택을 그대로 둬요 (다음 곳 버튼이 바로 보이게)
+  const onApplied = async (result, { keep = false } = {}) => {
     setDialog(null);
-    setSelection(EMPTY_SELECTION);
+    if (!keep) setSelection(EMPTY_SELECTION);
     if (!result || !result.count) {
       setNotice('바꿀 사진이 없어서 아무것도 넣지 않았어요.');
       return;
@@ -761,6 +791,8 @@ export default function App() {
           onPaste={() => openDialog('copy')}
           onDirect={() => openDialog('direct')}
           onMap={() => openDialog('map')}
+          pick={pick}
+          onSuggest={() => openDialog('suggest')}
           onTagAdd={() => openDialog('tagAdd')}
           onTagRemove={() => openDialog('tagRemove')}
           onTrash={trashScreen && !suggestOpen ? openTrash : undefined}
@@ -777,6 +809,8 @@ export default function App() {
           onPaste={() => openDialog('copy')}
           onDirect={() => openDialog('direct')}
           onMap={() => openDialog('map')}
+          pick={pick}
+          onSuggest={() => openDialog('suggest')}
           onTagAdd={() => openDialog('tagAdd')}
           onTagRemove={() => openDialog('tagRemove')}
           onTrash={trashScreen && !suggestOpen ? openTrash : undefined}
@@ -790,7 +824,7 @@ export default function App() {
       {fillOpen && <FillDialog onClose={() => setFillOpen(false)} onDone={onFillDone} />}
       {trashIds && <TrashDialog ids={trashIds} onClose={() => setTrashIds(null)} onDone={onTrashDone} />}
       {dialog && (dialog.mode === 'tagAdd' || dialog.mode === 'tagRemove') && <TagDialog mode={dialog.mode} ids={dialog.ids} initialName={dialog.name || ''} onClose={() => setDialog(null)} onApplied={onApplied} />}
-      {dialog && dialog.mode !== 'tagAdd' && dialog.mode !== 'tagRemove' && <EditDialog mode={dialog.mode} ids={dialog.ids} source={copySource} prefer={dialog.prefer} startAt={lastPin} onPinChosen={setLastPin} onClose={() => setDialog(null)} onApplied={onApplied} />}
+      {dialog && dialog.mode !== 'tagAdd' && dialog.mode !== 'tagRemove' && <EditDialog mode={dialog.mode} ids={dialog.ids} source={dialog.mode === 'suggest' ? dialog.place.source : copySource} place={dialog.place || null} prefer={dialog.prefer} startAt={dialog.startAt || lastPin} onPinChosen={setLastPin} onClose={() => setDialog(null)} onApplied={(r) => onApplied(r, { keep: dialog.mode === 'suggest' && dialog.more })} />}
     </div>
   );
 }

@@ -3,6 +3,9 @@
 //   mode="copy"   : 복사해 둔 사진의 날짜, 시간, 위치 중 넣을 것을 골라요 (기준 사진에 없는 값은 꺼져 있어요)
 //   mode="direct" : 달력과 시간을 직접 골라요 (시간 기본 12:00:00)
 //   mode="map"    : 지도에서 위치를 골라요 (MapPicker). 핀을 놓을 때마다 미리보기를 다시 만들어요
+//   mode="suggest": 근처 사진 위치 넣기 (2026-11-21). 고른 사진 중 한 곳(place)의 사진에 근거 사진(source)의 위치만 넣어요
+//                   위치 제안 탭과 같은 요청(via 'suggest')이라 main 이 같은 날인지 · 근거 사진 위치가 파일에서 읽은 값인지 다시 봐요
+//                   위쪽에는 근거 사진 그림 · 시각 · 시간 차이와 그 위치의 지도(보기만)를 보여 줘요
 //   칸이 바뀔 때마다 main에 미리보기를 다시 부탁하고, 늦게 온 옛 응답은 버려요 (요청 번호)
 //   현재 칸에 맞는 미리보기가 도착하기 전에는 넣기 버튼이 꺼져 있어요. 넣는 중에는 다시 눌러도 한 번만 저장돼요
 //   창에 보이는 대상 장수는 고른 장수가 아니라 main이 계산한 값이에요 (사라진 사진과 기준 사진은 빠져요)
@@ -12,6 +15,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { applyLabel, formatCoords, formatCount, formatTakenAt, manyCheckText, needsManyCheck } from '../format.mjs';
+import { pickGapText } from '../pick-view.mjs';
 import { nextPin } from '../map-view.mjs';
 import MapPicker from './MapPicker.jsx';
 
@@ -72,9 +76,13 @@ function changeLines(item, kind) {
 // mode, ids(고른 사진 번호들. 열 때의 것을 그대로 써요), source(복사해 둔 값), prefer('date'면 날짜부터 켬)
 // onClose(): 그만두기, onApplied(결과): 넣기가 끝났을 때 (창은 App이 닫아요)
 // startAt(지도를 처음 보여 줄 곳), onPinChosen(핀): 지도로 넣기가 끝났을 때 고른 곳을 알려요
-export default function EditDialog({ mode, ids, source, prefer, startAt, onPinChosen, onClose, onApplied }) {
+//   place: suggest 모드의 한 곳 { source, ids, kind, gapMin, gapMax } (src/pick-view.mjs). source 는 그곳의 근거 사진이에요
+export default function EditDialog({ mode, ids, source, place = null, prefer, startAt, onPinChosen, onClose, onApplied }) {
   const copy = mode === 'copy';
   const map = mode === 'map';
+  const suggest = mode === 'suggest';
+  // 근거 사진 위치 (지도에 보여 주기만). 그릴 때마다 새로 만들면 지도가 핀을 매번 다시 놓아서 한 번만 만들어요
+  const sourcePin = useMemo(() => (suggest ? { lat: source.lat, lng: source.lng } : null), [suggest, source]);
   const has = useMemo(() => sourceHas(source), [source]);
   const [pick, setPick] = useState(() => (copy ? firstPick(has, prefer) : PICK_NONE));
   const [day, setDay] = useState('');
@@ -92,7 +100,9 @@ export default function EditDialog({ mode, ids, source, prefer, startAt, onPinCh
   // 지금 칸으로 만든 요청. 아직 다 안 골랐으면 null 과 이유
   let edit = null;
   let pending = '';
-  if (copy) {
+  if (suggest) {
+    edit = { source: 'copy', sourceId: source.id, date: false, time: false, location: true, via: 'suggest' };
+  } else if (copy) {
     if (!pick.date && !pick.location) pending = '넣을 항목을 골라 주세요';
     else edit = { source: 'copy', sourceId: source.id, date: pick.date, time: pick.date && pick.time, location: pick.location };
   } else if (map) {
@@ -207,10 +217,22 @@ export default function EditDialog({ mode, ids, source, prefer, startAt, onPinCh
 
   return (
     <div className="dialog-backdrop" onMouseDown={keepFocus}>
-      <div ref={dialogRef} className={`dialog${map ? ' map-dialog' : ''}`} role="dialog" aria-modal="true" aria-labelledby="edit-title" tabIndex={-1} onKeyDown={onKeyDown}>
-        <h2 id="edit-title" className="dialog-title">{copy ? '붙여넣기' : map ? '지도에서 위치 고르기' : '날짜 직접 넣기'}</h2>
+      <div ref={dialogRef} className={`dialog${map || suggest ? ' map-dialog' : ''}`} role="dialog" aria-modal="true" aria-labelledby="edit-title" tabIndex={-1} onKeyDown={onKeyDown}>
+        <h2 id="edit-title" className="dialog-title">{suggest ? '근처 사진 위치 넣기' : copy ? '붙여넣기' : map ? '지도에서 위치 고르기' : '날짜 직접 넣기'}</h2>
 
-        {map ? (
+        {suggest ? (
+          <div className="dialog-pick suggest-pick">
+            <div className="suggest-pick-source">
+              <img src={`pvm://thumb/${source.id}`} alt="" draggable="false" />
+              <div>
+                <p className="dialog-sub">근거 사진 {source.name}</p>
+                <p className="dialog-sub">{formatTakenAt(source.takenAt)}, {place.kind === 'between' ? `앞뒤로 찍은 사진이 같은 곳 (${pickGapText(place)})` : pickGapText(place)}</p>
+                <p className="dialog-sub">위치 {formatCoords(source.lat, source.lng)}. 위치만 넣고 날짜는 그대로예요</p>
+              </div>
+            </div>
+            <MapPicker value={sourcePin} onChange={() => {}} startAt={sourcePin} readOnly />
+          </div>
+        ) : map ? (
           <div className="dialog-pick">
             <MapPicker value={pin} onChange={(next) => setPin((p) => nextPin(p, next, applying))} startAt={startAt} disabled={applying} />
             <p className="map-coords">{pin ? `고른 위치 ${formatCoords(pin.lat, pin.lng)}${pin.name ? ` (${pin.name})` : ''}` : '지도를 누르면 핀이 놓여요. 핀은 끌어서 옮길 수 있어요.'}</p>
