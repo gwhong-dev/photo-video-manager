@@ -1759,6 +1759,8 @@ const ITEMS = [
   ...require('./check-day-trash').items,
   // 62번은 휴지통 확인 창 바로 뜨게 + Delete 두 번 점검 (scripts/check-trash-fast.js)
   ...require('./check-trash-fast').items,
+  // 63번은 고른 사진에 근처 사진 위치 넣기 점검 (scripts/check-pick-suggest.js)
+  ...require('./check-pick-suggest').items,
 ];
 
 // ---------- 수동 샘플 처리 결과 표 (참고용) ----------
