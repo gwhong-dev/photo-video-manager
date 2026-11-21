@@ -24,7 +24,7 @@
 //   openExternal(url): 기본 브라우저로 열기 (main.js 가 shell.openExternal 을 넘겨요)
 //   appVersion: 앱 버전 글자 (지도 서버에 보내는 앱 이름표에 들어가요)
 //   trash(경로): 휴지통으로 보내기 (main.js 가 shell.trashItem 을 넘겨요). 없으면 비슷한 사진 버리기는 이동만 해요
-//   makeDriveKindOf(): 드라이브 종류 판단기 만들기 (기본 lib/platform.js). 버리기 때마다 새로 만들어요
+//   makeDriveKindOf(): 드라이브 종류 판단기 만들기 (기본 lib/platform.js). 버리기 때마다 새로 만들어요 (확인 창 미리보기만 잠깐 다시 써요)
 //   비슷한 사진: lib/similar.js (지문, 묶기), lib/similar-discard.js (버리기 확인과 옮기기). 버리기만 사진 파일을 옮겨요 (휴지통 또는 _정리완료원본)
 //   내가 붙이는 태그: lib/manual-tags.js (규칙). 값 넣기와 같은 순서(기록 파일 → DB → 로그)로 저장하고 같은 되돌리기 줄로 되돌려요. 사진 파일에는 안 써요
 
@@ -46,6 +46,7 @@ const { buildGroups, createHasher, isBlurry } = require('./lib/similar');
 const ai = require('./lib/similar-ai');
 const { checkDiscard, checkSelected, discardInfo, discardFiles } = require('./lib/similar-discard');
 const { createDriveKindOf } = require('./lib/platform');
+const { createPreviewDrive } = require('./lib/preview-drive');
 const { historyFromJobs, planFill, toFillPreview, runFill, undoFill, lastFillRun } = require('./lib/fill-nodate');
 const { isTagKind, normalizeTagEdit, planTagEdit, toTagPreview, cleanTagName, cleanHotkey, normalizeRename, planTagRename } = require('./lib/manual-tags');
 const { readCleanHistory, cleanedFolders, cleanedDirOf } = require('./lib/clean-history');
@@ -307,6 +308,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // ---------- 화면의 부탁 ----------
   ipcMain.handle('gallery:get-state', () => {
     const root = rootNow();
+    warmPreviewDrive(root); // 확인 창이 바로 뜨게 드라이브 판단을 뒤에서 미리 읽어 둬요 (이미 있으면 그대로)
     const t = getTools(); // 아직 찾는 중이면 null → 화면에는 tools: null (도구 "없음" 안내를 잘못 띄우지 않게)
     const out = {
       root,
@@ -833,6 +835,32 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   let hashStall = null; // 하나도 못 만들고 끝난 회차의 열쇠 (폴더 · 방식 · 진행이 같으면 다시 돌지 않아요)
   let closed = false; // 프로그램을 끄는 중 (DB 를 닫은 뒤에 새로 시작하지 않게)
   let discarding = false;
+
+  // ---------- 확인 창 미리보기의 드라이브 판단 다시 쓰기 (lib/preview-drive.js, 2026-11-21 사용자 지적: 확인 창 버튼이 1~2초 늦게 떠요) ----------
+  //   미리보기(trash-preview · similar-preview)만 읽어 둔 판단을 다시 써요. 갤러리를 열 때 · 옮긴 뒤 뒤에서 미리 읽어 둬요
+  //   실제로 옮길 때(similar-discard · trash-selected)는 지금처럼 매번 makeDriveKindOf() 로 새로 확인해요 (안전 그대로)
+  const previewDrive = createPreviewDrive({ make: makeDriveKindOf });
+  const previewDriveKindOf = (root) => previewDrive.get(root);
+  const warmPreviewDrive = (root, opts) => { if (!closed) previewDrive.warm(root, opts); };
+  // 옮기기 직전 다시 맞춰 보기 (#128 검증 ⚠️): 휴지통 넘침 주의는 미리보기에서만 계산해서, 읽어 둔(조금 옛) 값이면 주의가 빠질 수 있어요
+  //   → 확인 창에 보여 준 결과를 기억해 두고, 옮기기 직전에 새 판단으로 다시 계산해요
+  //   휴지통 / _정리완료원본 장수가 다르거나 창에 없던 주의가 생겼으면 옮기지 않고 창을 다시 열라고 해요
+  //   확인 창 없이 온 부탁(점검 등, 같은 번호의 미리보기가 없음)은 예전처럼 다시 맞추지 않아요
+  const shownPreview = new Map(); // 'trash' | 'similar' → { key: 번호들, info }
+  const previewKey = (ids) => (Array.isArray(ids) ? ids.join(',') : '');
+  const rememberPreview = (kind, ids, info) => shownPreview.set(kind, { key: previewKey(ids), info });
+  async function recheckPreview(kind, ids, files, fresh) {
+    const seen = shownPreview.get(kind);
+    shownPreview.delete(kind); // 한 번만 써요
+    if (!seen || seen.key !== previewKey(ids)) return;
+    const now = await discardInfo(files, { driveKindOf: fresh });
+    const before = seen.info.warnings || [];
+    const added = (now.warnings || []).filter((w) => !before.includes(w));
+    if (now.trash !== seen.info.trash || now.move !== seen.info.move || added.length) {
+      throw new Error('확인 창을 연 뒤 휴지통 상황이 바뀌었어요. 아무것도 옮기지 않았어요. 창을 닫고 다시 열어 확인해 주세요');
+    }
+  }
+
   const withState = (p) => ({ ...p, hashing, waiting: hashing && busy() });
   const similarProgress = (root) => withState(db.hashProgress(root));
   function startHashing(root, mode = 'full') {
@@ -1034,7 +1062,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   ipcMain.handle('gallery:similar-preview', async (e, ids) => {
     const root = editReady({ screenOk: true });
     const { files, groups } = checkDiscard(db, root, ids);
-    const info = await discardInfo(files, { driveKindOf: makeDriveKindOf() });
+    const info = await discardInfo(files, { driveKindOf: await previewDriveKindOf(root) }); // 미리보기는 읽어 둔 판단을 다시 써요 (위 규칙)
+    rememberPreview('similar', ids, info); // 옮기기 직전에 새 판단과 맞춰 봐요
     return { ...info, groups, canTrash: typeof trash === 'function' };
   });
 
@@ -1047,7 +1076,9 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     discarding = true;
     try {
       const noTrash = async () => { throw new Error('휴지통을 쓸 수 없어요'); };
-      const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: makeDriveKindOf(), logger, ...screenLog(root) });
+      const fresh = makeDriveKindOf(); // 옮길 때는 늘 새로 확인해요
+      await recheckPreview('similar', ids, files, fresh); // 확인 창과 달라졌으면 옮기지 않아요
+      const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: fresh, logger, ...screenLog(root) });
       // DB에 적다가 실패해도 옮긴 결과는 알려요 (다음에 백업 폴더를 읽으면 "사라짐"으로 맞춰져요)
       if (r.done.length) {
         try {
@@ -1061,6 +1092,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       return { trashed: r.trashed, moved: r.moved, fail: r.fail, pairs: r.pairs, pairFail: r.pairFail, logFail: r.logFail, logName: path.basename(r.logPath || '') };
     } finally {
       discarding = false;
+      warmPreviewDrive(root, { forget: true }); // 휴지통 크기가 바뀌었어요 → 다음 미리보기용으로 뒤에서 새로 읽어요
     }
   });
 
@@ -1071,7 +1103,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   ipcMain.handle('gallery:trash-preview', async (e, ids) => {
     const root = editReady({ screenOk: true });
     const { files } = checkSelected(db, root, ids);
-    const info = await discardInfo(files, { driveKindOf: makeDriveKindOf() });
+    const info = await discardInfo(files, { driveKindOf: await previewDriveKindOf(root) }); // 미리보기는 읽어 둔 판단을 다시 써요 (위 규칙)
+    rememberPreview('trash', ids, info); // 옮기기 직전에 새 판단과 맞춰 봐요
     return { ...info, canTrash: typeof trash === 'function' };
   });
   ipcMain.handle('gallery:trash-selected', async (e, ids) => {
@@ -1082,7 +1115,9 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     discarding = true;
     try {
       const noTrash = async () => { throw new Error('휴지통을 쓸 수 없어요'); };
-      const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: makeDriveKindOf(), logger, logKind: 'gallery-trash', logTitle: '갤러리에서 휴지통으로', ...screenLog(root) });
+      const fresh = makeDriveKindOf(); // 옮길 때는 늘 새로 확인해요
+      await recheckPreview('trash', ids, files, fresh); // 확인 창과 달라졌으면 옮기지 않아요
+      const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: fresh, logger, logKind: 'gallery-trash', logTitle: '갤러리에서 휴지통으로', ...screenLog(root) });
       // DB에 적다가 실패해도 옮긴 결과는 알려요 (다음에 백업 폴더를 읽으면 "사라짐"으로 맞춰져요)
       if (r.done.length) {
         try {
@@ -1096,6 +1131,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       return { trashed: r.trashed, moved: r.moved, fail: r.fail, pairs: r.pairs, pairFail: r.pairFail, logFail: r.logFail, logName: path.basename(r.logPath || '') };
     } finally {
       discarding = false;
+      warmPreviewDrive(root, { forget: true }); // 휴지통 크기가 바뀌었어요 → 다음 미리보기용으로 뒤에서 새로 읽어요
     }
   });
 

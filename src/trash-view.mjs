@@ -6,8 +6,10 @@
 const count = (n) => Number(n || 0).toLocaleString('ko-KR');
 
 // 확인 창 버튼: 결과를 말해요 ("3장 휴지통으로 옮기기")
-export function trashLabel(info) {
-  if (!info || !info.count) return '';
+//   pending: 확인 결과가 오기 전 고른 장수. 결과 전에도 버튼 글자를 보여 줘요 (누르는 건 결과 뒤에만, 2026-11-21 사용자 지적)
+export function trashLabel(info, pending = 0) {
+  if (!info) return pending > 0 ? trashMenuLabel(pending) : '';
+  if (!info.count) return '';
   if (info.move === 0) return `${count(info.count)}장 휴지통으로 옮기기`;
   if (info.trash === 0) return `${count(info.count)}장 정리완료원본 폴더로 옮기기`;
   return `${count(info.count)}장 옮기기`;
@@ -42,6 +44,17 @@ export function trashMenuLabel(n) {
 // 날짜 칸 링크: "이 날 4장 휴지통으로" (2026-11-21 사용자 요청. 누르면 확인 창이 열려요, 끝에 → 를 붙이지 않아요)
 export function dayTrashLabel(n) {
   return `이 날 ${count(n)}장 휴지통으로`;
+}
+
+// 확인 창이 열린 동안 Delete 키 (2026-11-21 사용자 요청: "Delete 눌러도 삭제 가능하게")
+//   Delete 한 번 = 창 열기, 한 번 더 = 옮기기. 누른 채로 있어서 반복으로 들어온 키(repeat)는 무시해요 (꾹 눌러 한 번에 옮겨지지 않게)
+//   state: { busy, info, error } → 'go' 옮김 | 'ignore'
+//   확인 결과(어디로 몇 장, 주의)가 화면에 나오기 전에 누른 것은 무시해요. 미리 눌러 둔 것을 나중에 옮기지 않아요
+//   (CLAUDE.md 5절 "삭제 · 이동은 미리보기 후 실행", #128 검증 ❌)
+export function dialogDeleteAction(e, { busy, info, error }) {
+  if (!e || e.key !== 'Delete' || e.repeat) return 'ignore';
+  if (busy || error || !info) return 'ignore';
+  return info.count > 0 ? 'go' : 'ignore';
 }
 
 // Delete 키로 창을 열어도 되는지: 글 쓰는 칸에 있거나 다른 창이 열려 있으면 안 열어요
