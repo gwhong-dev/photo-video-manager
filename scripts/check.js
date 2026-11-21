@@ -1755,6 +1755,8 @@ const ITEMS = [
   ...require('./check-dup-compare').items,
   // 60번은 가져오기 전 거르기 + 가져올 때 태그 점검 (scripts/check-import-screening.js)
   ...require('./check-import-screening').items,
+  // 61번은 날짜 칸에서 이 날 사진 휴지통으로 점검 (scripts/check-day-trash.js)
+  ...require('./check-day-trash').items,
 ];
 
 // ---------- 수동 샘플 처리 결과 표 (참고용) ----------

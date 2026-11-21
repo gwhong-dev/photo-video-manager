@@ -39,6 +39,11 @@ export function trashMenuLabel(n) {
   return `${count(n)}장 휴지통으로 옮기기`;
 }
 
+// 날짜 칸 링크: "이 날 4장 휴지통으로" (2026-11-21 사용자 요청. 누르면 확인 창이 열려요, 끝에 → 를 붙이지 않아요)
+export function dayTrashLabel(n) {
+  return `이 날 ${count(n)}장 휴지통으로`;
+}
+
 // Delete 키로 창을 열어도 되는지: 글 쓰는 칸에 있거나 다른 창이 열려 있으면 안 열어요
 //   target: 키를 누른 곳 (document.activeElement), open: 다른 창이 열려 있는지
 export function deleteKeyOpens(key, target, open) {

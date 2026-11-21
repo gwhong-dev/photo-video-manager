@@ -191,6 +191,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .day-weekday { margin-top: 4px; font-size: 13px; color: var(--sub); }
 .day-count { font-size: 13px; color: var(--faint); }
 .day-select { display: block; margin-top: 6px; padding: 0; font-size: 12px; color: var(--faint); text-align: left; }
+.day-trash { margin-top: 4px; } /* "이 날 N장 휴지통으로": 색은 "이 날 모두 선택"과 같게 (빨강 · 노랑은 쓰지 않아요) */
 
 .cell { position: relative; display: block; aspect-ratio: 1; overflow: hidden; background: var(--panel); cursor: pointer; }
 .cell.empty { cursor: default; }

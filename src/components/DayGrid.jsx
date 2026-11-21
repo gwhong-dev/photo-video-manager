@@ -12,6 +12,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { api } from '../api.js';
 import { formatCount, formatDuration } from '../format.mjs';
 import { buildRows, formatDayLabel, rowHeight } from '../grid-layout.mjs';
+import { dayTrashLabel } from '../trash-view.mjs';
 
 const GAP = 4; // 칸 사이 간격
 const DAY_GAP = 28; // 날 사이 여백
@@ -65,7 +66,8 @@ const Cell = memo(function Cell({ file, day, selected, onClick, onMenu }) {
   );
 });
 
-function DayLabel({ row, onSelectDay }) {
+// onTrashDay 가 없으면(휴지통이 없는 화면 · 위치 제안이 열린 화면) "이 날 N장 휴지통으로" 링크를 그리지 않아요
+function DayLabel({ row, onSelectDay, onTrashDay }) {
   const label = formatDayLabel(row.day);
   return (
     <div className="day-label">
@@ -74,6 +76,9 @@ function DayLabel({ row, onSelectDay }) {
       {label.weekday && <div className="day-weekday">{label.weekday}</div>}
       <div className="day-count">{formatCount(row.dayCount)}장</div>
       <button type="button" className="link-button day-select" onClick={() => onSelectDay(row.day)}>이 날 모두 선택</button>
+      {onTrashDay && row.dayCount > 0 && (
+        <button type="button" className="link-button day-select day-trash" onClick={() => onTrashDay(row.day)}>{dayTrashLabel(row.dayCount)}</button>
+      )}
     </div>
   );
 }
@@ -83,7 +88,8 @@ function DayLabel({ row, onSelectDay }) {
 // onCellClick(file, event, dayFiles): 칸 클릭. dayFiles는 그 날의 파일 목록 (Shift+클릭 범위를 구하는 데 써요)
 // onCellMenu(file, event): 칸 우클릭
 // onSelectDay(day): 날짜 칸의 "이 날 모두 선택"
-export default function DayGrid({ view, selection, onCellClick, onCellMenu, onSelectDay }) {
+// onTrashDay(day): 날짜 칸의 "이 날 N장 휴지통으로" (그날을 모두 고르고 확인 창을 열어요). 없으면 링크를 그리지 않아요
+export default function DayGrid({ view, selection, onCellClick, onCellMenu, onSelectDay, onTrashDay }) {
   const scrollRef = useRef(null);
   const [width, setWidth] = useState(0);
   const layout = useMemo(() => computeLayout(width), [width]);
@@ -243,7 +249,7 @@ export default function DayGrid({ view, selection, onCellClick, onCellMenu, onSe
           const entry = cache && cache.map.get(row.day);
           return (
             <div key={it.key} className="day-row" style={{ height: it.size, transform: `translateY(${it.start}px)` }}>
-              <div className="date-col">{row.isFirstOfDay && <DayLabel row={row} onSelectDay={onSelectDay} />}</div>
+              <div className="date-col">{row.isFirstOfDay && <DayLabel row={row} onSelectDay={onSelectDay} onTrashDay={onTrashDay} />}</div>
               <div className="cells">
                 {Array.from({ length: row.count }, (_, k) => {
                   const file = entry && entry.files[row.startIndex + k];
