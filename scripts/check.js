@@ -1757,6 +1757,8 @@ const ITEMS = [
   ...require('./check-import-screening').items,
   // 61번은 날짜 칸에서 이 날 사진 휴지통으로 점검 (scripts/check-day-trash.js)
   ...require('./check-day-trash').items,
+  // 63번은 비슷한 사진 크게 비교 + 라이브 포토 재생 점검 (scripts/check-compare-live.js)
+  ...require('./check-compare-live').items,
 ];
 
 // ---------- 수동 샘플 처리 결과 표 (참고용) ----------

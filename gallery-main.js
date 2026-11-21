@@ -63,7 +63,8 @@ const PROGRESS_GAP_MS = 100; // 읽기 진행 알림 최소 간격 (파일 찾�
 //   standard + secure = 일반 주소처럼 다뤄요(호스트 thumb/preview 를 읽을 수 있어요), supportFetchAPI = fetch 로도 가능
 function registerScheme(protocol) {
   protocol.registerSchemesAsPrivileged([
-    { scheme: SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
+    // stream: 라이브 포토 영상(pvm://live/<id>)을 <video> 로 재생하려면 필요해요 (2026-11-21)
+    { scheme: SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
   ]);
 }
 

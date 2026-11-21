@@ -570,3 +570,41 @@ button.primary:disabled { background: var(--panel); color: var(--sub); border-co
 .fill-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fill-day { color: var(--sub); }
 .fill-banner { border-left: 3px solid var(--warn); }
+
+/* ---------- 라이브 포토 · 모션 포토 재생 (2026-11-21, src/components/LivePhoto.jsx) ---------- */
+/* 영상은 평소 숨기고, 누르고 있는 동안 부모 칸(position: relative) 위에 꽉 차게 겹쳐요 */
+.live-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--sidebar); visibility: hidden; pointer-events: none; z-index: 2; }
+.live-video.playing { visibility: visible; }
+.live-button { position: absolute; left: 8px; bottom: 8px; z-index: 3; padding: 3px 10px; border: 1px solid var(--line); border-radius: 12px; background: rgba(51, 50, 47, 0.85); color: var(--text); font-size: 12px; cursor: pointer; user-select: none; touch-action: none; }
+.live-button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+.live-note { position: absolute; left: 8px; bottom: 8px; z-index: 3; padding: 2px 8px; border-radius: 4px; background: rgba(51, 50, 47, 0.85); color: var(--sub); font-size: 12px; }
+
+/* ---------- 비슷한 사진 크게 비교 (2026-11-21, src/components/CompareView.jsx). 빨강(--pencil)은 남김/버림 표시에만 ---------- */
+.compare { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: var(--bg); color: var(--text); outline: none; }
+.compare-top { flex: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+.compare-title { margin: 0; font-size: 15px; font-weight: 600; }
+.compare-keys { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--sub); font-size: 12px; }
+.compare-keys kbd { display: inline-block; min-width: 18px; margin-right: 3px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--text); font: inherit; text-align: center; }
+.compare-actions { margin-left: auto; display: flex; gap: 8px; }
+.compare-note { flex: none; margin: 0; padding: 6px 20px; color: var(--sub); font-size: 13px; }
+.compare-panes { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr; gap: 8px; padding: 8px 12px; }
+.compare-panes.two { grid-template-columns: 1fr 1fr; }
+.compare-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.compare-pane.empty { align-items: center; justify-content: center; color: var(--faint); }
+.compare-box { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--sidebar); cursor: zoom-in; touch-action: none; }
+.compare-box.zoomed { cursor: grab; }
+.compare-pane.pinned .compare-box { outline: 2px solid var(--pencil); outline-offset: -2px; }
+.compare-img { position: absolute; max-width: none; max-height: none; user-select: none; }
+.compare-x { inset: 30%; z-index: 1; opacity: 0.8; }
+.compare-foot { flex: none; display: flex; align-items: baseline; gap: 10px; padding-top: 6px; }
+.compare-label { color: var(--sub); font-size: 13px; }
+.compare-foot .similar-mark { margin-top: 0; }
+.compare-foot .similar-mark.on { background: var(--pencil); color: var(--text); }
+.compare-strip { flex: none; display: flex; gap: 6px; padding: 8px 12px 12px; overflow-x: auto; border-top: 1px solid var(--line); }
+.compare-thumb { position: relative; flex: none; width: 72px; height: 72px; padding: 0; border: 0; background: var(--panel); cursor: pointer; overflow: hidden; }
+.compare-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.compare-thumb.discard img { opacity: 0.4; }
+.compare-thumb.keep { outline: 2px solid var(--pencil); outline-offset: -2px; }
+.compare-thumb.current { box-shadow: inset 0 0 0 3px var(--text); }
+.compare-thumb .similar-x { inset: 22%; }
+.compare-thumb .similar-best { right: 3px; top: 3px; font-size: 11px; }

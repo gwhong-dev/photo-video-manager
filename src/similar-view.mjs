@@ -40,6 +40,33 @@ export function toggleMark(group, id, overrides) {
   return { overrides: next, refused: false };
 }
 
+// 표시를 정해서 바꾸기 (비교 창의 ↑ 버림 · ↓ 남김, 2026-11-21 사용자 요청) → { overrides, refused }
+//   이미 그 표시면 그대로. 마지막 남김을 버림으로 바꾸려 하면 거절 (toggleMark 와 같은 규칙)
+export function setMark(group, id, want, overrides) {
+  if (want !== 'keep' && want !== 'discard') return { overrides: overrides || new Map(), refused: false };
+  const now = markOf(group, id, overrides);
+  if (now === want) {
+    // 처음 표시 그대로여도 사용자가 고른 것으로 적어 둬요 (추천이 바뀌어도 그대로 남게)
+    if (chosen(overrides && overrides.get(id))) return { overrides: overrides || new Map(), refused: false };
+    const next = new Map(overrides || []);
+    next.set(id, want);
+    return { overrides: next, refused: false };
+  }
+  return toggleMark(group, id, overrides);
+}
+
+// 비교 창에서 Space 로 "가장 좋은 사진" 고정 (2026-11-21 사용자 요청) → 새 overrides
+//   고정한 사진은 남김. 아직 아무것도 안 고른 묶음이면 원래 추천 사진은 버림으로 바꿔요 (추천 1장만 남기는 처음 표시와 같은 뜻)
+//   이미 고른 것이 있는 묶음은 다른 사진의 표시를 건드리지 않아요
+export function pinBest(group, id, overrides) {
+  if (!group || !group.ids.includes(id)) return overrides || new Map();
+  const touched = group.ids.some((x) => chosen(overrides && overrides.get(x)));
+  const next = new Map(overrides || []);
+  next.set(id, 'keep');
+  if (!touched && group.keepId !== undefined && group.keepId !== id && group.ids.includes(group.keepId)) next.set(group.keepId, 'discard');
+  return next;
+}
+
 // 이 묶음은 모두 남기기
 export function keepAll(group, overrides) {
   const next = new Map(overrides || []);
