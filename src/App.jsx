@@ -483,6 +483,30 @@ export default function App() {
     setNotice('');
     setTrashIds([...selection.ids]);
   };
+  // 날짜 칸의 "이 날 N장 휴지통으로" (2026-11-21 사용자 요청: 스크린샷처럼 그날 통째로 버릴 사진이 많을 때 한 번에)
+  //   그날 사진 · 영상을 모두 고른 뒤 같은 확인 창을 열어요. 옮기기는 확인 창에서 눌러야만 해요
+  //   번호를 받는 사이 화면 · 필터가 바뀌었거나 다른 창이 열렸으면 열지 않아요. 받는 중에 또 눌러도 한 번만
+  const dayTrashBusy = useRef(false);
+  const openWindowsRef = useRef(false);
+  openWindowsRef.current = !!(dialog || fillOpen || trashIds || tagEdit);
+  const trashDay = async (day) => {
+    setCellMenuAt(null);
+    if (!viewCurrent || !trashScreen || suggestOpen || openWindowsRef.current || dayTrashBusy.current) return;
+    dayTrashBusy.current = true;
+    const at = scopeRef.current;
+    try {
+      const files = await api.listFiles(day, view.filter);
+      const ids = Array.isArray(files) ? files.map((f) => f.id) : [];
+      if (scopeRef.current !== at || openWindowsRef.current || ids.length === 0) return;
+      setSelection(selectionOf(ids)); // 오른쪽 패널도 같은 장수를 보여 줘요
+      setNotice('');
+      setTrashIds(ids);
+    } catch (e) {
+      if (scopeRef.current === at) setNotice(errorText(e));
+    } finally {
+      dayTrashBusy.current = false;
+    }
+  };
   const onTrashDone = async (text) => {
     setTrashIds(null);
     setSelection(EMPTY_SELECTION);
@@ -638,7 +662,8 @@ export default function App() {
       </EmptyState>
     );
   } else if (view) {
-    center = <DayGrid view={view} selection={selection} onCellClick={onCellClick} onCellMenu={onCellMenu} onSelectDay={selectDay} />;
+    center = <DayGrid view={view} selection={selection} onCellClick={onCellClick} onCellMenu={onCellMenu} onSelectDay={selectDay}
+      onTrashDay={trashScreen && !suggestOpen ? trashDay : undefined} />;
   } else {
     center = null; // 날짜 목록을 받는 중
   }
