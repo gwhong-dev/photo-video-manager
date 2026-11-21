@@ -91,9 +91,9 @@ const items = [
         out.push(sub('63b pvm://original 은 JPG 원본 그대로, HEIC 는 1200px 미리보기로 대신',
           o1.status === 200 && o1.path === plain && o1.type === 'image/jpeg' && o5.status === 200 && !o5.path && o5.type === 'image/webp',
           JSON.stringify({ o1: o1.type, o5: o5.type })));
-        out.push(sub('63b pvm://live 는 짝 영상(같은 이름 · 5초 이하 · 3초 안) 먼저, 없으면 JPG 끝 영상, 둘 다 없거나 영상 번호면 404, 모르는 호스트 404',
+        out.push(sub('63b pvm://live 는 짝 영상(같은 이름 · 5초 이하 · 3초 안) 먼저, 없으면 JPG 끝 영상, 보통 사진은 204(화면 오류 로그 없게), 영상 번호 · 모르는 호스트는 404',
           l3.status === 200 && l3.path === pairMov && l1.status === 200 && l1.buffer && l1.buffer.equals(video) && l1.type === 'video/mp4'
-            && l2.status === 404 && l4.status === 404 && odd.status === 404,
+            && l2.status === 204 && l4.status === 404 && odd.status === 404,
           JSON.stringify({ l1: l1.status, l2: l2.status, l3: l3.path && path.basename(l3.path), l4: l4.status, odd: odd.status })));
       }
 
@@ -198,8 +198,10 @@ const items = [
           q.opened === true && q.single === true && q.origin === true && q.moved === true && q.two === true && q.pinnedThumb === true
             && q.keepsAfter === 2 && q.gridKeeps === 2 && q.closed === true, seen));
         out.push(sub('63f 휠로 확대하면 두 칸이 같은 배율로 커짐, Space 로 다시 열림, 사진 파일 그대로, 화면 오류 없음',
-          q.zoomSync === true && q.spaceOpens === true && snap() === before && !(r.errors || []).some((e) => !/Failed to load resource/.test(e)),
+          q.zoomSync === true && q.spaceOpens === true && snap() === before && (r.errors || []).length === 0,
           `${seen} / 오류 ${(r.errors || []).join(' | ').slice(0, 300)}`));
+        out.push(sub('63f 비교 창 안 재생 버튼: 누르면 재생, 누른 채 움직여도 사진이 끌리지 않음 / 열린 동안 뒤 화면 inert / 고정 칸 테두리는 빨강이 아님',
+          q.compareLive === true && q.comparePlayed === true && q.noDrag === true && q.inert === true && !!q.pinColor && !/224, 65, 47/.test(q.pinColor), seen));
       }
       return out;
     },
@@ -267,6 +269,29 @@ async function compareProbe() {
   const r1 = imgs().map(ratio);
   q.zoom = { r0, r1 };
   q.zoomSync = r1[0] > r0[0] * 1.2 && Math.abs(r1[0] / r0[0] - r1[1] / r0[1]) < 0.02;
+  // 비교 창이 열린 동안 뒤 화면은 inert (Tab 으로 뒤 버튼에 못 감), 고정 칸 테두리는 빨강이 아님 (#129 검증 ⚠️)
+  q.inert = !!(document.querySelector('.similar-actions') && document.querySelector('.similar-actions').closest('[inert]'));
+  const pinBox = document.querySelector('.compare-pane.pinned .compare-box');
+  q.pinColor = pinBox ? getComputedStyle(pinBox).outlineColor : '';
+  // 비교 창 안 재생 버튼: 모션 포토(c.jpg)가 오른쪽에 올 때까지 넘겨서 누르면 재생, 사진은 끌리지 않음
+  let lb = null;
+  for (const k of ['ArrowRight', 'ArrowRight', 'ArrowLeft', 'ArrowLeft', 'ArrowLeft']) {
+    lb = await wait(() => document.querySelector('.compare-pane:not(.pinned) .live-button'), 1500);
+    if (lb) break;
+    key(k);
+  }
+  if (!lb) lb = document.querySelector('.compare .live-button');
+  q.compareLive = !!lb;
+  if (lb) {
+    const im = lb.closest('.compare-box').querySelector('.compare-img');
+    const rect0 = JSON.stringify(im.getBoundingClientRect());
+    lb.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+    lb.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, button: 0, clientX: 60, clientY: 40 }));
+    const cv = lb.closest('.compare-box').querySelector('video.live-video');
+    q.comparePlayed = !!(await wait(() => cv && !cv.paused && cv.currentTime > 0, 5000));
+    q.noDrag = JSON.stringify(im.getBoundingClientRect()) === rect0;
+    lb.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 }));
+  }
   key('Escape');
   q.closed = !!(await wait(() => !document.querySelector('.compare'), 3000));
   q.gridKeeps = document.querySelectorAll('.similar-cell.keep').length;

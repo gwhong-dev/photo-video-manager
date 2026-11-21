@@ -593,7 +593,7 @@ button.primary:disabled { background: var(--panel); color: var(--sub); border-co
 .compare-pane.empty { align-items: center; justify-content: center; color: var(--faint); }
 .compare-box { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--sidebar); cursor: zoom-in; touch-action: none; }
 .compare-box.zoomed { cursor: grab; }
-.compare-pane.pinned .compare-box { outline: 2px solid var(--pencil); outline-offset: -2px; }
+.compare-pane.pinned .compare-box { outline: 2px solid var(--text); outline-offset: -2px; } /* 고정 표시는 글자 색 (빨강은 남김/버림에만) */
 .compare-img { position: absolute; max-width: none; max-height: none; user-select: none; }
 .compare-x { inset: 30%; z-index: 1; opacity: 0.8; }
 .compare-foot { flex: none; display: flex; align-items: baseline; gap: 10px; padding-top: 6px; }

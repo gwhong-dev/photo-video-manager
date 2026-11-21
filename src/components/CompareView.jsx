@@ -63,7 +63,7 @@ function Pane({ file, view, onView, label, mark, onMark, pinned }) {
         ref={boxRef}
         className={`compare-box${view.z > 1 ? ' zoomed' : ''}`}
         onPointerDown={(e) => {
-          if (e.button !== 0) return;
+          if (e.button !== 0 || e.target.closest('.live-button')) return; // 재생 버튼은 칸이 끌기로 가져가지 않아요 (#129 검증 ⚠️)
           drag.current = { x: e.clientX, y: e.clientY };
           e.currentTarget.setPointerCapture(e.pointerId);
         }}
@@ -77,6 +77,7 @@ function Pane({ file, view, onView, label, mark, onMark, pinned }) {
         onPointerUp={() => { drag.current = null; }}
         onPointerCancel={() => { drag.current = null; }}
         onDoubleClick={(e) => {
+          if (e.target.closest('.live-button')) return;
           const r = e.currentTarget.getBoundingClientRect();
           onView(toggleActual(view, nat, box, { x: e.clientX - r.left, y: e.clientY - r.top }));
         }}
@@ -121,8 +122,10 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
 
   // 묶음이 바뀌어(목록을 다시 받음) 보던 사진이 없어지면 맞춰요
   useEffect(() => {
-    if (pinned !== null && !group.ids.includes(pinned)) setPinned(null);
-    if (!group.ids.includes(current)) setCurrent(group.ids[0]);
+    const stillPinned = pinned !== null && group.ids.includes(pinned);
+    if (pinned !== null && !stillPinned) setPinned(null);
+    // 고정한 사진이 오른쪽에도 뜨지 않게, 오른쪽 목록(고정한 사진 뺌)의 첫 사진으로 (#129 검증 ⚠️)
+    if (!group.ids.includes(current) || (stillPinned && current === pinned)) setCurrent(browseIds(group, stillPinned ? pinned : null)[0] ?? null);
   }, [group, pinned, current]);
 
   const decide = (want) => {
@@ -159,6 +162,19 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
   // 키: ←/→ 넘기기, Space 고정, ↑ 버림, ↓ 남김, Esc 닫기 (창이 열린 동안 다른 화면 키로 가지 않게 막아요)
   const act = useRef(null);
   act.current = { decide, pin, ids, current, onClose };
+  // 비교 창이 열린 동안 뒤 화면은 inert: Tab 으로 뒤 버튼에 가서 확인 창을 비교 창 뒤에 여는 일이 없게 (#129 검증 ⚠️)
+  useEffect(() => {
+    const changed = [];
+    for (let el = rootRef.current; el && el.parentElement && el !== document.body; el = el.parentElement) {
+      for (const sib of el.parentElement.children) {
+        if (sib === el || sib.inert || sib.tagName === 'SCRIPT') continue;
+        sib.inert = true;
+        changed.push(sib);
+      }
+    }
+    return () => { for (const s of changed) s.inert = false; };
+  }, []);
+
   useEffect(() => {
     const opener = document.activeElement;
     if (rootRef.current) rootRef.current.focus();
@@ -204,10 +220,11 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
       {note && <p className="compare-note" role="status">{note}</p>}
       <div className={`compare-panes${pin1 ? ' two' : ''}`}>
         {pin1 && (
-          <Pane file={pin1} view={view} onView={setView} label="고정한 사진" mark={markOf(group, pin1.id, overrides)} onMark={toggleOf(pin1.id)} pinned />
+          <Pane key={`pin-${pin1.id}`} file={pin1} view={view} onView={setView} label="고정한 사진" mark={markOf(group, pin1.id, overrides)} onMark={toggleOf(pin1.id)} pinned />
         )}
         {cur ? (
           <Pane
+            key={`cur-${cur.id}`}
             file={cur}
             view={view}
             onView={setView}

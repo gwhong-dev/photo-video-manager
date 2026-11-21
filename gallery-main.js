@@ -1313,6 +1313,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       }
       if (!db) return notFound();
       const r = await handleMedia(request.url, { db, thumbs });
+      if (r.status === 204) return new Response(null, { status: 204 }); // 라이브 포토가 아닌 사진 (화면은 재생 버튼을 숨겨요)
       if (r.status !== 200) return notFound();
       // 같은 id의 사진이 바뀌면 썸네일도 바뀌니 화면이 옛 그림을 붙들지 않게 해요
       const headers = { 'Content-Type': r.type, 'Cache-Control': 'no-cache' };
