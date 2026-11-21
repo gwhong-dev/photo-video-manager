@@ -1761,6 +1761,8 @@ const ITEMS = [
   ...require('./check-trash-fast').items,
   // 63번은 고른 사진에 근처 사진 위치 넣기 점검 (scripts/check-pick-suggest.js)
   ...require('./check-pick-suggest').items,
+  // 64번은 비슷한 사진 크게 비교 + 라이브 포토 재생 점검 (scripts/check-compare-live.js)
+  ...require('./check-compare-live').items,
 ];
 
 // ---------- 수동 샘플 처리 결과 표 (참고용) ----------

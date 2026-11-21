@@ -64,7 +64,8 @@ const PROGRESS_GAP_MS = 100; // 읽기 진행 알림 최소 간격 (파일 찾�
 //   standard + secure = 일반 주소처럼 다뤄요(호스트 thumb/preview 를 읽을 수 있어요), supportFetchAPI = fetch 로도 가능
 function registerScheme(protocol) {
   protocol.registerSchemesAsPrivileged([
-    { scheme: SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
+    // stream: 라이브 포토 영상(pvm://live/<id>)을 <video> 로 재생하려면 필요해요 (2026-11-21)
+    { scheme: SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
   ]);
 }
 
@@ -1318,6 +1319,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       }
       if (!db) return notFound();
       const r = await handleMedia(request.url, { db, thumbs });
+      if (r.status === 204) return new Response(null, { status: 204 }); // 라이브 포토가 아닌 사진 (화면은 재생 버튼을 숨겨요)
       if (r.status !== 200) return notFound();
       // 같은 id의 사진이 바뀌면 썸네일도 바뀌니 화면이 옛 그림을 붙들지 않게 해요
       const headers = { 'Content-Type': r.type, 'Cache-Control': 'no-cache' };
