@@ -255,7 +255,8 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
               key={f.id}
               type="button"
               className={`compare-thumb${keep ? ' keep' : ' discard'}${f.id === current ? ' current' : ''}${f.id === pinned ? ' pinned' : ''}`}
-              aria-label={`${f.name} ${keep ? '남김' : '버림'}${f.id === pinned ? ', 고정한 사진' : ''}`}
+              aria-label={`${f.name} ${keep ? '남김' : '버림'}${f.id === pinned ? ', 고정한 사진' : ''}${f.id === current ? ', 지금 보는 사진' : ''}`}
+              aria-current={f.id === current ? 'true' : undefined}
               onClick={() => { if (f.id !== pinned) setCurrent(f.id); }}
             >
               <img src={`pvm://thumb/${f.id}`} alt="" draggable="false" loading="lazy" />
