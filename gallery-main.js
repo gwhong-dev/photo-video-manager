@@ -39,7 +39,7 @@ const { handleMedia } = require('./lib/media-protocol');
 const { now } = require('./lib/logger');
 const { normalizeRequest, planEdit, toPreview, MAX_TARGETS } = require('./lib/manual-edit');
 const { createJournal, recover } = require('./lib/manual-journal');
-const { buildSuggestions } = require('./lib/location-suggest');
+const { buildSuggestions, pickSuggestions } = require('./lib/location-suggest');
 const { createSkips } = require('./lib/suggest-skips');
 const { createMapNet, roundCoord, roundCity } = require('./lib/map-net');
 const { buildGroups, createHasher, isBlurry } = require('./lib/similar');
@@ -591,12 +591,18 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   const skips = createSkips(path.join(base, 'suggest-skips.json'), { onError: errorLog });
 
   // 제안 묶음 목록. 파일 경로는 화면에 주지 않아요
+  //   picks · pickSources: 위치 없는 사진마다 제안 하나 (건너뛴 사진 포함). 갤러리에서 사진을 고르면 오른쪽 패널 · 우클릭 메뉴에
+  //   "근처 사진 위치 넣기"를 보여 주는 데 써요 (2026-11-21). 넣기는 위 apply-edit 의 위치 제안 검사를 그대로 거쳐요
   ipcMain.handle('gallery:list-suggestions', () => {
     const root = editReady();
-    const r = buildSuggestions(db.listSuggestionRows(root), skips.paths());
+    const rows = db.listSuggestionRows(root);
+    const r = buildSuggestions(rows, skips.paths());
+    const p = pickSuggestions(rows);
     return {
       ...r,
       groups: r.groups.map((g) => ({ ...g, targets: g.targets.map(({ path: _path, ...t }) => t) })),
+      picks: p.picks,
+      pickSources: p.sources,
     };
   });
 

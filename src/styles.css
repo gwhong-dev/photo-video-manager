@@ -257,6 +257,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .panel-actions button { text-align: left; }
 /* 휴지통으로 옮기기: 값 넣기 버튼들과 조금 떼어 둬요 (빨강은 비슷한 사진 표시에만 써서 색은 그대로) */
 .panel-actions .trash-button { margin-top: 8px; }
+/* 근처 사진 위치 넣기: 버튼과 그 아래 어떤 사진 기준인지 한 줄 (2026-11-21) */
+.pick-suggest { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.pick-suggest .detail-sub { margin: 0; }
 .panel-heading { margin: 0 0 4px; font-size: 13px; font-weight: 400; color: var(--faint); }
 .copy-note { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
 .copy-name { margin: 0 0 4px; word-break: break-all; }
@@ -367,6 +370,12 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .map-frame { position: relative; isolation: isolate; }
 /* 창이 낮으면 지도를 줄여서, 넣기 버튼이 지도와 미리보기를 가리지 않게 해요 (최대 320px, 최소 150px) */
 .map-canvas { height: clamp(150px, calc(92vh - 402px), 320px); border: 1px solid var(--line); }
+/* 근처 사진 위치 넣기 창: 근거 사진 작은 그림 + 글, 그 아래 보기만 하는 지도 (검색 칸이 없어 조금 낮게) */
+.suggest-pick { display: flex; flex-direction: column; gap: 10px; }
+.suggest-pick-source { display: flex; gap: 12px; align-items: center; }
+.suggest-pick-source img { width: 72px; height: 72px; object-fit: cover; flex: none; background: var(--panel); }
+.suggest-pick-source .dialog-sub { margin: 0 0 2px; }
+.map-picker.read-only .map-canvas { height: clamp(140px, calc(92vh - 420px), 240px); }
 .map-canvas.leaflet-container { background: var(--panel); font-family: inherit; font-size: 13px; }
 .map-canvas:focus-visible { outline: 2px solid var(--sub); outline-offset: 1px; }
 .map-notes { position: absolute; z-index: 1001; top: 8px; left: 56px; right: 8px; display: flex; flex-direction: column; gap: 4px; pointer-events: none; }
