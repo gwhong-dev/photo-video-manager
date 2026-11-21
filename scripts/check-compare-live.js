@@ -308,7 +308,8 @@ async function compareProbe() {
     const keeps = [...document.querySelectorAll('.compare-thumb.keep')];
     if (keeps.length >= 2) {
       keeps[0].click();
-      const cur = await wait(() => document.querySelector('.compare-thumb.keep.current'), 3000);
+      // 누른 칸(keeps[0])이 지금 칸이 될 때까지 기다려요 (처음 연 사진이 다른 남김이어도 바뀌기 전 칸을 잡지 않게)
+      const cur = await wait(() => keeps[0].classList.contains('current') && keeps[0], 3000);
       const other = cur && keeps.find((t) => t !== cur);
       if (cur && other) {
         const cs = getComputedStyle(cur);
