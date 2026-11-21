@@ -4,6 +4,8 @@
 //     anchor = Shift+클릭 범위의 시작이 되는 칸, focus = 오른쪽 패널에 자세히 보여 줄 칸 (없으면 null)
 //   받은 sel은 절대 바꾸지 않고, 바뀐 새 sel을 돌려줘요 (React가 바뀐 줄 알아채게)
 //   nextSelection(sel, { id, ctrl, shift, dayFiles }) → 칸을 클릭했을 때의 새 선택
+//     dayFiles = Shift 범위를 셀 목록 (화면 순서). 보통은 그 날의 파일, 날을 넘는 범위면 목록 전체 번호(listIds)
+//   needsWholeList(sel, { shift, dayFiles }) → Shift 범위가 다른 날로 넘어가서 목록 전체 번호가 필요한지
 //   selectionOf(ids)               → 목록 전체 / 이 날 모두 선택처럼 한꺼번에 고른 선택
 //   selectionForMenu(sel, id)      → 우클릭한 칸이 선택 밖이면 그 칸만 고른 선택
 //   filterScope(filter)            → 선택을 비워야 하는 기준이 같은지 비교하는 글자 (정렬은 빼요)
@@ -18,7 +20,7 @@ function only(id) {
   return { ids: new Set([id]), anchor: id, focus: id };
 }
 
-// dayFiles(그 날의 파일 목록)에서 anchor와 id 사이(양 끝 포함)의 번호들. anchor가 그 날에 없으면 null
+// dayFiles(그 날의 파일 목록, 또는 목록 전체 번호)에서 anchor와 id 사이(양 끝 포함)의 번호들. anchor가 그 목록에 없으면 null
 function rangeIds(anchor, id, dayFiles) {
   if (anchor === null || !Array.isArray(dayFiles)) return null;
   const ids = dayFiles.map(idOf);
@@ -31,7 +33,7 @@ function rangeIds(anchor, id, dayFiles) {
 export function nextSelection(sel, { id, ctrl = false, shift = false, dayFiles } = {}) {
   const cur = sel || EMPTY_SELECTION;
   if (shift) {
-    // Shift+클릭: 같은 날 안에서 anchor부터 누른 칸까지. anchor가 없거나 다른 날이면 그 칸 한 장
+    // Shift+클릭: anchor부터 누른 칸까지 (다른 날이면 App 이 목록 전체 번호를 dayFiles 로 넘겨요). anchor가 없거나 목록에 없으면 그 칸 한 장
     const range = rangeIds(cur.anchor, id, dayFiles);
     if (!range) return only(id);
     const ids = ctrl ? new Set([...cur.ids, ...range]) : new Set(range); // Ctrl도 함께 누르면 기존 선택에 더해요
@@ -50,6 +52,14 @@ export function nextSelection(sel, { id, ctrl = false, shift = false, dayFiles }
     return { ids, anchor: id, focus };
   }
   return only(id);
+}
+
+// Shift+클릭인데 anchor 가 그 날 목록에 없으면(다른 날을 먼저 골랐으면) 목록 전체 번호가 있어야 범위를 셀 수 있어요
+//   (윈도우 탐색기처럼 날을 넘어 범위를 고르게. 2026-11-21 사용자 지적 "쉬프트 범위 선택이 안 됨")
+export function needsWholeList(sel, { shift = false, dayFiles } = {}) {
+  if (!shift || !sel || sel.anchor === null || sel.anchor === undefined) return false;
+  if (!Array.isArray(dayFiles)) return true;
+  return !dayFiles.some((f) => idOf(f) === sel.anchor);
 }
 
 // 한꺼번에 고른 선택: 어느 한 칸이 기준이 아니라서 anchor, focus는 없어요

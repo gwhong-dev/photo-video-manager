@@ -42,7 +42,7 @@ import TrashDialog from './components/TrashDialog.jsx';
 import { deleteKeyOpens } from './trash-view.mjs';
 import { formatCount, needsManyCheck, undoneText } from './format.mjs';
 import { alreadyText, noKeyText, quickTags, tagKeyAction, tagOfKey } from './tag-keys.mjs';
-import { EMPTY_SELECTION, filterScope, nextSelection, selectionForMenu, selectionOf, viewMatches } from './selection.mjs';
+import { EMPTY_SELECTION, filterScope, needsWholeList, nextSelection, selectionForMenu, selectionOf, viewMatches } from './selection.mjs';
 import { pickTable, remainingAfter, selectionPick } from './pick-view.mjs';
 
 const START_FILTER = { tab: 'all', sort: 'newest', query: '', tag: null, area: null }; // area: 지도에서 고른 곳 { rects, year }
@@ -92,6 +92,8 @@ export default function App() {
   const mapViewRef = useRef({ center: null, zoom: null, year: null, gotoSeq: 0 }); // 지도 화면을 다시 열 때 이어서 보여 줄 곳 (gotoSeq: 처리한 많이 찍은 곳 번호)
   const [similarFocus, setSimilarFocus] = useState(null); // 비슷한 사진 화면에서 오른쪽 패널에 보여 줄 사진 번호
   const [selection, setSelection] = useState(EMPTY_SELECTION); // { ids, anchor, focus }
+  const selectionRef = useRef(selection); // 칸 클릭(바뀌지 않는 함수)에서 지금 선택을 보려고
+  selectionRef.current = selection;
   const [cellMenuAt, setCellMenuAt] = useState(null); // 우클릭한 자리 { x, y }. 있으면 우클릭 메뉴를 그려요
   const [copySource, setCopySource] = useState(null); // 복사해 둔 값 { id, name, takenAt, lat, lng } (파일 경로 없음)
   const [dialog, setDialog] = useState(null); // 미리보기 창: { mode: 'copy' | 'direct' | 'map' | 'suggest' | 'tagAdd' | 'tagRemove', ids, prefer, startAt, place, more }. 열 때의 선택을 그대로 담아요
@@ -186,6 +188,8 @@ export default function App() {
   const viewCurrent = viewMatches(view, filter);
   const viewCurrentRef = useRef(viewCurrent);
   viewCurrentRef.current = viewCurrent;
+  const viewFilterRef = useRef(null); // 날을 넘는 Shift 범위에서 목록 전체 번호를 받을 필터
+  viewFilterRef.current = view ? view.filter : null;
 
   // ---------- 검색어는 입력을 멈추고 0.2초 뒤에 적용 ----------
   useEffect(() => {
@@ -282,8 +286,23 @@ export default function App() {
   // ---------- 고르기 ----------
   const onCellClick = useCallback((file, event, dayFiles) => {
     if (!viewCurrentRef.current) return;
-    const ctrl = event.ctrlKey || event.metaKey;
-    setSelection((sel) => nextSelection(sel, { id: file.id, ctrl, shift: event.shiftKey, dayFiles }));
+    const pick = { id: file.id, ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey };
+    if (!needsWholeList(selectionRef.current, { ...pick, dayFiles })) {
+      setSelection((sel) => nextSelection(sel, { ...pick, dayFiles }));
+      return;
+    }
+    // 다른 날에서 시작한 Shift 범위: 목록 전체 번호(화면 순서)를 받아 그 사이를 모두 골라요
+    //   받는 사이 필터 · 정렬이 바뀌었거나 다른 칸을 또 눌러 선택이 달라졌으면 버려요 (늦게 온 결과가 새 선택을 덮지 않게)
+    //   받기에 실패하면 누른 칸 한 장만 (예전처럼)
+    const at = scopeRef.current;
+    const before = selectionRef.current;
+    const asked = viewFilterRef.current;
+    api.listIds(asked)
+      .then((ids) => ids, () => null)
+      .then((ids) => {
+        if (scopeRef.current !== at || selectionRef.current !== before || viewFilterRef.current !== asked) return;
+        setSelection((sel) => nextSelection(sel, { ...pick, dayFiles: ids || dayFiles }));
+      });
   }, []);
   // 우클릭: 선택 밖의 칸이면 그 칸만 골라요. 메뉴는 아래 render에서 cellMenuAt 으로 그려요
   const onCellMenu = useCallback((file, event) => {
