@@ -187,7 +187,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  // 크게 비교 중인 묶음이 목록을 다시 받아 없어지면 창 상태도 비워요 (그대로 두면 Space 열기가 막히고, 나중에 묶음이 생기면 창이 갑자기 열려요, #129 검증 ⚠️)
+  // 크게 비교 중인 묶음이 목록을 다시 받아 없어지면 창 상태도 비워요 (그대로 두면 Space 열기가 막히고, 나중에 묶음이 생기면 창이 갑자기 열려요, #131 검증 ⚠️)
   useEffect(() => {
     if (!compare || !data) return;
     const vis = data.groups.slice(0, shown);

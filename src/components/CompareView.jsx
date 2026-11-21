@@ -63,7 +63,7 @@ function Pane({ file, view, onView, label, mark, onMark, pinned }) {
         ref={boxRef}
         className={`compare-box${view.z > 1 ? ' zoomed' : ''}`}
         onPointerDown={(e) => {
-          if (e.button !== 0 || e.target.closest('.live-button')) return; // 재생 버튼은 칸이 끌기로 가져가지 않아요 (#129 검증 ⚠️)
+          if (e.button !== 0 || e.target.closest('.live-button')) return; // 재생 버튼은 칸이 끌기로 가져가지 않아요 (#131 검증 ⚠️)
           drag.current = { x: e.clientX, y: e.clientY };
           e.currentTarget.setPointerCapture(e.pointerId);
         }}
@@ -124,7 +124,7 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
   useEffect(() => {
     const stillPinned = pinned !== null && group.ids.includes(pinned);
     if (pinned !== null && !stillPinned) setPinned(null);
-    // 고정한 사진이 오른쪽에도 뜨지 않게, 오른쪽 목록(고정한 사진 뺌)의 첫 사진으로 (#129 검증 ⚠️)
+    // 고정한 사진이 오른쪽에도 뜨지 않게, 오른쪽 목록(고정한 사진 뺌)의 첫 사진으로 (#131 검증 ⚠️)
     if (!group.ids.includes(current) || (stillPinned && current === pinned)) setCurrent(browseIds(group, stillPinned ? pinned : null)[0] ?? null);
   }, [group, pinned, current]);
 
@@ -162,7 +162,7 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
   // 키: ←/→ 넘기기, Space 고정, ↑ 버림, ↓ 남김, Esc 닫기 (창이 열린 동안 다른 화면 키로 가지 않게 막아요)
   const act = useRef(null);
   act.current = { decide, pin, ids, current, onClose };
-  // 비교 창이 열린 동안 뒤 화면은 inert: Tab 으로 뒤 버튼에 가서 확인 창을 비교 창 뒤에 여는 일이 없게 (#129 검증 ⚠️)
+  // 비교 창이 열린 동안 뒤 화면은 inert: Tab 으로 뒤 버튼에 가서 확인 창을 비교 창 뒤에 여는 일이 없게 (#131 검증 ⚠️)
   useEffect(() => {
     const changed = [];
     for (let el = rootRef.current; el && el.parentElement && el !== document.body; el = el.parentElement) {

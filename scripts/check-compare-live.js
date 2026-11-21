@@ -269,7 +269,7 @@ async function compareProbe() {
   const r1 = imgs().map(ratio);
   q.zoom = { r0, r1 };
   q.zoomSync = r1[0] > r0[0] * 1.2 && Math.abs(r1[0] / r0[0] - r1[1] / r0[1]) < 0.02;
-  // 비교 창이 열린 동안 뒤 화면은 inert (Tab 으로 뒤 버튼에 못 감), 고정 칸 테두리는 빨강이 아님 (#129 검증 ⚠️)
+  // 비교 창이 열린 동안 뒤 화면은 inert (Tab 으로 뒤 버튼에 못 감), 고정 칸 테두리는 빨강이 아님 (#131 검증 ⚠️)
   q.inert = !!(document.querySelector('.similar-actions') && document.querySelector('.similar-actions').closest('[inert]'));
   const pinBox = document.querySelector('.compare-pane.pinned .compare-box');
   q.pinColor = pinBox ? getComputedStyle(pinBox).outlineColor : '';
