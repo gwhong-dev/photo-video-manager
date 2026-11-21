@@ -116,10 +116,11 @@ const items = [
       // 64d 비교 창 계산: 키, 넘기기, 두 칸 같이 확대 (마우스 자리 고정), 맞춤 ↔ 원본 크기, 끌기
       {
         const K = (key, extra = {}) => C.compareKey({ key, ...extra });
-        out.push(sub('64d 키: ←/→ 넘기기, Space 고정, ↑ 버림, ↓ 남김, Esc 닫기. 꾹 누른 ↑ · ↓ · Space 와 Ctrl 조합은 무시',
+        out.push(sub('64d 키: ←/→ 넘기기, Space 고정, ↑ 버림, ↓ 남김, Esc 닫기, Delete 버릴 사진 확인 창. 꾹 누른 ↑ · ↓ · Space · Delete 와 Ctrl 조합은 무시',
           K('ArrowLeft') === 'prev' && K('ArrowRight') === 'next' && K(' ') === 'pin' && K('ArrowUp') === 'discard' && K('ArrowDown') === 'keep' && K('Escape') === 'close'
             && K('ArrowRight', { repeat: true }) === 'next' && K('ArrowUp', { repeat: true }) === null && K(' ', { repeat: true }) === null
-            && K('ArrowUp', { ctrlKey: true }) === null && K('Enter') === null));
+            && K('ArrowUp', { ctrlKey: true }) === null && K('Enter') === null
+            && K('Delete') === 'review' && K('Delete', { repeat: true }) === null && K('Delete', { ctrlKey: true }) === null));
         const g = { ids: [1, 2, 3, 4] };
         out.push(sub('64d 넘기기: 고정한 사진은 오른쪽 목록에서 빠지고, 끝에서 멈추고, 정한 뒤에는 다음 사진',
           JSON.stringify(C.browseIds(g, 2)) === '[1,3,4]' && C.stepId([1, 3, 4], 4, 1) === 4 && C.stepId([1, 3, 4], 1, -1) === 1 && C.stepId([1, 3, 4], 9, 1) === 1
@@ -158,10 +159,28 @@ const items = [
         const gm = read('gallery-main.js');
         const sv = read('src/components/SimilarView.jsx');
         const dp = read('src/components/DetailPanel.jsx');
+        // 64h 버린 뒤 남은 사진은 목록에서 빼기 (2026-11-21 사용자 요청): 버릴 사진이 있던 묶음의 나머지만, 옮긴 게 있을 때만 "모두 남기기"로 기억
+        {
+          const ov = (pairs) => new Map(pairs);
+          const gA = { ids: [1, 2, 3] };
+          const gB = { ids: [4, 5] };
+          const gC = { ids: [6, 7] };
+          const o = ov([[2, 'discard'], [6, 'discard'], [7, 'discard'], [4, 'keep'], [5, 'keep']]);
+          const kept = SV.keptAfterDiscard([gA, gB, gC], o).join(',');
+          const one = SV.keptAfterDiscard([gA], o).join(',');
+          const svSrc = read('src/components/SimilarView.jsx');
+          const cvSrc = read('src/components/CompareView.jsx');
+          out.push(sub('64h keptAfterDiscard: 버릴 사진이 있던 묶음의 나머지만 (모두 남김 묶음 · 모두 버림 묶음은 빼요)', kept === '1,3' && one === '1,3' && SV.keptAfterDiscard([], o).length === 0, `${kept} / ${one}`));
+          out.push(sub('64h 연결: 확인 창에 keepIds, 옮긴 장수가 있을 때만 api.keepAllSimilar(남은 사진) 뒤 목록 다시, 비교 창 onReview 는 창을 닫고 reviewGroup',
+            svSrc.includes('keepIds: keptAfterDiscard(groups.slice(0, shown), overrides)') && svSrc.includes('keepIds: keptAfterDiscard([g], overrides)')
+              && svSrc.includes('(r.trashed || 0) + (r.moved || 0) > 0 && keepIds.length') && svSrc.includes('await api.keepAllSimilar(keepIds)')
+              && svSrc.includes('setCompare(null); reviewGroup(g);') && cvSrc.includes("else if (a === 'review') A.review();")));
+        }
         out.push(sub('64e 보안 설정: media-src 는 앱과 pvm: 만 (인터넷 주소 없음), pvm 주소에 stream 권한',
           /media-src 'self' pvm:;/.test(csp) && !/https?:/.test(csp) && /privileges: \{[^}]*stream: true/.test(gm), csp));
-        out.push(sub('64e 비슷한 사진 화면: 더블클릭 · Space · "크게 보며 고르기"로 CompareView, 오른쪽 패널에 LivePhoto',
-          /<CompareView /.test(sv) && /onDoubleClick=/.test(sv) && /e\.key !== ' '/.test(sv) && /크게 보며 고르기/.test(sv) && /<LivePhoto id=\{file\.id\} \/>/.test(dp)));
+        out.push(sub('64e 비슷한 사진 화면: 사진 클릭 한 번 · Space · "크게 보며 고르기"로 CompareView, 오른쪽 패널에 LivePhoto, 열자마자 들어온 더블클릭은 확대 안 함',
+          /<CompareView /.test(sv) && sv.includes('onClick={() => onOpen(file.id)}') && !/onDoubleClick=/.test(sv)
+          && read('src/components/CompareView.jsx').includes('Date.now() - openedAt < DOUBLE_CLICK_GRACE_MS') && /e\.key !== ' '/.test(sv) && /크게 보며 고르기/.test(sv) && /<LivePhoto id=\{file\.id\} \/>/.test(dp)));
       }
 
       // 64f 진짜 앱: 비슷한 묶음(3장, 그중 1장은 모션 포토) → 더블클릭으로 비교 창 → →, Space 고정(두 칸), ↑ · ↓, 휠로 두 칸 같이 확대, Esc
@@ -194,11 +213,14 @@ const items = [
         const seen = JSON.stringify(q).slice(0, 700);
         out.push(sub('64f 진짜 앱: 오른쪽 패널에서 모션 포토는 "움직이는 사진" 버튼 → 누르고 있으면 재생, 보통 사진은 버튼 없음',
           q.panelLive === true && q.played === true && q.plainLive === false, seen));
-        out.push(sub('64f 더블클릭 → 비교 창(한 장, 원본 그림) → → 로 넘김 → Space 로 왼쪽 고정(두 칸) → ↑ 버림 · ↓ 남김 → 표시가 화면과 같음',
-          q.opened === true && q.single === true && q.origin === true && q.moved === true && q.two === true && q.pinnedThumb === true
+        out.push(sub('64f 사진 클릭 한 번 → 비교 창(한 장, 원본 그림), Esc 로 닫힘 → → 로 넘김 → Space 로 왼쪽 고정(두 칸) → ↑ 버림 · ↓ 남김 → 표시가 화면과 같음',
+          q.clickOpens === true && q.clickClosed === true && q.opened === true && q.single === true && q.origin === true && q.moved === true && q.two === true && q.pinnedThumb === true
             && q.keepsAfter === 2 && q.gridKeeps === 2 && q.closed === true, seen));
         out.push(sub('64f 휠로 확대하면 두 칸이 같은 배율로 커짐, Space 로 다시 열림, 사진 파일 그대로, 화면 오류 없음',
           q.zoomSync === true && q.spaceOpens === true && snap() === before && (r.errors || []).length === 0,
+          `${seen} / 오류 ${(r.errors || []).join(' | ').slice(0, 300)}`));
+        out.push(sub('64f 비교 창에서 바로 옮기기 (2026-11-21 사용자 요청): 위쪽 "이 묶음에서 버릴 1장 옮기기" 버튼, Delete → 비교 창이 닫히고 같은 확인 창(그 묶음 1장), 그만두기로 닫으면 파일 그대로',
+          q.reviewButton === '이 묶음에서 버릴 1장 옮기기' && q.reviewClosed === true && /버릴 사진 옮기기/.test(q.confirmTitle || '') && /1장/.test(q.confirmGo || '') && q.confirmCancelled === true && snap() === before,
           `${seen} / 오류 ${(r.errors || []).join(' | ').slice(0, 300)}`));
         out.push(sub('64f 비교 창 안 재생 버튼: 누르면 재생, 누른 채 움직여도 사진이 끌리지 않음 / 열린 동안 뒤 화면 inert / 고정 칸 테두리는 빨강이 아님',
           q.compareLive === true && q.comparePlayed === true && q.noDrag === true && q.inert === true && !!q.pinColor && !/224, 65, 47/.test(q.pinColor), seen));
@@ -225,8 +247,10 @@ async function compareProbe() {
   const cells = await wait(() => (document.querySelectorAll('.similar-cell').length >= 3 ? document.querySelectorAll('.similar-cell .cell') : null), 40000);
   if (!cells) return { stop: '비슷한 사진 3장 묶음이 안 보여요', text: document.body.innerText.slice(0, 300) };
   const cellOf = (name) => [...document.querySelectorAll('.similar-cell .cell')].find((b) => (b.getAttribute('aria-label') || '').startsWith(name));
-  // 오른쪽 패널: 모션 포토(c.jpg)
+  // 사진 클릭 한 번 = 크게 비교 창 (2026-11-21 사용자 지적 "클릭하면 왜 크게 안 뜨냐"). 오른쪽 패널도 그 사진으로 바뀌어요
+  //   모션 포토(c.jpg)
   cellOf('c.jpg').click();
+  q.clickOpens = !!(await wait(() => document.querySelector('.compare'), 5000));
   const btn = await wait(() => document.querySelector('.preview .live-button'), 15000);
   q.panelLive = !!btn;
   if (btn) {
@@ -235,12 +259,13 @@ async function compareProbe() {
     q.played = !!(await wait(() => v && v.classList.contains('playing') && !v.paused && v.currentTime > 0, 5000));
     btn.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 }));
   }
+  key('Escape');
+  q.clickClosed = !!(await wait(() => !document.querySelector('.compare'), 3000));
+  // 비교 창: 보통 사진(a.jpg) 클릭 한 번 (오른쪽 패널에는 재생 버튼 없음)
   cellOf('a.jpg').click();
+  const cmp = await wait(() => document.querySelector('.compare'));
   await sleep(1500);
   q.plainLive = !!document.querySelector('.preview .live-button');
-  // 비교 창: 더블클릭
-  cellOf('a.jpg').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-  const cmp = await wait(() => document.querySelector('.compare'));
   q.opened = !!cmp;
   if (!cmp) return q;
   q.single = !document.querySelector('.compare-panes.two');
@@ -298,8 +323,18 @@ async function compareProbe() {
   // Space 로 다시 열기 (고른 사진이 있을 때)
   key(' ');
   q.spaceOpens = !!(await wait(() => document.querySelector('.compare'), 3000));
-  key('Escape');
-  await wait(() => !document.querySelector('.compare'), 3000);
+  // 다 골랐으면 비교 창에서 바로: 버튼 글자 확인 → Delete → 비교 창이 닫히고 확인 창 → 그만두기 (옮기기는 누르지 않음)
+  const rb = await wait(() => document.querySelector('.compare-review'), 3000);
+  q.reviewButton = rb ? rb.innerText.trim() : '';
+  key('Delete');
+  q.reviewClosed = !!(await wait(() => !document.querySelector('.compare'), 3000));
+  const dlg = await wait(() => document.getElementById('similar-confirm-title'), 5000);
+  q.confirmTitle = dlg ? dlg.innerText : '';
+  const go = dlg ? dlg.closest('.dialog').querySelector('.dialog-foot .primary') : null;
+  q.confirmGo = go ? go.innerText : '';
+  const cancel = dlg ? [...dlg.closest('.dialog').querySelectorAll('.dialog-foot button')].find((b) => b.innerText.includes('그만두기')) : null;
+  if (cancel) cancel.click();
+  q.confirmCancelled = !!(await wait(() => !document.getElementById('similar-confirm-title'), 3000));
   return q;
 }
 

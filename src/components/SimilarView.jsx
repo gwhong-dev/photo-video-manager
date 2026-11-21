@@ -9,13 +9,14 @@
 //   흐린 사진(흐림 점수 0.5 이상)에는 "흐림" 표시. 이어 찍기(1분) 묶음은 AI 로 같은 장면을 확인했을 때만 생겨요
 //   AI 모델이 없으면 맨 위 안내 줄에 "받으면 이어 찍은 사진도 장면별로 묶어요"와 받기 버튼 (받기는 확인 창에서 누를 때만)
 //   지문은 백업 폴더를 읽은 뒤 뒤에서 미리 만들고, 화면을 열 때 남은 것도 만들어요. 다 만들면 목록을 다시 받아요
-//   크게 비교 (2026-11-21 사용자 요청): 사진 더블클릭 · 사진을 고른 뒤 Space · 묶음의 "크게 보며 고르기" → CompareView
+//   크게 비교 (2026-11-21 사용자 요청): 사진 클릭 한 번 · 사진을 고른 뒤 Space · 묶음의 "크게 보며 고르기" → CompareView
+//     (처음엔 더블클릭이었는데 "클릭하면 왜 크게 안 뜨냐" 지적으로 클릭 한 번으로, 2026-11-21)
 //     ←/→ 넘기기, Space 로 가장 좋은 사진 고정(왼쪽), 오른쪽에서 ↑ 버림 · ↓ 남김. 표시는 이 화면과 같은 값이에요
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { formatCount, formatTakenAt } from '../format.mjs';
-import { aiConfirmLabel, aiConfirmLines, aiLine, discardIds, discardLabel, groupDiscardIds, groupNote, groupReviewLabel, keepAll, markOf, pinMarks, previewLines, progressText, pruneOverrides, recommendText, resultText, reviewLabel, toggleMark } from '../similar-view.mjs';
+import { aiConfirmLabel, aiConfirmLines, aiLine, discardIds, discardLabel, groupDiscardIds, groupNote, groupReviewLabel, keepAll, keptAfterDiscard, markOf, pinMarks, previewLines, progressText, pruneOverrides, recommendText, resultText, reviewLabel, toggleMark } from '../similar-view.mjs';
 import EmptyState from './EmptyState.jsx';
 import CompareView from './CompareView.jsx';
 
@@ -92,7 +93,7 @@ function SimilarCell({ file, mark, best, focused, onFocus, onToggle, onOpen, dis
   const size = file.width && file.height ? `${file.width}×${file.height}` : '';
   return (
     <div className={`similar-cell${keep ? ' keep' : ' discard'}`}>
-      <button type="button" className={`cell${focused ? ' selected' : ''}`} aria-label={`${file.name} 고르기, 더블클릭하면 크게 비교`} onClick={() => onFocus(file.id)} onDoubleClick={() => onOpen(file.id)}>
+      <button type="button" className={`cell${focused ? ' selected' : ''}`} aria-label={`${file.name} 크게 보기`} onClick={() => onOpen(file.id)}>
         {broken
           ? <span className="no-preview">미리보기 없음</span>
           : <img src={`pvm://thumb/${file.id}`} alt="" loading="lazy" draggable="false" onError={() => setBroken(true)} />}
@@ -113,7 +114,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
   const [error, setError] = useState('');
   const [overrides, setOverrides] = useState(() => new Map());
   const [shown, setShown] = useState(PAGE);
-  const [confirm, setConfirm] = useState(null); // { ids, info } 확인 창
+  const [confirm, setConfirm] = useState(null); // { ids, info, keepIds } 확인 창 (keepIds = 옮긴 뒤 목록에서 뺄 남은 사진)
   const [busy, setBusy] = useState(false);
   const [compare, setCompare] = useState(null); // { key: 묶음 열쇠, startId } 크게 비교 창
   const busyRef = useRef(false);
@@ -251,19 +252,31 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
   const ids = discardIds(groups.slice(0, shown), overrides);
   const review = () => run(async () => {
     const info = await api.previewDiscard(ids);
-    setConfirm({ ids, info });
+    setConfirm({ ids, info, keepIds: keptAfterDiscard(groups.slice(0, shown), overrides) });
   });
   // 이 묶음만 먼저: 같은 확인 창을 이 묶음의 버림만으로 열어요
   const reviewGroup = (g) => run(async () => {
     const gids = groupDiscardIds(g, overrides);
     if (!gids.length) return;
     const info = await api.previewDiscard(gids);
-    setConfirm({ ids: gids, info });
+    setConfirm({ ids: gids, info, keepIds: keptAfterDiscard([g], overrides) });
   });
   const discard = () => run(async () => {
     const r = await api.discardSimilar(confirm.ids);
+    const keepIds = confirm.keepIds || [];
     setConfirm(null);
-    onNotice(resultText(r));
+    let text = resultText(r);
+    // 하나라도 옮겼으면 그 묶음의 남은 사진은 "모두 남기기"로 기억해 목록에서 빼요 (다시 보기 버튼으로 되돌릴 수 있어요)
+    //   못 옮긴 사진은 그대로 남아서 그 묶음은 다시 보여요
+    if ((r.trashed || 0) + (r.moved || 0) > 0 && keepIds.length) {
+      try {
+        const k = await api.keepAllSimilar(keepIds);
+        if (!k.saved) text += ' 남은 사진을 목록에서 빼지 못했어요 (다음에 다시 보일 수 있어요).';
+      } catch (e) {
+        text += ` ${errorText(e)}`;
+      }
+    }
+    onNotice(text);
     await load();
   });
 
@@ -327,7 +340,9 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
         const g = groups.slice(0, shown).find((x) => x.ids.join(',') === compare.key)
           || groups.slice(0, shown).find((x) => x.ids.includes(compare.startId));
         if (!g) return null;
-        return <CompareView group={g} overrides={overrides} onOverrides={setOverrides} startId={compare.startId} onClose={() => setCompare(null)} />;
+        // 다 골랐으면 비교 창을 닫고 같은 확인 창으로 (옮기기는 확인 창에서만)
+        const onReview = () => { setCompare(null); reviewGroup(g); };
+        return <CompareView group={g} overrides={overrides} onOverrides={setOverrides} startId={compare.startId} onClose={() => setCompare(null)} onReview={busy ? undefined : onReview} />;
       })()}
       {confirm && (
         <div className="dialog-backdrop">

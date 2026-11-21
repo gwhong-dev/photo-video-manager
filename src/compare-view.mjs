@@ -94,6 +94,7 @@ export function compareKey(e) {
   if (k === ' ' || k === 'Spacebar' || e.code === 'Space') return 'pin';
   if (k === 'ArrowUp') return 'discard';
   if (k === 'ArrowDown') return 'keep';
+  if (k === 'Delete') return 'review'; // 다 골랐으면 Delete 로 이 묶음 버릴 사진 확인 창 (꾹 누른 키는 위에서 무시)
   return null;
 }
 

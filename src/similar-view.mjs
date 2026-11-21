@@ -114,6 +114,19 @@ export function groupDiscardIds(group, overrides) {
   return discardIds([group], overrides);
 }
 
+// 버릴 사진을 옮긴 뒤 목록에서 뺄 "남은 사진": 버릴 사진이 있던 묶음(discardIds 가 센 묶음)의 나머지 번호
+//   옮긴 뒤 이 번호들을 "모두 남기기"로 기억하면 그 묶음은 다음 목록에서 빠져요 (2026-11-21 사용자 요청
+//   "버릴 거 정해서 삭제했으면 남은 것들은 바로 비슷한 사진 목록에서 빼")
+export function keptAfterDiscard(groups, overrides) {
+  const out = [];
+  for (const g of groups || []) {
+    const gone = new Set(discardIds([g], overrides));
+    if (!gone.size) continue;
+    out.push(...g.ids.filter((id) => !gone.has(id)));
+  }
+  return out;
+}
+
 // 이 묶음만 옮기는 버튼 글자 (확인 창에서 어디로 가는지 다시 보여 줘요)
 export function groupReviewLabel(n) {
   return n > 0 ? `이 묶음에서 버릴 ${count(n)}장 옮기기` : '';
