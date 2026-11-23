@@ -1011,14 +1011,20 @@ const ITEMS = [
         out.push(sub('12o 원본 확인 진행 표시 (파일마다 n/전체)', calls.length === total && last.done === total && last.total === total, `알림 ${calls.length}번, 마지막 ${last.done}/${last.total} (후보 ${total})`));
       }
 
-      // 12p 배너 개수 = 확인 창 개수: 크기가 달라서 정리되지 않을 중복은 빠른 확인에서도 빠짐 (실사용 재테스트 발견)
+      // 12p 배너 개수 = 확인 창 개수 (실사용 재테스트 발견)
+      //   2026-11-23: 크기가 다른 중복도 처음 배너에는 후보예요 (백업 파일에 태그를 쓰면 크기가 바뀜, lib/content-hash.js)
+      //   확인 창(정리 직전 확인)에서 내용 지문까지 달라 남기면 까닭이 기록돼(cleanSkip) 다음 배너부터 확인 창과 같아져요
       if (!cleaner || !cleaner.cleanCandidates) {
         out.push(missing('12p 배너 개수와 확인 창 개수가 같음'));
       } else {
         const c = makeCase('12p');
-        const quick = cleaner.cleanCandidates(c.job).map((it) => it.i).sort().join(',');
-        const strict = (await cleaner.cleanTargets(c.job)).map((it) => it.i).sort().join(',');
-        out.push(sub('12p 배너 개수와 확인 창 개수가 같음', quick === strict, `배너 ${quick} / 확인 창 ${strict}`));
+        const ids = (list) => list.map((it) => it.i).sort().join(',');
+        const first = ids(cleaner.cleanCandidates(c.job));
+        const differ = async () => ({ same: false, why: '백업 파일과 내용(지문)이 달라 남김', lasting: true }); // 내용도 다른 백업
+        const strict = ids(await cleaner.cleanTargets(c.job, { store: c.store, sameContent: differ }));
+        const quick = ids(cleaner.cleanCandidates(c.job));
+        out.push(sub('12p 확인 창에서 내용이 달라 남긴 중복은 기록돼 다음 배너 개수가 확인 창과 같음', quick === strict && first.split(',').includes('3') && !!c.job.items[3].cleanSkip,
+          `처음 배너 ${first} / 확인 창 ${strict} / 다음 배너 ${quick} (${c.job.items[3].cleanSkip || '기록 없음'})`));
       }
 
       // 12q 휴지통 경고는 실제 설정으로 계산, 설정을 모를 때만 드라이브의 5% (실사용 재테스트 발견)
@@ -1207,7 +1213,7 @@ const ITEMS = [
           fs.writeFileSync(p, text);
           return p;
         };
-        // 여러 경우: 결과 그대로인지 (기대: 정리 대상은 done, dup, conv 세 개)
+        // 여러 경우: 결과 그대로인지 (기대: 정리 대상은 done, dup, size, conv 네 개)
         const keepA = put('backup/a.jpg', 'aaaa');
         const link = path.join(d, 'src/link.jpg');
         fs.mkdirSync(path.dirname(link), { recursive: true });
@@ -1215,7 +1221,7 @@ const ITEMS = [
         const items = [
           { i: 'done', src: put('src/done.jpg', 'x'), status: 'done', finalPath: put('backup/done.jpg', 'x') },
           { i: 'dup', src: put('src/dup.jpg', 'aaaa'), status: 'dup', dupOf: keepA },
-          { i: 'size', src: put('src/size.jpg', 'aaa'), status: 'dup', dupOf: keepA }, // 크기 다름 → 빠짐
+          { i: 'size', src: put('src/size.jpg', 'aaa'), status: 'dup', dupOf: keepA }, // 크기 다름 → 후보 (2026-11-23, 태그 쓴 백업일 수 있어 정리 직전에 내용 지문으로 봄)
           { i: 'conv', src: put('src/conv.heic', 'h'), status: 'dup', converted: true, sameShot: true, dupOf: keepA },
           { i: 'link', src: link, status: 'dup', dupOf: keepA }, // 같은 파일 → 빠짐
           { i: 'nosrc', src: path.join(d, 'src/없음.jpg'), status: 'dup', dupOf: keepA }, // 원본 없음 → 빠짐
@@ -1235,7 +1241,7 @@ const ITEMS = [
         } finally {
           for (const n of names) fs[n] = orig[n];
         }
-        out.push(sub('12w 빠른 확인 결과 그대로 (크기 다름 · 같은 파일 · 없는 파일 · 확인 필요는 빠짐)', got === 'done,dup,conv', `대상 ${got} (기대 done,dup,conv)`));
+        out.push(sub('12w 빠른 확인 결과 그대로 (같은 파일 · 없는 파일 · 확인 필요는 빠짐, 크기 다름은 후보)', got === 'done,dup,size,conv', `대상 ${got} (기대 done,dup,size,conv)`));
         out.push(sub('12w 빠른 확인은 원본마다 디스크를 두 번 이하로 읽음', reads <= items.length * 2, `${items.length}개에 ${reads}번`));
         // 시간: 중복 6,000개 (작은 파일 12,000개) → 6만 개로 환산
         const N = 6000;
@@ -1765,6 +1771,8 @@ const ITEMS = [
   ...require('./check-compare-live').items,
   // 66번은 사진 · 영상 돌리기 점검 (scripts/check-media-edit.js)
   ...require('./check-media-edit').items,
+  // 67번은 내용 지문 비교 점검 — 백업 파일에 태그를 써도 같은 사진으로 보기 (scripts/check-content-hash.js)
+  ...require('./check-content-hash').items,
 ];
 
 // ---------- 수동 샘플 처리 결과 표 (참고용) ----------

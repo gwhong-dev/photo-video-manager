@@ -19,6 +19,9 @@ const cleanReadMeta = (paths) => {
   if (!et) throw new Error('exiftool 없음');
   return readMetaWithKeys(et, paths.map((p) => ({ path: p, isVideo: isVideoPath(p) })), [...META_TAGS, 'ImageWidth', 'ImageHeight', 'ModifyDate']);
 };
+// 원본 정리 직전에 바이트 지문이 다른 중복을 내용 지문으로 한 번 더 비교 (백업 파일에 태그를 쓴 경우, lib/content-hash.js)
+const { sameContent } = require('./lib/content-hash');
+const cleanSameContent = (src, keep) => (et ? sameContent(et, src, keep) : Promise.resolve({ same: false, why: '내용 지문을 읽지 못해 남김', lasting: false }));
 const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
 const { cleanCandidatesAsync, cleanTargets, recheckTargets, overflowRootsOf, cleanInfo, cleanOriginals, createHashCache, countHashesFrom } = require('./lib/cleaner');
@@ -574,7 +577,7 @@ ipcMain.handle('trash-info', async () => {
     // 쓸 때 기록과 같은 결과 파일은 지문을 다시 읽지 않고, 표본만 끝까지 확인해요 (2026-11-15 결정)
     const sigs = new Map();
     let stats = null;
-    const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, sigs, onStats: (s) => (stats = s), onProgress: (p) => send('clean-check-progress', p) }) : [];
+    const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, sameContent: cleanSameContent, sigs, onStats: (s) => (stats = s), onProgress: (p) => send('clean-check-progress', p) }) : [];
     cleanSigs = sigs;
     cleanJob = job;
     cleanSample = samplePool(job, targets);
@@ -616,7 +619,7 @@ ipcMain.handle('trash-originals', async (e, opts = {}) => {
     const progress = (p) => send('clean-check-progress', { ...p, final: true });
     const targets = !job ? [] : cleanSigs && cleanJob === job
       ? await recheckTargets(job, cleanSigs, { onProgress: progress })
-      : await cleanTargets(job, { hashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, onProgress: progress });
+      : await cleanTargets(job, { hashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, sameContent: cleanSameContent, onProgress: progress });
     // 휴지통이 모자란 드라이브: 사용자가 "휴지통으로"를 직접 고른 때만 휴지통, 아니면 _정리완료원본으로
     //   확인 창을 거치지 않았으면(넘친 드라이브를 모름) 지금 다시 계산해서 안전한 쪽(옮기기)으로 막아요 (#115 검증 ⚠️)
     let moveRoots = null;
