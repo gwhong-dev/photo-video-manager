@@ -1,8 +1,11 @@
 {
+  "env": {
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000"
+  },
   "enabledPlugins": {
-    "superpowers@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": false,
     "commit-commands@claude-plugins-official": true,
-    "context7@claude-plugins-official": true,
+    "context7@claude-plugins-official": false,
     "typescript-lsp@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true
   },
