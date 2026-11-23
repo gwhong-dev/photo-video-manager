@@ -148,6 +148,48 @@ const items = [
           r.status === 'dup' && keyOfSafe(r.finalPath) === keyOfSafe(dest) && extra.length === 0,
           `${r.status} ${r.note || ''} / _1: ${extra.join(',') || '없음'}`));
       }
+
+      // 67f 지문만으로는 못 잡는 것 (2026-11-23 검증 지적)
+      //   ① 그림 뒤에 붙은 데이터(모션 포토 영상 등): 원본 · 백업 어느 쪽에 있어도 비교하지 않고 남김(기록)
+      //   ② 잘린 백업: 남기되 기록 안 함 (복사 중일 수 있어 다음에 다시 확인)
+      //   ③ 원본의 정보(작가 · 설명)를 지운 백업: 남김(기록)
+      //   ④ 읽은 결과 기억: 같은 파일을 바꾸면 다시 읽음
+      {
+        const rows = [];
+        let ok = true;
+        for (const name of ['IMG_0101.jpg', 'IMG_0102.PNG']) {
+          const src = copy(name, path.join('f', name));
+          const tail = copy(name, path.join('f', 'tail-' + name));
+          fs.appendFileSync(tail, Buffer.alloc(20000, 7));
+          const rTailBk = await CH.sameContent(et, src, tail);
+          const rTailSrc = await CH.sameContent(et, tail, src);
+          const cut = path.join(dir, 'f', 'cut-' + name);
+          const buf = fs.readFileSync(src);
+          fs.writeFileSync(cut, buf.subarray(0, Math.floor(buf.length * 0.7)));
+          const rCut = await CH.sameContent(et, src, cut);
+          const rich = copy(name, path.join('f', 'rich-' + name));
+          await et.write(['-overwrite_original', '-Artist=Kim', '-XMP-dc:Description=desc', rich]);
+          const strip = path.join(dir, 'f', 'strip-' + name);
+          fs.copyFileSync(rich, strip);
+          await et.write(['-overwrite_original', '-Artist=', '-XMP-dc:Subject+=가족', strip]);
+          const rStrip = await CH.sameContent(et, rich, strip);
+          ok = ok && !rTailBk.same && rTailBk.lasting && /붙은 데이터/.test(rTailBk.why)
+            && !rTailSrc.same && rTailSrc.lasting
+            && !rCut.same && !rCut.lasting
+            && !rStrip.same && rStrip.lasting && /Artist/.test(rStrip.why);
+          rows.push(`${name}: 붙은 데이터 ${rTailBk.lasting}/${rTailSrc.lasting} · 잘림 ${rCut.why}(${rCut.lasting}) · 정보 지움 ${rStrip.why}`);
+        }
+        const src = copy('IMG_0101.jpg', path.join('f', 'cache-src.jpg'));
+        const bk = copy('IMG_0101.jpg', path.join('f', 'cache-bk.jpg'));
+        await tagFile(et, bk);
+        const before = await CH.sameContent(et, src, bk);
+        await et.write(['-overwrite_original', '-DateTimeOriginal=2001:02:03 04:05:06', bk]);
+        const after = await CH.sameContent(et, src, bk);
+        ok = ok && before.same && !after.same && /DateTimeOriginal/.test(after.why);
+        rows.push(`기억: 처음 ${before.same} → 바꾼 뒤 ${after.same} (${after.why})`);
+        out.push(sub('67f 그림 뒤에 붙은 데이터가 있으면 남김(기록), 잘린 백업은 남기되 기록 안 함, 원본 정보를 지운 백업은 남김, 파일을 바꾸면 다시 읽음',
+          ok, rows.join(' / ')));
+      }
       return out;
     },
   },
