@@ -13,6 +13,8 @@ import { PreviewNote, usePreviewNote } from './PreviewNote.jsx';
 import LivePhoto from './LivePhoto.jsx'; // 라이브 포토 · 모션 포토 재생 (2026-11-21)
 import { trashMenuLabel } from '../trash-view.mjs';
 import { pickButtonLabel, pickNote } from '../pick-view.mjs';
+import RotateBar from './RotateBar.jsx'; // 사진 · 영상 돌리기 (2026-11-23)
+import { canRotate, fitScale } from '../rotate-view.mjs';
 
 const SOURCE_TEXT = { exif: '사진 파일에서 읽음', filename: '파일 이름에서 읽음', manual: '내가 넣은 값' };
 const LOCATION_SOURCE_TEXT = { exif: '사진 파일에서 읽음', manual: '내가 넣은 값' };
@@ -135,7 +137,8 @@ function useFileInfo(id, gen) {
   return info.id === id ? info : { id, file: undefined, error: '' }; // file undefined = 아직 읽는 중
 }
 
-function Preview({ file }) {
+// turn = 돌리기 버튼으로 화면에서만 돌린 각도 (파일은 그대로)
+function Preview({ file, turn = 0 }) {
   const [broken, setBroken] = useState(false);
   const note = usePreviewNote(file.id); // 원본 대신 작은 썸네일이면 안내 한 줄
   // 파일이 바뀌거나 썸네일 상태가 달라지면 한 번 더 시도해요 (같은 상태에서는 다시 시도하지 않아요)
@@ -150,10 +153,12 @@ function Preview({ file }) {
         {failed ? (
           <span className="no-preview">미리보기 없음</span>
         ) : (
-          <img key={file.id} src={`pvm://preview/${file.id}`} alt="" onLoad={note.onLoad} onError={() => setBroken(true)} />
+          // 주소 끝 ?v= 는 파일이 바뀐 시각: 돌려서 저장하면 옛 그림 대신 새로 받아요
+          <img key={file.id} src={`pvm://preview/${file.id}?v=${file.mtimeMs || 0}`} alt="" onLoad={note.onLoad} onError={() => setBroken(true)}
+            style={turn ? { transform: `rotate(${turn}deg) scale(${fitScale(turn, ratio)})`, transition: 'transform 0.2s' } : undefined} />
         )}
         {isVideo && formatDuration(file.durationSec) && <span className="badge">{formatDuration(file.durationSec)}</span>}
-        {!isVideo && !failed && <LivePhoto id={file.id} />}
+        {!isVideo && !failed && !turn && <LivePhoto id={file.id} />}
       </div>
       <PreviewNote show={!failed && note.small} />
     </>
@@ -166,6 +171,9 @@ function Preview({ file }) {
 // trashOnly = 휴지통으로 옮기기 버튼만 (가져오기 전 거르기 중, 복사한 값 칸도 그리지 않아요)
 export default function DetailPanel({ selectedId, gen, count = 0, copySource = null, onCopy, onPaste, onDirect, onMap, pick = null, onSuggest, onTagAdd, onTagRemove, onTrash, readOnly = false, trashOnly = false }) {
   const { file, error } = useFileInfo(selectedId, gen);
+  // 화면에서만 돌린 각도. 다른 사진을 고르면 처음으로 돌아가요
+  const [turn, setTurn] = useState(0);
+  useEffect(() => setTurn(0), [selectedId]);
   const actions = readOnly ? null : (
     <Actions count={count} canCopy={count === 1} hasCopy={!!copySource} onCopy={onCopy} onPaste={onPaste} onDirect={onDirect} onMap={onMap} pick={pick} onSuggest={onSuggest} onTagAdd={onTagAdd} onTagRemove={onTagRemove} onTrash={count > 0 ? onTrash : undefined} trashOnly={trashOnly} />
   );
@@ -194,7 +202,8 @@ export default function DetailPanel({ selectedId, gen, count = 0, copySource = n
     const tags = file.tags || [];
     body = (
       <>
-        <Preview file={file} />
+        <Preview file={file} turn={turn} />
+        {!readOnly && !trashOnly && count <= 1 && canRotate(file.name) && <RotateBar key={file.id} file={file} turn={turn} onTurn={setTurn} />}
         <h2 className="detail-name">{file.name}</h2>
         {file.readError && <p className="detail-sub">파일 정보를 다 읽지 못했어요</p>}
         <dl className="detail-list">
