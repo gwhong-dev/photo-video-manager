@@ -1763,6 +1763,8 @@ const ITEMS = [
   ...require('./check-pick-suggest').items,
   // 64번은 비슷한 사진 크게 비교 + 라이브 포토 재생 점검 (scripts/check-compare-live.js)
   ...require('./check-compare-live').items,
+  // 66번은 사진 · 영상 돌리기 점검 (scripts/check-media-edit.js)
+  ...require('./check-media-edit').items,
 ];
 
 // ---------- 수동 샘플 처리 결과 표 (참고용) ----------

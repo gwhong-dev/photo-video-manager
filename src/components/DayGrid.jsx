@@ -58,7 +58,7 @@ const Cell = memo(function Cell({ file, day, selected, onClick, onMenu }) {
       {failed ? (
         <span className="no-preview">미리보기 없음</span>
       ) : (
-        <img src={`pvm://thumb/${file.id}`} alt="" loading="lazy" draggable="false" onError={() => setBroken(true)} />
+        <img src={`pvm://thumb/${file.id}?v=${file.mtimeMs || 0}`} alt="" loading="lazy" draggable="false" onError={() => setBroken(true)} />
       )}
       {file.live && <span className="badge live">라이브</span>}
       {duration && <span className="badge">{duration}</span>}

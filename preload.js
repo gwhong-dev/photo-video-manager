@@ -107,6 +107,9 @@ contextBridge.exposeInMainWorld('api', {
     // 갤러리에서 고른 사진 휴지통으로: 미리보기(몇 장이 어디로, 아무것도 옮기지 않음), 옮기기 (id로만)
     previewTrash: (ids) => ipcRenderer.invoke('gallery:trash-preview', ids),
     trashSelected: (ids) => ipcRenderer.invoke('gallery:trash-selected', ids),
+    // 사진 · 영상 돌리기 (한 장, id로만): 미리보기(원본 바꾸기면 어디로 옮기는지), 실행(turn 90 · 180 · 270, mode 'copy' | 'replace')
+    previewRotate: (id) => ipcRenderer.invoke('gallery:rotate-preview', id),
+    rotate: (id, turn, mode) => ipcRenderer.invoke('gallery:rotate', id, turn, mode),
     // PC 안 AI 비교: 상태 보기, 모델 받기 (화면 확인 창에서 누른 뒤에만), 진행 알림
     aiState: () => ipcRenderer.invoke('gallery:ai-state'),
     aiDownload: () => ipcRenderer.invoke('gallery:ai-download'),

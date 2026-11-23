@@ -50,6 +50,7 @@ const { createPreviewDrive } = require('./lib/preview-drive');
 const { historyFromJobs, planFill, toFillPreview, runFill, undoFill, lastFillRun } = require('./lib/fill-nodate');
 const { isTagKind, normalizeTagEdit, planTagEdit, toTagPreview, cleanTagName, cleanHotkey, normalizeRename, planTagRename } = require('./lib/manual-tags');
 const { readCleanHistory, cleanedFolders, cleanedDirOf } = require('./lib/clean-history');
+const { rotateFile, rotateKind, TURNS } = require('./lib/media-edit');
 
 const SCHEME = 'pvm';
 const TABS = ['all', 'photo', 'video', 'screenshot'];
@@ -440,7 +441,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     if (planningNow) throw new Error('미리보기가 끝난 뒤에 화면을 바꿀 수 있어요');
     // 가져오기 화면으로 가면 거르기를 끝내요 ("거르기 끝내고 가져오기로" 버튼도 이 길로 와요)
     //   옮기는 중이면 기다려요 (옮긴 장수를 다 센 뒤에 끝내려고)
-    if (name === 'import' && screen && discarding) throw new Error('사진을 옮기는 중이에요. 끝난 뒤 다시 눌러 주세요');
+    //   거르기 중이 아니어도 옮기는 중(휴지통 · 돌리기)이면 막아요 (#138 검증 ⚠️: 가져오기가 같은 이름 파일을 만들지 않게)
+    if (name === 'import' && discarding) throw new Error('사진을 옮기는 중이에요. 끝난 뒤 다시 눌러 주세요');
     if (name === 'import') endScreening();
     await loadScreen(name);
     return true;
@@ -1139,6 +1141,141 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     } finally {
       discarding = false;
       warmPreviewDrive(root, { forget: true }); // 휴지통 크기가 바뀌었어요 → 다음 미리보기용으로 뒤에서 새로 읽어요
+    }
+  });
+
+  // ---------- 사진 · 영상 돌리기 (2026-11-23 사용자 요청, 나중에 할 일 23) ----------
+  //   한 장을 골라 화면에서 돌려 본 뒤(rotate-preview) 저장 방식을 골라 누를 때만 파일을 만들어요 (rotate)
+  //   - 'copy'    = 돌린 복사본을 같은 폴더에 새 이름(이름_1.jpg)으로. 원본은 그대로. 직접 넣은 날짜 · 위치 · 태그도 복사본에 붙여요
+  //   - 'replace' = 돌린 파일로 원본 바꾸기. 옛 원본은 휴지통(휴지통이 없는 드라이브면 _정리완료원본)으로. 영구 삭제는 안 해요
+  //   라이브 포토면 짝 영상도 같이 돌려요 (lib/similar-discard.js 의 짝 찾기 그대로)
+  //   늘 임시 파일을 먼저 다 만든 뒤에만 원본을 옮겨요. 중간에 실패하면 원본은 그대로예요 (lib/media-edit.js)
+  //   임시 파일은 같은 폴더의 .pvm-edit 폴더에 둬요 (점으로 시작하는 폴더는 백업 폴더 읽기에서 빠져요, 같은 드라이브라 이름 바꾸기로 옮겨져요)
+  const EDIT_TMP_DIR = '.pvm-edit';
+  // 임시 파일을 제자리로: 그 이름에 파일이 있으면 절대 덮어쓰지 않아요 (#138 검증 ⚠️: Windows 의 이름 바꾸기는 있던 파일을 덮어써요)
+  //   먼저 하드 링크(같은 드라이브, 바로 끝남)로 걸고, 링크를 못 쓰는 드라이브(exFAT 등)면 "있으면 실패" 복사로 둬요. 그 뒤 임시 파일을 지워요
+  const placeFile = (tmp, to) => {
+    try {
+      fs.linkSync(tmp, to);
+    } catch (err) {
+      if (err && err.code === 'EEXIST') throw new Error('그 자리에 파일이 그사이 생겼어요');
+      fs.copyFileSync(tmp, to, fs.constants.COPYFILE_EXCL);
+    }
+    try { fs.rmSync(tmp, { force: true }); } catch (err) { /* 임시 파일만 남아요 (원본 아님) */ }
+  };
+  const rotateTarget = (root, id) => {
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error('파일 번호가 올바르지 않아요');
+    const { files } = checkSelected(db, root, [id]);
+    const f = files[0];
+    if (!rotateKind(f.path)) throw new Error('이 형식은 아직 돌릴 수 없어요 (JPG · PNG · MOV · MP4 만)');
+    if (f.pair && !rotateKind(f.pair.path)) f.pair = null; // 짝 영상이 못 돌리는 형식이면 사진만
+    return { files, f };
+  };
+  ipcMain.handle('gallery:rotate-preview', async (e, id) => {
+    const root = editReady();
+    const { files, f } = rotateTarget(root, id);
+    const info = await discardInfo(files, { driveKindOf: await previewDriveKindOf(root) });
+    rememberPreview('rotate', [id], info); // 원본 바꾸기 직전에 새 판단과 맞춰 봐요
+    return { name: f.name, pair: !!f.pair, trash: info.trash, move: info.move, warnings: info.warnings, canTrash: typeof trash === 'function' };
+  });
+  ipcMain.handle('gallery:rotate', async (e, id, turn, mode) => {
+    const root = editReady();
+    if (!TURNS.includes(turn)) throw new Error('돌릴 각도가 올바르지 않아요');
+    if (mode !== 'copy' && mode !== 'replace') throw new Error('저장 방식이 올바르지 않아요');
+    if (discarding || filling) throw new Error('이미 옮기는 중이에요');
+    if (library && library.isScanning()) throw new Error('백업 폴더를 읽는 중이에요. 끝난 뒤 다시 눌러 주세요');
+    const et = getEt();
+    if (!et) throw new Error('exiftool 을 찾지 못해서 돌릴 수 없어요');
+    const { files, f } = rotateTarget(root, id);
+    // 원본 바꾸기는 확인 창(rotate-preview)을 본 뒤에만 해요 (#138 검증 ⚠️: 다시 확인을 건너뛰지 않게). 한 번 쓰면 지워져서 다시 물어봐야 해요
+    if (mode === 'replace') {
+      const seen = shownPreview.get('rotate');
+      if (!seen || seen.key !== previewKey([id])) throw new Error('휴지통 확인이 끝나지 않았어요. 잠시 뒤 다시 눌러 주세요');
+    }
+    const targets = [f.path, ...(f.pair ? [f.pair.path] : [])]; // 돌릴 파일 (사진, 라이브 포토 짝 영상)
+    discarding = true;
+    const tmpOf = new Map(); // 원본 경로 → 아직 쓰지 않은 임시 파일
+    const tmpDirs = new Set();
+    let log = null;
+    const note = (line) => { try { if (log) log.write(line); } catch (err) { /* 로그 실패는 계속 */ } };
+    try {
+      log = logger.newLog('gallery-rotate', `# 돌리기 / ${now()} / 시계 방향 ${turn}도 / ${mode === 'copy' ? '복사본 저장' : '원본 바꾸기'}\n# 백업 폴더: ${root}`);
+      // 1) 임시 파일부터 모두 만들어요 (하나라도 실패하면 아무것도 바꾸지 않아요)
+      for (const p of targets) {
+        const dir = path.join(path.dirname(p), EDIT_TMP_DIR);
+        fs.mkdirSync(dir, { recursive: true });
+        tmpDirs.add(dir);
+        const tmp = path.join(dir, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${path.extname(p)}`);
+        const r = await rotateFile({ et, src: p, turn, out: tmp });
+        tmpOf.set(p, tmp);
+        note(`${now()}\t임시 파일\t${p}\t${r.kind} ${r.before} → ${r.after}`);
+      }
+      const result = { mode, pair: !!f.pair, done: 0, trashed: 0, moved: 0, fail: 0, kept: [], logName: path.basename(log.path || '') };
+      if (mode === 'copy') {
+        // 2) 사진과 짝 영상이 같은 이름을 갖도록 둘 다 비어 있는 번호를 골라요 (이름_1.jpg + 이름_1.mov 라야 라이브 포토로 이어져요)
+        const stemOf = (p) => p.slice(0, p.length - path.extname(p).length);
+        const copyOf = (p, n) => `${stemOf(p)}_${n}${path.extname(p)}`;
+        let n = 1;
+        while (targets.some((p) => fs.existsSync(copyOf(p, n)))) n++;
+        for (const p of targets) {
+          const to = copyOf(p, n);
+          if (fs.existsSync(to)) throw new Error('복사본 이름이 그사이 생겼어요. 다시 눌러 주세요');
+          placeFile(tmpOf.get(p), to);
+          tmpOf.delete(p);
+          result.done++;
+          note(`${now()}\t복사본\t${p}\t${to}`);
+          try {
+            db.copyManual(p, to, root);
+          } catch (err) {
+            note(`${now()}\t직접 넣은 값 복사 실패\t${to}\t${err.message}`);
+          }
+        }
+      } else {
+        // 2) 옛 원본을 휴지통(또는 _정리완료원본)으로 옮기고, 비워진 자리에만 돌린 파일을 둬요
+        const noTrash = async () => { throw new Error('휴지통을 쓸 수 없어요'); };
+        const fresh = makeDriveKindOf(); // 옮길 때는 늘 새로 확인해요
+        await recheckPreview('rotate', [id], files, fresh); // 확인 창과 달라졌으면 옮기지 않아요
+        const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: fresh, logger, logKind: 'gallery-rotate-trash', logTitle: '돌리기 전 원본을 휴지통으로' });
+        result.trashed = r.trashed;
+        result.moved = r.moved;
+        const gone = new Set(r.done);
+        for (const p of targets) {
+          const tmp = tmpOf.get(p);
+          // 휴지통 쪽에서 오류가 났어도 원본이 이미 사라졌으면 옮겨진 걸로 봐요 (#138 검증 ⚠️: 돌린 파일까지 지우면 그 자리가 비어요)
+          if (!gone.has(p) && fs.existsSync(p)) {
+            result.fail++;
+            note(`${now()}\t원본을 못 옮겨 그대로 둠\t${p}`);
+            continue; // 쓰지 않은 임시 파일은 아래 finally 에서 지워요
+          }
+          if (!gone.has(p)) note(`${now()}\t옮기기 결과를 못 받았지만 원본 자리가 비어 있음 → 돌린 파일을 둠\t${p}`);
+          tmpOf.delete(p); // 옛 원본이 이미 휴지통에 있어요 → 이제부터 이 임시 파일은 지우지 않아요 (잃지 않게)
+          try {
+            placeFile(tmp, p); // 그사이 같은 이름 파일이 생겼으면 덮어쓰지 않고 실패해요 → 돌린 파일은 남겨요
+            result.done++;
+            note(`${now()}\t바꿈\t${p}`);
+          } catch (err) {
+            result.kept.push(path.relative(root, tmp));
+            note(`${now()}\t바꾸기 실패(돌린 파일 남김)\t${p}\t${tmp}\t${err.message}`);
+          }
+        }
+      }
+      note(`# 끝 / 완료 ${result.done}, 못 옮김 ${result.fail}, 남긴 돌린 파일 ${result.kept.length}`);
+      return result;
+    } catch (err) {
+      note(`${now()}\t실패\t${err && err.message ? err.message : err}`);
+      throw err;
+    } finally {
+      // 쓰지 않은 임시 파일과 빈 임시 폴더를 치워요 (원본이 아니에요)
+      for (const tmp of tmpOf.values()) {
+        try { fs.rmSync(tmp, { force: true }); } catch (err) { /* 못 지워도 계속 */ }
+      }
+      for (const dir of tmpDirs) {
+        try { fs.rmdirSync(dir); } catch (err) { /* 비어 있지 않으면 그대로 */ }
+      }
+      discarding = false;
+      if (mode === 'replace') warmPreviewDrive(root, { forget: true });
+      // 바뀐 파일만 다시 읽어요 (크기 · 수정 시각으로 알아요). 끝나면 library 가 gallery:library-changed 를 보내요
+      runScan(root, { changed: true }).catch((err) => errorLog('돌린 뒤 다시 읽기', err));
     }
   });
 
