@@ -2,6 +2,7 @@
 
 > 정리일: 2026-10-29 / 대상: photo-video-manager (Electron + React, Windows, Git Bash)
 > 출처: Anthropic 공식 마켓플레이스 `claude-plugins-official` (github.com/anthropics/claude-plugins-official, 2026-10-29 기준 목록 확인)
+> **2026-11-23 바뀜**: 토큰 정리로 이 프로젝트에서는 `superpowers` · `context7` 를 끔 (`.claude/settings.json`, 근거 `docs/decisions/2026-11-23-token-diet.md`). 절차는 `CLAUDE.md` 하나만 따름. 아래 표는 처음 고를 때의 기록
 
 ---
 
@@ -70,9 +71,9 @@ npm install -g typescript-language-server typescript
 ```json
 {
   "enabledPlugins": {
-    "superpowers@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": false,
     "commit-commands@claude-plugins-official": true,
-    "context7@claude-plugins-official": true,
+    "context7@claude-plugins-official": false,
     "typescript-lsp@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true
   }
