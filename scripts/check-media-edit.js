@@ -22,6 +22,135 @@ const tryRotate = async (args) => {
   }
 };
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const errOf = (p) => p.then(() => null, (e) => e.message);
+
+// 66h: setupGallery 를 가짜 ipcMain 으로 띄워 gallery:rotate-preview · gallery:rotate 를 직접 불러요
+//   휴지통은 가짜(임시 폴더 안 bin 으로 옮김)라 진짜 휴지통은 건드리지 않아요
+async function mainFlow(env, et, t) {
+  const out = [];
+  const { createLogger } = require('../lib/logger');
+  const { DatabaseSync } = require('node:sqlite');
+  const gm = require('../gallery-main');
+  const base = path.join(env.tmp, 'media-edit-main');
+  const root = path.join(base, 'root');
+  const bin = path.join(base, 'bin');
+  const ud = path.join(base, 'ud');
+  fs.mkdirSync(root, { recursive: true });
+  fs.mkdirSync(bin, { recursive: true });
+  for (const n of ['a', 'b', 'c', 'd']) {
+    const p = path.join(root, `${n}.jpg`);
+    await runCmd(t.magick.path, ['-size', '80x60', 'xc:blue', p]);
+    await et.write(['-overwrite_original', '-DateTimeOriginal=2026:07:12 10:00:00', p]);
+  }
+
+  // 가짜 휴지통: ok = bin 으로 옮김, goneThrow = 옮긴 뒤 오류(결과를 모름), race = 옮긴 뒤 그 자리에 다른 파일이 생김(가져오기와 겹침)
+  let trashMode = 'ok';
+  let binN = 0;
+  const trash = async (p) => {
+    fs.renameSync(p, path.join(bin, `${++binN}-${path.basename(p)}`));
+    if (trashMode === 'goneThrow') throw new Error('가짜 휴지통 오류');
+    if (trashMode === 'race') fs.writeFileSync(p, 'race');
+  };
+  const handlers = new Map();
+  const loaded = [];
+  const g = gm.setupGallery({
+    ipcMain: { handle: (ch, fn) => handlers.set(ch, fn) },
+    protocol: { handle: () => {} },
+    getWin: () => null,
+    getSettings: () => ({ backupRoot: root }),
+    getTools: () => ({}),
+    getEt: () => et,
+    isRunning: () => false,
+    isPlanning: () => false,
+    logger: createLogger(path.join(base, 'logs')),
+    userDir: ud,
+    loadScreen: async (name) => { loaded.push(name); },
+    getJobPending: () => false,
+    trash,
+    makeDriveKindOf: () => Object.assign(async () => 'fixed', { recycleOf: async () => null, binUsedOf: async () => 0 }),
+  });
+  const call = (ch, ...args) => handlers.get(ch)(null, ...args);
+  // 다시 읽기가 끝날 때까지 기다려요 (돌린 뒤 main 이 바뀐 파일을 다시 읽어요)
+  const idle = async (want) => {
+    await sleep(150);
+    const end = Date.now() + 20000;
+    while (Date.now() < end) {
+      const s = await call('gallery:get-state');
+      if (!s.scan.scanning && (want === undefined || s.total >= want)) return true;
+      await sleep(50);
+    }
+    return false;
+  };
+  const idOf = (name) => {
+    const d = new DatabaseSync(path.join(ud, 'library.db'), { readOnly: true });
+    try {
+      const r = d.prepare('SELECT id FROM files WHERE path = ? AND missing = 0').get(path.join(root, name));
+      return r ? Number(r.id) : null;
+    } finally {
+      d.close();
+    }
+  };
+  const orient = async (p) => ((await et.read([p], ['Orientation#']))[0] || {}).Orientation;
+  const noTmpDir = () => !fs.existsSync(path.join(root, '.pvm-edit'));
+
+  try {
+    g.onRootChanged();
+    const ready = await idle(4);
+
+    // 1) 복사본 저장 중에는 가져오기 화면으로 못 감 (같은 이름 파일이 생기지 않게)
+    const hashA = hashOf(path.join(root, 'a.jpg'));
+    const pCopy = call('gallery:rotate', idOf('a.jpg'), 90, 'copy');
+    const blocked = await errOf(call('gallery:open-screen', 'import'));
+    const rCopy = await pCopy.catch((e) => ({ err: e.message }));
+    const copyOk = rCopy.done === 1 && (await orient(path.join(root, 'a_1.jpg'))) === 6 && hashOf(path.join(root, 'a.jpg')) === hashA && noTmpDir();
+    out.push(sub('66h-1 복사본 저장 → a_1.jpg(Orientation 6), 원본 그대로, 저장 중에는 가져오기 화면으로 못 감',
+      ready && copyOk && typeof blocked === 'string' && blocked.includes('옮기는 중') && !loaded.includes('import'),
+      JSON.stringify({ ready, rCopy, blocked, loaded })));
+    await idle();
+
+    // 2) 확인 창(미리보기) 없이 원본 바꾸기 → 거절, 확인 뒤엔 바꿈, 한 번 쓴 확인으로 또 바꾸기 → 거절
+    const pB = path.join(root, 'b.jpg');
+    const hashB = hashOf(pB);
+    const noPreview = await errOf(call('gallery:rotate', idOf('b.jpg'), 90, 'replace'));
+    const sameB = hashOf(pB) === hashB;
+    await call('gallery:rotate-preview', idOf('b.jpg'));
+    const rB = await call('gallery:rotate', idOf('b.jpg'), 90, 'replace').catch((e) => ({ err: e.message }));
+    const oB = await orient(pB);
+    await idle();
+    const again = await errOf(call('gallery:rotate', idOf('b.jpg'), 90, 'replace'));
+    out.push(sub('66h-2 확인 창 없이 원본 바꾸기는 거절, 확인 뒤 바꿈(옛 원본은 가짜 휴지통, b.jpg Orientation 6), 쓴 확인으로 또 누르면 거절',
+      !!noPreview && noPreview.includes('휴지통 확인') && sameB && rB.done === 1 && rB.trashed === 1 && oB === 6 && binN === 1
+        && noTmpDir() && !!again && again.includes('휴지통 확인'),
+      JSON.stringify({ noPreview, rB, oB, binN, again })));
+
+    // 3) 휴지통이 옮긴 뒤 오류를 내도(결과를 모름) 원본 자리가 비었으면 돌린 파일을 둠 (빈 자리로 남기지 않음)
+    const pC = path.join(root, 'c.jpg');
+    await call('gallery:rotate-preview', idOf('c.jpg'));
+    trashMode = 'goneThrow';
+    const rC = await call('gallery:rotate', idOf('c.jpg'), 90, 'replace').catch((e) => ({ err: e.message }));
+    trashMode = 'ok';
+    const oC = fs.existsSync(pC) ? await orient(pC) : null;
+    out.push(sub('66h-3 휴지통이 옮긴 뒤 오류 → 비어 있는 원본 자리에 돌린 파일을 둠 (c.jpg Orientation 6)',
+      rC.done === 1 && oC === 6 && noTmpDir(), JSON.stringify({ rC, oC })));
+    await idle();
+
+    // 4) 옛 원본을 옮긴 사이 같은 이름 파일이 생기면 덮어쓰지 않고, 돌린 파일은 .pvm-edit 에 남겨 알림
+    const pD = path.join(root, 'd.jpg');
+    await call('gallery:rotate-preview', idOf('d.jpg'));
+    trashMode = 'race';
+    const rD = await call('gallery:rotate', idOf('d.jpg'), 90, 'replace').catch((e) => ({ err: e.message }));
+    trashMode = 'ok';
+    const keptOk = Array.isArray(rD.kept) && rD.kept.length === 1 && fs.existsSync(path.join(root, rD.kept[0]));
+    out.push(sub('66h-4 옮기는 사이 같은 이름 파일이 생김 → 그 파일을 덮어쓰지 않고 돌린 파일은 남겨 알림',
+      keptOk && fs.readFileSync(pD, 'utf8') === 'race' && rD.done === 0, JSON.stringify({ rD })));
+    await idle();
+  } finally {
+    g.close();
+  }
+  return out;
+}
+
 const items = [
   {
     no: 66,
@@ -35,7 +164,7 @@ const items = [
 
       // 66a 방향 계산: Orientation(뒤집기는 그대로 두고 각도만) · 영상 회전 정보
       {
-        const o = [[1, 90, 6], [6, 90, 3], [3, 90, 8], [8, 90, 1], [1, 270, 8], [6, 180, 8], [2, 90, 7], [4, 180, 2], [undefined, 90, 6]];
+        const o = [[1, 90, 6], [6, 90, 3], [3, 90, 8], [8, 90, 1], [1, 270, 8], [6, 180, 8], [2, 90, 7], [7, 90, 4], [4, 90, 5], [5, 90, 2], [4, 180, 2], [undefined, 90, 6]];
         const r = [[0, 90, 90], [270, 90, 0], [90, 180, 270], [-90, 90, 0], [undefined, 270, 270]];
         const badO = o.filter(([c, turn, want]) => M.turnOrientation(c, turn) !== want);
         const badR = r.filter(([c, turn, want]) => M.turnRotation(c, turn) !== want);
@@ -164,11 +293,20 @@ const items = [
           V.rotateResultText({ mode: 'replace', done: 1, fail: 0, kept: [] }),
           V.rotateResultText({ mode: 'replace', done: 0, fail: 1, kept: [] }),
           V.rotateResultText({ mode: 'replace', done: 1, fail: 0, kept: ['IMG_1.jpg'] }),
+          V.rotateResultText({ mode: 'replace', done: 2, fail: 0, kept: [], pair: true }),
         ];
         const textOk = texts[0].includes('복사본') && texts[0].includes('짝 영상') && texts[1].startsWith('돌린 모습으로 원본을 바꿨어요')
-          && texts[2].includes('아무것도 바꾸지 않았어요') && texts[3].includes('IMG_1.jpg');
+          && texts[2].includes('아무것도 바꾸지 않았어요') && texts[3].includes('IMG_1.jpg')
+          && !texts[1].includes('짝 영상') && texts[4].includes('짝 영상도 같이 바꿨어요');
         out.push(sub('66g 화면 계산 · 문구 (돌릴 수 있는 형식이 main 과 같음, 각도 · 칸 맞춤 · 휴지통 안내 · 결과 문구)',
           sameKinds && turns && fit && hint && textOk, JSON.stringify({ sameKinds, turns, fit, hint, texts })));
+      }
+
+      // 66h main(gallery-main.js) 돌리기 흐름을 가짜 ipc · 가짜 휴지통으로 (Electron · 진짜 휴지통 없이, #138 검증 ⚠️ 1 · 2 · 5)
+      if (!t.magick.ok) {
+        out.push({ label: '66h 돌리기 main 흐름', status: 'skip', detail: 'ImageMagick 없음' });
+      } else {
+        out.push(...(await mainFlow(env, et, t)));
       }
       return out;
     },

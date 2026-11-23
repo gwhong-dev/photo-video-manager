@@ -15,19 +15,21 @@ export default function RotateBar({ file, turn, onTurn }) {
   const [done, setDone] = useState('');
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const [ask, setAsk] = useState(0); // 원본 바꾸기가 실패하면 늘려서 미리보기를 다시 물어봐요
 
   // 처음 돌렸을 때 한 번만 미리보기를 물어봐요 (아무것도 옮기지 않아요)
+  //   main 은 미리보기를 한 번 쓰면 잊어요 → 원본 바꾸기가 실패한 뒤에는 새로 물어봐야 다시 누를 수 있어요 (#138 검증 ⚠️)
   const asked = turn !== 0;
   useEffect(() => {
     if (!asked) return undefined;
     let alive = true;
-    setError('');
+    if (ask === 0) setError(''); // 다시 묻는 중에는 방금 난 오류 글을 지우지 않아요
     api.previewRotate(file.id).then(
       (r) => { if (alive) setInfo(r); },
       (e) => { if (alive) setError(errorText(e)); },
     );
     return () => { alive = false; };
-  }, [file.id, asked]);
+  }, [file.id, asked, ask]);
 
   const turnBy = (step) => {
     if (busyRef.current) return;
@@ -46,6 +48,7 @@ export default function RotateBar({ file, turn, onTurn }) {
       onTurn(0);
     } catch (e) {
       setError(errorText(e));
+      if (mode === 'replace') { setInfo(null); setAsk((n) => n + 1); } // 확인 창 내용을 새로 받아 와요
     } finally {
       busyRef.current = false;
       setBusy(false);

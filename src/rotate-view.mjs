@@ -35,5 +35,5 @@ export function rotateResultText(r) {
   if (r.mode === 'copy') return r.done ? `돌린 복사본을 저장했어요.${r.pair ? ' 짝 영상도 같이 만들었어요.' : ''}` : '복사본을 만들지 못했어요.';
   if (!r.done) return `원본을 옮기지 못해 아무것도 바꾸지 않았어요.${kept}`;
   const fail = r.fail ? ` ${r.fail}개는 원본을 옮기지 못해 그대로 뒀어요.` : '';
-  return `돌린 모습으로 원본을 바꿨어요.${fail}${kept}`;
+  return `돌린 모습으로 원본을 바꿨어요.${r.pair && !r.fail ? ' 짝 영상도 같이 바꿨어요.' : ''}${fail}${kept}`;
 }
