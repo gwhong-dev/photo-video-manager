@@ -45,12 +45,14 @@ const { createMapNet, roundCoord, roundCity } = require('./lib/map-net');
 const { buildGroups, createHasher, isBlurry } = require('./lib/similar');
 const ai = require('./lib/similar-ai');
 const { checkDiscard, checkSelected, discardInfo, discardFiles } = require('./lib/similar-discard');
-const { createDriveKindOf } = require('./lib/platform');
+const { createDriveKindOf, canUseRecycleBin } = require('./lib/platform');
 const { createPreviewDrive } = require('./lib/preview-drive');
 const { historyFromJobs, planFill, toFillPreview, runFill, undoFill, lastFillRun } = require('./lib/fill-nodate');
 const { isTagKind, normalizeTagEdit, planTagEdit, toTagPreview, cleanTagName, cleanHotkey, normalizeRename, planTagRename } = require('./lib/manual-tags');
 const { readCleanHistory, cleanedFolders, cleanedDirOf } = require('./lib/clean-history');
 const { rotateFile, rotateKind, TURNS } = require('./lib/media-edit');
+const fileTags = require('./lib/file-tags');
+const { probeVideo } = require('./lib/tools');
 
 const SCHEME = 'pvm';
 const TABS = ['all', 'photo', 'video', 'screenshot'];
@@ -120,7 +122,7 @@ function checkIds(ids) {
 // 화면에는 정해진 문장과 오류 코드(EISDIR, EACCES 같은 짧은 영문 대문자)만 보여요
 const codeNote = (e) => (e && typeof e.code === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(e.code) ? ` (${e.code})` : '');
 
-function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning, mapFetch, openExternal, openPath, appVersion, trash, pickFolder, makeDriveKindOf = createDriveKindOf }) {
+function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt, isRunning, logger, userDir, loadScreen, getJobPending, isPlanning, mapFetch, openExternal, openPath, appVersion, trash, pickFolder, fileRewrite = null, makeDriveKindOf = createDriveKindOf }) {
   const base = typeof userDir === 'function' ? userDir() : userDir;
   // 백업 폴더 경로. 끝의 \ 나 / 가 달라도 같은 폴더로 보게 path.resolve 로 한 번만 다듬어요 (대소문자는 그대로 둬요).
   //   DB의 root 열쇠가 되니 모든 곳이 이 함수 하나를 써요
@@ -212,6 +214,13 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       if (n) startupLog([`띄어쓰기만 다른 태그 ${n}개를 합쳤어요`]);
     } catch (e) {
       errorLog('띄어쓰기만 다른 태그 합치기', e);
+    }
+    // 파일에서 읽은 태그(옛 "앨범 태그" 줄)를 태그 목록으로 옮겨요 (31 ②: 파일 태그도 고칠 수 있게, 처음 켤 때 한 번 많이 옮겨요)
+    try {
+      const n = db.adoptOldFileTags();
+      if (n) startupLog([`파일에 적힌 태그를 사진 ${n}장의 태그 목록에 넣었어요`]);
+    } catch (e) {
+      errorLog('파일 태그를 태그 목록에 넣기', e);
     }
     // 내가 붙인 태그를 목록 표(file_tags)에 다시 맞춰요 (옛 빌드로 다시 읽은 파일에서 빠졌을 수 있어요)
     try {
@@ -745,10 +754,11 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     if (typeof v !== 'string' || !v || v.length > 200) throw new Error('태그 이름이 올바르지 않아요.');
     return v;
   };
-  // 내가 만든 태그 정의를 찾아요. 없으면 (앨범 태그뿐이거나 그 사이 지워졌으면) 거절해요
+  // 태그 정의를 찾아요. 없으면 (그 사이 지워졌으면) 거절해요
+  //   31 ② 부터 파일에서 읽은 태그도 목록에 들어가 모두 고칠 수 있어요
   const mineOrThrow = (root, name) => {
     const d = db.tagDef(root, tagNameArg(name));
-    if (!d) throw new Error(`'${name}'은 내가 만든 태그가 아니라서 바꿀 수 없어요. 앨범에서 가져온 태그는 읽기 전용이에요.`);
+    if (!d) throw new Error(`'${name}' 태그를 찾지 못했어요. 목록을 다시 열어 주세요.`);
     return d;
   };
   const defState = (d) => (d ? { hotkey: d.hotkey } : null);
@@ -828,6 +838,152 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     }
     const batchId = saveTagBatch(root, kind, items, defs, '태그 지우기', `\n태그 ${a.name}`);
     return { batchId, kind, count: items.length, name: a.name };
+  });
+
+  // ---------- 파일에 태그 쓰기 (31 ②, 2026-11-24, docs/decisions/2026-11-23-태그-파일에-쓰기.md) ----------
+  //   태그를 붙이고 떼는 것은 DB 에만 저장돼요 ("파일에 쓰지 않은 태그"). 사용자가 "N장 파일에 태그 쓰기"를 누르면 그때 모아서 써요
+  //   한 장씩: 파일이 그대로인지 → 지금 파일 태그를 다시 읽어 목록에 합침 → 로그 → 쓰기 → 다시 읽어 확인 → DB 에 "쓴 목록" 기록
+  //   실패한 사진은 그대로 "쓰지 않은 태그"로 남아요 → 다시 누르면 남은 것만 이어서 써요
+  let tagWriting = false;
+  let tagAskPending = false; // 닫기 창에서 "지금 쓰기"를 골랐는데 화면이 아직 못 받았을 때 (갤러리 화면을 새로 여는 중)
+  const extName = (p) => (path.extname(p).slice(1) || '확장자 없음').toUpperCase();
+  // 쓸 것 미리보기 (아무것도 쓰지 않아요) → { total, writable, unwritable, unwritableExts, bytes, maxBytes, videoBytes, free, enough }
+  //   free: 백업 폴더 드라이브의 빈 공간 (모르면 null). exiftool 은 파일 하나를 새로 만든 뒤 바꿔 끼워서, 가장 큰 파일만큼 빈 공간이 있어야 해요
+  function tagWriteInfo(root) {
+    const rows = db.tagWritePending(root);
+    const exts = new Set();
+    let unwritable = 0;
+    let bytes = 0;
+    let maxBytes = 0;
+    let videoBytes = 0;
+    for (const r of rows) {
+      const kind = fileTags.writableKind(r.path);
+      if (!kind) {
+        unwritable++;
+        exts.add(extName(r.path));
+        continue;
+      }
+      bytes += r.size || 0;
+      maxBytes = Math.max(maxBytes, r.size || 0);
+      if (kind === 'video') videoBytes += r.size || 0;
+    }
+    let free = null;
+    try {
+      const st = fs.statfsSync(root);
+      free = st.bavail * st.bsize;
+    } catch (err) { /* 모르면 확인하지 않아요 */ }
+    return {
+      total: rows.length, writable: rows.length - unwritable, unwritable, unwritableExts: [...exts].sort(),
+      bytes, maxBytes, videoBytes, free, enough: free === null || free > maxBytes + 64 * 1024 * 1024,
+    };
+  }
+  // 띠와 미리보기 창이 같이 써요. 거르기 중 · 폴더 없음이면 0 으로
+  ipcMain.handle('gallery:tag-write-info', () => {
+    const root = rootNow();
+    const ask = tagAskPending;
+    tagAskPending = false;
+    if (screen || !db || !root) return { total: 0, writable: 0, unwritable: 0, unwritableExts: [], bytes: 0, maxBytes: 0, videoBytes: 0, free: null, enough: true, ask: false };
+    return { ...tagWriteInfo(root), ask };
+  });
+  // 쓰기 → { total, written, same, failed: [{ name, why }], unwritable, jobUpdated, stopped }
+  ipcMain.handle('gallery:tag-write', async () => {
+    const root = editReady();
+    if (tagWriting || discarding || filling) throw new Error('다른 작업이 끝난 뒤에 할 수 있어요');
+    if (library && library.isScanning()) throw new Error('백업 폴더를 읽는 중이에요. 끝난 뒤 다시 눌러 주세요');
+    const et = getEt();
+    if (!et) throw new Error('exiftool 을 찾지 못해서 파일에 쓸 수 없어요');
+    const info = tagWriteInfo(root);
+    if (!info.enough) throw new Error('백업 폴더 드라이브의 빈 공간이 모자라요. 가장 큰 파일보다 빈 공간이 넉넉해야 써요');
+    const rows = db.tagWritePending(root).filter((r) => fileTags.canWrite(r.path));
+    const t = getTools();
+    const ffprobe = t && t.ffprobe && t.ffprobe.ok ? t.ffprobe.path : null;
+    const res = { total: rows.length, written: 0, same: 0, failed: [], unwritable: info.unwritable, jobUpdated: 0, stopped: false };
+    if (!rows.length) return res;
+    tagWriting = true;
+    discarding = true; // 돌리기 · 버리기 · 채우기와 겹치지 않게 (같은 파일을 두 곳에서 고치지 않게)
+    let log = null;
+    const note = (line) => { try { if (log) log.write(line); } catch (err) { /* 로그 실패는 계속 */ } };
+    try {
+      try {
+        log = logger.newLog('tag-write', `# 파일에 태그 쓰기 / ${now()} / ${rows.length}장\n# 백업 폴더: ${root}\n# 줄: 결과\t경로\t파일에 있던 태그 → 쓴 태그 (이유)`);
+      } catch (err) {
+        errorLog('태그 쓰기 로그', err);
+        throw new Error('로그 파일을 만들지 못해서 쓰지 않았어요');
+      }
+      let binCheck = null; // 남은 임시 파일을 휴지통으로 옮길 수 있는 드라이브인지 (필요할 때 한 번 만들어요)
+      for (let k = 0; k < rows.length; k++) {
+        const r = rows[k];
+        send('gallery:tag-write-progress', { done: k, total: rows.length });
+        // 앱을 끄면 멈춰요 (남은 것은 다음에 이어서)
+        if (closed) { res.stopped = true; break; }
+        // 지난번에 쓰다 꺼져서 남은 임시 파일은 휴지통으로 (있으면 exiftool 이 쓰지 못해요)
+        //   휴지통을 쓸 수 없는 드라이브(USB 등)나 "바로 제거" 설정이면 옮기지 않고 그 사진만 건너뛰어요 (직접 지우도록 알림)
+        let blocked = null;
+        for (const tmp of fileTags.leftoverTemps([r.path])) {
+          try {
+            if (!trash) throw new Error('휴지통을 쓸 수 없어요');
+            if (!binCheck) binCheck = makeDriveKindOf();
+            const recycle = binCheck.recycleOf ? await binCheck.recycleOf(tmp) : null;
+            if (!canUseRecycleBin(await binCheck(tmp)) || (recycle && recycle.nuke)) {
+              throw new Error(`이 드라이브는 휴지통을 쓸 수 없어요. 탐색기에서 ${path.basename(tmp)} 을 직접 지운 뒤 다시 써 주세요`);
+            }
+            await trash(tmp);
+            note(`임시 파일 휴지통\t${tmp}`);
+          } catch (err) {
+            blocked = `지난번에 남은 임시 파일을 휴지통으로 옮기지 못했어요 (${err.message})`;
+          }
+        }
+        let out;
+        let tok = null;
+        if (blocked) {
+          out = { ok: false, why: blocked };
+        } else {
+          try {
+            tok = fileRewrite ? await fileRewrite.before(r.path) : null;
+            out = await fileTags.writeFileTags(et, r.path, null, { size: r.size, mtimeMs: r.mtimeMs }, {
+              plan: (cur) => db.adoptFileTagsNow(r.path, root, cur),
+              probe: ffprobe ? (p) => probeVideo(ffprobe, p) : null,
+              onBefore: ({ before }) => note(`쓰는 중\t${r.path}\t${tagText(before)}`),
+            });
+          } catch (err) {
+            out = { ok: false, why: err.message };
+          }
+        }
+        if (out.ok) {
+          // DB 에 못 적어도(앱을 끄는 중 등) 파일은 이미 맞게 쓰여 있어요 → 다음에 읽을 때 파일 태그로 맞춰져요
+          try {
+            db.markTagsWritten(r.path, out.list, out.same ? null : out.stat);
+          } catch (err) {
+            note(`DB 기록 실패	${r.path}	${err.message}`);
+          }
+          if (out.same) {
+            res.same++;
+            note(`같음\t${r.path}\t${tagText(out.list)}`);
+          } else {
+            res.written++;
+            note(`씀\t${r.path}\t${tagText(out.before)} → ${tagText(out.list)}${out.verified ? '' : ' (내용 지문 확인 안 됨)'}`);
+            try {
+              // 가져오기 기록(원본 정리가 믿는 서명 · 지문)은 내용이 그대로인 것을 지문으로 확인했을 때만 새로 고쳐요
+              const n = fileRewrite && out.verified ? await fileRewrite.after(tok, r.path) : 0;
+              res.jobUpdated += n;
+              if (n) note(`가져오기 기록 지문 갱신 ${n}개\t${r.path}`);
+            } catch (err) {
+              note(`가져오기 기록 지문 갱신 실패\t${r.path}\t${err.message}`);
+            }
+          }
+        } else {
+          res.failed.push({ name: path.basename(r.path), why: out.why });
+          note(`실패\t${r.path}\t${tagText(out.before || [])} (${out.why})`);
+        }
+      }
+      send('gallery:tag-write-progress', { done: rows.length, total: rows.length });
+      note(`# 끝 ${now()} / 씀 ${res.written}, 이미 같음 ${res.same}, 실패 ${res.failed.length}, 쓸 수 없는 형식 ${res.unwritable}${res.stopped ? ', 멈춤' : ''}`);
+    } finally {
+      tagWriting = false;
+      discarding = false;
+      send('gallery:library-changed');
+    }
+    return res;
   });
 
   // ---------- 장소 검색과 지도 출처 ----------
@@ -1292,7 +1448,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // 직접 넣은 값 · 태그는 경로에 묶여 있어서 옮기면 잃어요 → 그 사진은 옮기지도 되돌리지도 않아요
   const isProtected = (p) => {
     try {
-      return !!db.getManual(p) || db.getManualTags(p).length > 0;
+      // 태그는 파일에 다 써 둔 사진이면 옮겨도 따라가요 (31 ②). 안 쓴 태그가 있을 때만 지켜요
+      return !!db.getManual(p) || db.tagsPending(p);
     } catch (err) {
       return true; // 못 읽으면 안전한 쪽(옮기지 않음)
     }
@@ -1599,6 +1756,22 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       return n;
     },
     tagImported,
+    // 창을 닫을 때 물어볼 것 (main.js): { writing: 쓰는 중, writable: 파일에 쓸 수 있는데 안 쓴 장수 }
+    tagWriteState() {
+      try {
+        const root = libRoot();
+        if (!db || !root || screen) return { writing: tagWriting, writable: 0 };
+        return { writing: tagWriting, writable: tagWriteInfo(root).writable };
+      } catch (e) {
+        return { writing: tagWriting, writable: 0 };
+      }
+    },
+    // 닫기 창에서 "지금 쓰기"를 고르면: 화면에 쓰기 창을 열라고 알려요
+    //   화면이 새로 열리는 중이면 알림을 못 받을 수 있어서, 화면이 처음 정보를 읽을 때(ask: true)도 열어요
+    askTagWrite() {
+      tagAskPending = true;
+      send('gallery:tag-write-ask');
+    },
     // 창이 처음 열리고 도구를 찾았으면: 백업 폴더가 있으면 읽기 시작
     //   창은 도구를 찾기 전에 먼저 떠요. 그래서 화면이 도구 정보(tools)를 다시 읽도록 한 번 알려요
     onWindowReady() {

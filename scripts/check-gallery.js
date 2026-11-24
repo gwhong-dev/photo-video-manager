@@ -205,8 +205,8 @@ const items = [
         const f = db.getFile(id);
         const tagNames = f ? f.tags.map((t) => `${t.source}:${t.name}`).sort().join(',') : '';
         out.push(sub(
-          '바뀐 파일은 썸네일 대기로, missing 해제, 태그 교체',
-          !!f && f.thumbState === 'none' && f.missing === 0 && f.size === 300 && tagNames === 'album:가족,mediaType:사진',
+          '바뀐 파일은 썸네일 대기로, missing 해제, 태그 교체 (파일 태그는 내 태그 목록으로, 31 ②)',
+          !!f && f.thumbState === 'none' && f.missing === 0 && f.size === 300 && tagNames === 'manual:가족,mediaType:사진',
           f ? `${f.thumbState}, missing ${f.missing}, 태그 ${tagNames}` : '파일 없음',
         ));
         out.push(sub('없는 id는 null', db.getFile(999999) === null));
@@ -277,8 +277,8 @@ const items = [
         const files = db.listFiles('R1', '2026-10-25', ALL).map((f) => f.name).join(',');
         out.push(sub(
           'missing 제외 (listDays, listFiles, summary, 태그 개수)',
-          hidden === 1 && s1.total === 1 && files === 'b.jpg' && s1.tagCount === 0,
-          `날짜 ${hidden}, total ${s1.total}, 파일 ${files}, 태그 ${s1.tagCount}`,
+          hidden === 1 && s1.total === 1 && files === 'b.jpg' && s1.manualTags.every((t) => t.count === 0),
+          `날짜 ${hidden}, total ${s1.total}, 파일 ${files}, 태그 ${JSON.stringify(s1.manualTags)}`,
         ));
         const known = db.knownFiles('R1');
         out.push(sub('knownFiles에는 missing 파일도 값과 함께 나옴', known.size === 2 && known.get('R1/a.jpg').missing === 1 && known.get('R1/b.jpg').size === 100, JSON.stringify([...known])));
@@ -300,7 +300,7 @@ const items = [
         out.push(sub('다른 root 제외', days(d1) === '2026-10-25:1' && f1.length === 0 && db.summary('R1').total === 1 && db.summary('R1').noDate === 0 && k1.size === 1, `${days(d1)}, total ${db.summary('R1').total}`));
       });
 
-      // 14f 태그 요약 (album만, 많은 순)과 태그 필터, 썸네일 대기열
+      // 14f 태그 요약 (파일 태그도 내 태그로, 많은 순, 31 ②)과 태그 필터, 썸네일 대기열
       await withDb(env, 'tags', (db) => {
         const a = (name) => ({ name, source: 'album' });
         db.upsertFiles([
@@ -310,7 +310,8 @@ const items = [
           row({ path: 'R1/4.jpg', name: '4.jpg', tags: [a('가족')] }),
         ]);
         const s = db.summary('R1');
-        out.push(sub('summary 태그: album만, 많은 순', s.tagCount === 2 && JSON.stringify(s.tags) === JSON.stringify([{ name: '여행', count: 3 }, { name: '가족', count: 2 }]), JSON.stringify(s.tags)));
+        const counts = s.manualTags.map((t) => ({ name: t.name, count: t.count }));
+        out.push(sub('summary 태그: 파일 태그도 내 태그로, 종류 태그는 빼고 많은 순', s.tagCount === 2 && s.tags.length === 0 && JSON.stringify(counts) === JSON.stringify([{ name: '여행', count: 3 }, { name: '가족', count: 2 }]), JSON.stringify(counts)));
         const t = db.listFiles('R1', '2026-10-25', { ...ALL, tag: '가족' }).map((f) => f.name).sort().join(',');
         const td = days(db.listDays('R1', { ...ALL, tag: '가족' }));
         out.push(sub('태그 필터', t === '2.jpg,4.jpg' && td === '2026-10-25:2', `${t} / ${td}`));

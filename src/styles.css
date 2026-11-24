@@ -625,3 +625,11 @@ button.primary:disabled { background: var(--panel); color: var(--sub); border-co
 .compare-thumb.current { box-shadow: 0 0 0 3px var(--text); transform: translateY(-4px); }
 .compare-thumb .similar-x { inset: 22%; }
 .compare-thumb .similar-best { right: 3px; top: 3px; font-size: 11px; }
+
+/* 태그를 파일에 쓰기 (31 ②). 노랑(--warn)은 "정보 없음"에만 써서 여기서는 쓰지 않아요 */
+.tag-write-banner { border-left: 3px solid var(--line); }
+.tag-write-dialog { width: min(640px, 100%); }
+.tag-write-lines { flex-direction: column; align-items: flex-start; gap: 4px; }
+.tag-write-warn { color: var(--text); font-weight: 600; }
+.tag-write-failed { max-height: 36vh; }
+.tag-write-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); align-items: center; }
