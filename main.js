@@ -34,7 +34,7 @@ const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
 const { cleanCandidatesAsync, cleanTargets, recheckTargets, overflowRootsOf, cleanInfo, cleanOriginals, createHashCache, countHashesFrom, trustedItemsOf, refreshTrusted } = require('./lib/cleaner');
 const { createDriveKindOf } = require('./lib/platform');
-const { samplePool, sampleView, openSample } = require('./lib/clean-sample');
+const { samplePool, sampleView, openSample, samplePath } = require('./lib/clean-sample');
 const { comparePool, compareRows, compareFile, keptItems, markUserKept, createCompareThumbs, THUMB_PX, FFMPEG_TIMEOUT_MS } = require('./lib/dup-compare');
 const { createProcMake } = require('./lib/thumb-proc');
 const { openFolderOnly } = require('./lib/open-folder');
@@ -795,6 +795,21 @@ const getCompareThumbs = () => {
   compareThumbs = createCompareThumbs({ tempDir: path.join(userDir(), 'compare-tmp'), getTools: () => tools, make: compareMake });
   return compareThumbs;
 };
+// 🔍 샘플 크게 보기 그림 (긴 변 SAMPLE_BIG_PX, 한 번에 하나씩, 메모리에만)
+const SAMPLE_BIG_PX = 1600;
+let sampleBig = null;
+let sampleBigMake = null;
+const getSampleBig = () => {
+  if (sampleBig) return sampleBig;
+  sampleBigMake = createProcMake({
+    spawn: (file) => utilityProcess.fork(file, [], { serviceName: 'pvm-sample-big' }),
+    px: SAMPLE_BIG_PX,
+    videoTimeoutMs: FFMPEG_TIMEOUT_MS,
+    onCrash: ({ code, pending }) => console.error(`샘플 큰 그림 프로그램이 꺼졌어요 (code ${code}, 기다리던 그림 ${pending}개는 그림 없이 보여요)`),
+  });
+  sampleBig = createCompareThumbs({ tempDir: path.join(userDir(), 'compare-tmp'), getTools: () => tools, make: sampleBigMake, limit: 1, max: 12 });
+  return sampleBig;
+};
 // 정리 확인 창에서 만든 것들 비우기 (정리를 끝냈을 때, 작업을 끝내거나 새로 시작할 때)
 //   지난 작업의 샘플 후보가 남아 있으면 다른 작업의 파일을 열 수 있어서요
 function resetCleanCheck() {
@@ -806,6 +821,7 @@ function resetCleanCheck() {
   cleanOverflowRoots = null;
   cleanCompare = null; // 비교 목록 · 그림도 다음 확인 창에서 새로
   if (compareThumbs) compareThumbs.clear();
+  if (sampleBig) sampleBig.clear();
 }
 ipcMain.handle('trash-info', async () => {
   if (running) throw new Error('다른 작업이 끝난 뒤에 해 주세요');
@@ -914,7 +930,17 @@ ipcMain.handle('clean-sample', async () => sampleView(cleanSample || []));
 
 // 🔍 샘플 확인: 누른 결과 파일을 크게 열기 (Windows 기본 프로그램, 사진 앱 · 영상 플레이어)
 //   화면은 경로를 모르고 번호만 보내요. 이번 후보 안의 파일만 열어요
-ipcMain.handle('clean-sample-open', async (e, key) => openSample(cleanSample, key, { exists: fs.existsSync, openPath: (x) => shell.openPath(x) }));
+//   창 안 크게 보기: key 가 { view: 번호 } 이면 파일을 열지 않고 큰 그림(data 주소, 못 만들면 null)을 돌려줘요
+//   (preload.js 는 L 등급이라 새 통로를 만들지 않고 이 통로를 같이 써요). 그림은 따로 도는 프로그램에서 만들어
+//   어떤 사진에서 꺼져도 앱은 그대로예요. 영상은 첫 장면 그림이에요
+ipcMain.handle('clean-sample-open', async (e, key) => {
+  if (key && typeof key === 'object') {
+    const p = samplePath(cleanSample, key.view);
+    if (!p || !fs.existsSync(p)) return null;
+    return getSampleBig().get(p);
+  }
+  return openSample(cleanSample, key, { exists: fs.existsSync, openPath: (x) => shell.openPath(x) });
+});
 
 // 중복 비교 (확인 창): 다음 줄들 · 줄의 작은 그림 · 크게 열기. 화면은 경로를 모르고 줄 번호와 'keep'(남는 파일) / 'src'(정리될 원본)만 보내요
 ipcMain.handle('clean-compare-rows', async (e, offset) => compareRows(job, cleanCompare, offset));
