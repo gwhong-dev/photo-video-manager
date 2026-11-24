@@ -370,6 +370,9 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
   if (!data) return <EmptyState title="비슷한 사진을 찾는 중이에요" />;
 
   const groups = data.groups;
+  // 같은 영상 칸은 두 화면(사진 묶음 있음 / 없음)에서 같은 자리(AI 안내 줄 바로 아래)에 둬요
+  //   자리가 같아야 사진 묶음이 처음 생겨도 이 칸이 새로 만들어지지 않아서, 열어 둔 확인 창이 닫히지 않아요 (#148 검증 지적)
+  const videos = <div className="same-video-only"><SameVideoSection gen={gen} onNotice={onNotice} /></div>;
   const progress = progressText(data.progress);
   if (!groups.length) {
     // 모두 남기기로 숨긴 묶음만 있으면 다시 보기 버튼을 보여 줘요
@@ -380,7 +383,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
     return (
       <section className="similar" aria-label="비슷한 사진">
         <AiBar onNotice={onNotice} onChanged={load} />
-        <div className="same-video-only"><SameVideoSection gen={gen} onNotice={onNotice} /></div>
+        {videos}
         <EmptyState title={progress ? '비슷한 사진을 찾는 중이에요' : '비슷한 사진이 없어요'} action={again}>
           {progress || '3초 안에 이어서 찍었거나, 모양이 거의 같거나, AI 로 같은 장면인 1분 안 사진이 없어요.'}
         </EmptyState>
@@ -452,6 +455,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
   return (
     <section className="similar" aria-label="비슷한 사진">
       <AiBar onNotice={onNotice} onChanged={load} />
+      {videos}
       <div className="similar-top">
         <span>묶음 {formatCount(groups.length)}개, 버릴 사진 {formatCount(ids.length)}장</span>
         {progress && <span>{progress}</span>}
@@ -463,7 +467,6 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
         )}
       </div>
       <div className="similar-body">
-        <SameVideoSection gen={gen} onNotice={onNotice} />
         {groups.slice(0, shown).map((g) => {
           const gone = groupDiscardIds(g, overrides).length;
           const note = groupNote(g);

@@ -52,7 +52,7 @@ const { isTagKind, normalizeTagEdit, planTagEdit, toTagPreview, cleanTagName, cl
 const { readCleanHistory, cleanedFolders, cleanedDirOf } = require('./lib/clean-history');
 const { rotateFile, rotateKind, TURNS } = require('./lib/media-edit');
 const fileTags = require('./lib/file-tags');
-const { probeVideo, videoStreamHash } = require('./lib/tools');
+const { probeVideo, sameVideoHash } = require('./lib/tools');
 const sameVideo = require('./lib/same-video');
 
 const SCHEME = 'pvm';
@@ -1276,9 +1276,11 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     const t = getTools();
     return t && t.ffmpeg && t.ffmpeg.ok ? t.ffmpeg.path : null;
   };
-  const hashVideo = (file) => videoStreamHash(ffmpegPath(), file);
+  const hashVideo = (file) => sameVideoHash(ffmpegPath(), file); // 화면 + 소리 + 회전 표시 (lib/tools.js)
+  // 옮기기 · 채우기 · 태그 쓰기 중에는 지문을 만들지 않아요 (FFmpeg 가 파일을 잡고 있으면 휴지통 옮기기가 실패할 수 있어서)
+  const editing = () => discarding || filling || tagWriting;
   async function startVideoHashing(root) {
-    if (videoHashing || closed || !root || busy()) return;
+    if (videoHashing || closed || !root || busy() || editing()) return;
     if (!ffmpegPath() || !isDir(root) || Date.now() - videoHashIdle < 60000) return;
     const todo = sameVideo.pendingRows(db.videoRows(root));
     if (!todo.length) return;
@@ -1289,7 +1291,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
       tell();
       for (const r of todo) {
         // 백업 폴더가 빠졌으면 "실패"로 적지 않고 멈춰요 (다시 꽂으면 다시 계산)
-        if (closed || busy() || rootNow() !== root || !isDir(root)) break;
+        if (closed || busy() || editing() || rootNow() !== root || !isDir(root)) break;
         const hash = await hashVideo(r.path);
         if (closed) break;
         if (!hash && !isDir(root)) break;

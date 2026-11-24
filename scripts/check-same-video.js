@@ -83,6 +83,25 @@ const items = [
         ]).map((r) => r.id).sort();
         out.push(sub('70a 지문은 후보끼리만, 아직 안 만든 것만 계산 (실패로 적힌 것 · 짝 없는 영상은 안 함)',
           JSON.stringify(pend) === JSON.stringify([1, 2, 4]), JSON.stringify(pend)));
+
+        // 버릴 영상에만 있는 정보가 있으면 빼요 (검증 지적, #148): 직접 넣은 값 · 태그 / 촬영 시각 · 위치 · 태그가 다름
+        const lost = [
+          v(1, 'D.MP4', 10 * MB, { vhash: 'hd' }),
+          v(2, 'D_1.MP4', 10 * MB, { vhash: 'hd', ownKey: 'v' }), // 남길 영상에 없는 직접 넣은 값 · 태그
+          v(3, 'E.MP4', 10 * MB, { vhash: 'he' }),
+          v(4, 'E_1.MP4', 10 * MB, { vhash: 'he', takenAt: '2026-11-20T11:00:00' }), // 촬영 시각 다름
+          v(5, 'F.MP4', 10 * MB, { vhash: 'hf', tagKey: '가족' }),
+          v(6, 'F_1.MP4', 10 * MB, { vhash: 'hf', tagKey: '가족\n수원' }), // 태그 다름
+          v(7, 'G.MP4', 10 * MB, { vhash: 'hg', lat: 37.2, lng: 127.0 }),
+          v(8, 'G_1.MP4', 10 * MB, { vhash: 'hg', lat: null, lng: null }), // 위치 다름
+          v(9, 'H.MP4', 10 * MB, { vhash: 'hh', ownKey: 'k', tagKey: '가족', lat: 37.2, lng: 127.0 }), // 남길 영상은 직접 넣은 값이 있어도 돼요
+          v(10, 'H_1.MP4', 10 * MB, { vhash: 'hh', ownKey: 'k2', tagKey: '가족', lat: 37.2, lng: 127.0 }), // 직접 넣은 값이 남길 영상과 다름
+          v(11, 'H_2.MP4', 10 * MB, { vhash: 'hh', tagKey: '가족', lat: 37.2, lng: 127.0 }), // 같은 정보 → 버려도 돼요
+          v(12, 'H_3.MP4', 10 * MB, { vhash: 'hh', ownKey: 'k', tagKey: '가족', lat: 37.2, lng: 127.0 }), // 직접 넣은 값도 같음 → 버려도 돼요
+        ];
+        const lostNames = namesOf(S.buildVideoGroups(lost), lost);
+        out.push(sub('70a 버릴 영상의 직접 넣은 값 · 태그, 촬영 시각 · 위치 · 태그가 남길 영상과 다르면 묶지 않음 (같으면 묶음)',
+          JSON.stringify(lostNames) === JSON.stringify([['H.MP4', 'H_2.MP4', 'H_3.MP4']]), JSON.stringify(lostNames)));
       }
 
       // 70b 옮기기 전 확인(checkSameVideo): 지금 DB 로 묶음을 다시 만들고, 남길 영상 · 묶음 밖 · 바뀐 영상은 거절
@@ -114,6 +133,21 @@ const items = [
           ['다른 폴더', () => S.checkSameVideo(db, 'R2', [dupId]), /목록이 바뀌었어요/],
         ].filter(([, fn, re]) => !throws(fn, re)).map(([n]) => n);
         out.push(sub('70b 남길 영상 · 묶음 밖 · 같은 번호 두 번 · 빈 목록 · 번호 아님 · 다른 백업 폴더는 거절', refused.length === 0, refused.length ? `안 막힘: ${refused.join(', ')}` : ''));
+
+        // 버릴 영상에 직접 태그를 붙이면 DB 에서 own · tagKey 로 읽혀서 묶음에서 빠지고, 옮기기도 거절
+        db.applyManualBatch({ id: 'SV1', root: 'R1', kind: 'tagAdd', createdAt: '2026-11-24T00:00:00.000Z', items: [{ path: 'R1/2026-11-20/IMG_0001_1.MP4', before: [], after: ['가족'] }] });
+        const tagged = db.videoRows('R1').find((r) => r.id === dupId) || {};
+        out.push(sub('70b 버릴 영상에 직접 붙인 태그가 있으면 묶음에서 빠지고 옮기기도 거절',
+          tagged.own === true && tagged.tagKey.split('\n').includes('가족') && S.buildVideoGroups(db.videoRows('R1')).length === 0
+            && throws(() => S.checkSameVideo(db, 'R1', [dupId]), /목록이 바뀌었어요/),
+          JSON.stringify({ own: tagged.own, tagKey: tagged.tagKey })));
+        // 남길 영상에도 같은 태그를 붙이면 (파일 안의 태그를 폴더 읽기로 가져온 경우처럼) 잃는 것이 없어서 다시 묶여요 (앱 확인에서 잡음, #148)
+        db.applyManualBatch({ id: 'SV1b', root: 'R1', kind: 'tagAdd', createdAt: '2026-11-24T00:00:00.500Z', items: [{ path: 'R1/2026-11-20/IMG_0001.MP4', before: [], after: ['가족'] }] });
+        const both = S.buildVideoGroups(db.videoRows('R1'));
+        out.push(sub('70b 두 영상의 직접 붙인 태그가 같으면 묶고 옮기기도 받아요',
+          both.length === 1 && both[0].keepId === idOf('IMG_0001.MP4') && S.checkSameVideo(db, 'R1', [dupId]).files.length === 1,
+          JSON.stringify(namesOf(both, db.videoRows('R1')))));
+        db.applyManualBatch({ id: 'SV2', root: 'R1', kind: 'tagAdd', createdAt: '2026-11-24T00:00:01.000Z', items: [{ path: 'R1/2026-11-20/IMG_0001_1.MP4', before: ['가족'], after: [] }, { path: 'R1/2026-11-20/IMG_0001.MP4', before: ['가족'], after: [] }] });
 
         // 파일이 바뀌면(수정 시각 다름) 옛 지문은 안 쓰고 다시 계산할 후보 → 묶음에서 빠지고 옮기기도 거절
         db.upsertFiles([vid('IMG_0001.MP4', { mtimeMs: 6000 })]);
@@ -203,21 +237,21 @@ const items = [
           `${JSON.stringify(ids)} / ${label} / ${res}`));
       }
 
-      // 70e 실제 FFmpeg: 같은 영상 복사본 두 개는 지문이 같아서 묶이고, 옮기기 직전 확인도 통과
+      // 70e 실제 FFmpeg: 같은 영상 복사본 두 개는 지문이 같아서 묶이고, 옮기기 직전 확인도 통과 (지문 = lib/tools.js sameVideoHash)
       const ffmpeg = env.tools.ffmpeg.ok ? env.tools.ffmpeg.path : null;
       if (!ffmpeg) {
         out.push(skip('70e 실제 FFmpeg 지문', 'ffmpeg 없음'));
         return out;
       }
       {
-        const { videoStreamHash } = require('../lib/tools');
+        const { sameVideoHash, runCmd } = require('../lib/tools');
         const dir = path.join(env.tmp, 'same-video-real', '2026-11-20');
         fs.mkdirSync(dir, { recursive: true });
         const keep = path.join(dir, 'IMG_0103.MOV');
         const dup = path.join(dir, 'IMG_0103_1.MOV');
         fs.copyFileSync(path.join(SAMPLES, 'IMG_0103.MOV'), keep);
         fs.copyFileSync(keep, dup);
-        const hashOf = (p) => videoStreamHash(ffmpeg, p);
+        const hashOf = (p) => sameVideoHash(ffmpeg, p);
         const [h1, h2] = [await hashOf(keep), await hashOf(dup)];
         const size = fs.statSync(keep).size;
         const rows = [
@@ -235,6 +269,32 @@ const items = [
         out.push(sub('70e 실제 FFmpeg: 복사본 두 개는 지문이 같아 한 묶음(꼬리 없는 이름을 남김), 옮기기 직전 확인 통과',
           !!h1 && h1 === h2 && groups.length === 1 && groups[0].keepId === 1 && verified === 'ok',
           `${String(h1).slice(0, 8)} / ${String(h2).slice(0, 8)} / 묶음 ${groups.length} / 확인 ${verified}`));
+
+        // 다른 영상 · 소리만 다른 영상은 지문이 달라요 (FFmpeg 로 임시로 만듦)
+        const other = path.join(dir, 'other.MOV');
+        const withAudio = path.join(dir, 'audio.MOV');
+        await runCmd(ffmpeg, ['-v', 'error', '-nostdin', '-y', '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=10:duration=1', '-c:v', 'mpeg4', other]);
+        await runCmd(ffmpeg, ['-v', 'error', '-nostdin', '-y', '-i', keep, '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-shortest', withAudio]);
+        const [hOther, hAudio] = [await hashOf(other), await hashOf(withAudio)];
+        out.push(sub('70e 실제 FFmpeg: 다른 영상 · 화면은 같고 소리만 있는 영상은 지문이 다름',
+          !!hOther && !!hAudio && hOther !== h1 && hAudio !== h1, `${String(hOther).slice(0, 8)} / ${String(hAudio).slice(0, 8)}`));
+
+        // 돌린 복사본(영상 돌리기는 회전 값만 바꾼 _1 을 만들어요)은 화면 데이터가 같아도 지문이 달라서 묶이지 않음
+        const et = env.tools.exiftool && env.tools.exiftool.ok ? env.tools.exiftool.path : null;
+        if (!et) {
+          out.push(skip('70e 돌린 복사본은 같은 영상이 아님', 'exiftool 없음'));
+        } else {
+          const turned = path.join(dir, 'IMG_0103_2.MOV');
+          await runCmd(et, ['-q', '-Rotation=90', '-o', turned, keep]);
+          const hTurned = await hashOf(turned);
+          const tRows = [
+            { id: 1, name: 'IMG_0103.MOV', path: keep, size, mtimeMs: 1, width: 640, height: 480, vhash: h1, vhashDone: true },
+            { id: 3, name: 'IMG_0103_2.MOV', path: turned, size: fs.statSync(turned).size, mtimeMs: 1, width: 640, height: 480, vhash: hTurned, vhashDone: true },
+          ];
+          out.push(sub('70e 돌린 복사본(회전 값만 바뀜)은 지문이 달라서 묶지 않음 (검증 지적, #148)',
+            !!hTurned && hTurned !== h1 && /:r0$/.test(String(h1)) && /:r(90|270)$/.test(String(hTurned)) && S.buildVideoGroups(tRows).length === 0,
+            `${String(h1).slice(-4)} / ${String(hTurned).slice(-4)}`));
+        }
       }
       return out;
     },
