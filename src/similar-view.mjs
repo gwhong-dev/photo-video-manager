@@ -9,7 +9,9 @@
 //     → 아직 아무것도 안 고른 묶음은 지문 · 흐림 · AI 특징값이 뒤에서 만들어져 추천이 바뀌면 새 추천에 맞춰 다시 맞춰요
 //       (2026-11-16 앱 확인: 그대로 두면 "추천" 사진이 "버림", 다른 사진이 "남김"으로 남아 헷갈림)
 //     → 버릴 번호는 적어 둔 "버림"만 세요. 아직 화면에 안 보인 묶음의 사진은 버리지 않아요
-//   묶음마다 적어도 한 장은 남아야 해요 (마지막 남김을 버림으로 바꾸려 하면 거절)
+//   한 묶음을 모두 버릴 수도 있어요 (2026-11-24 사용자 요청: "무조건 1개 이상 남겨야 하는 점도 이상하고")
+//     단, 묶음의 모든 사진을 사용자가 직접 "버림"으로 고른 경우만 (처음 표시 · 다시 묶이며 생긴 "버림"만으로는 안 옮겨요)
+//     이런 묶음의 번호는 wholeIds 로 따로 보내고, main 은 이 번호로 "모두 버리기로 고른 묶음"인지 다시 확인해요
 
 // 처음 표시 (사용자가 아직 안 바꾼 사진)
 function firstMark(group, id) {
@@ -28,20 +30,19 @@ export function markOf(group, id, overrides) {
   return valueOf(overrides && overrides.get(id)) || firstMark(group, id);
 }
 
-// 표시 바꾸기 → { overrides: 새 Map, refused: 거절했으면 true }
+// 표시 바꾸기 → { overrides: 새 Map, refused: false } (마지막 남김도 버림으로 바꿀 수 있어요, 2026-11-24)
 export function toggleMark(group, id, overrides) {
   const next = new Map(overrides || []);
   const now = markOf(group, id, overrides);
-  if (now === 'keep') {
-    const keeps = group.ids.filter((x) => markOf(group, x, overrides) === 'keep');
-    if (keeps.length <= 1) return { overrides: overrides || new Map(), refused: true };
-  }
   next.set(id, now === 'keep' ? 'discard' : 'keep');
+  // 마지막 남김을 버림으로 바꾸면 사용자가 묶음 전체를 고른 것: 자동 버림도 사용자가 고른 버림으로 적어 둬요
+  //   (안 그러면 자동 버림이 섞여 "모두 버리기"로 안 보여 그 묶음이 조용히 빠져요, 검증 ⚠️4)
+  if (now === 'keep' && group.ids.every((x) => markOf(group, x, next) !== 'keep')) for (const x of group.ids) next.set(x, 'discard');
   return { overrides: next, refused: false };
 }
 
 // 표시를 정해서 바꾸기 (비교 창의 ↑ 버림 · ↓ 남김, 2026-11-21 사용자 요청) → { overrides, refused }
-//   이미 그 표시면 그대로. 마지막 남김을 버림으로 바꾸려 하면 거절 (toggleMark 와 같은 규칙)
+//   이미 그 표시면 그대로 (사용자가 고른 것으로 적어 둬요)
 export function setMark(group, id, want, overrides) {
   if (want !== 'keep' && want !== 'discard') return { overrides: overrides || new Map(), refused: false };
   const now = markOf(group, id, overrides);
@@ -67,6 +68,13 @@ export function pinBest(group, id, overrides) {
   return next;
 }
 
+// 이 묶음은 모두 버리기 (2026-11-24 사용자 요청): 모든 사진을 사용자가 고른 "버림"으로
+export function discardAll(group, overrides) {
+  const next = new Map(overrides || []);
+  for (const id of group.ids) next.set(id, 'discard');
+  return next;
+}
+
 // 이 묶음은 모두 남기기
 export function keepAll(group, overrides) {
   const next = new Map(overrides || []);
@@ -79,7 +87,7 @@ export function keepAll(group, overrides) {
 //   이미 본 묶음에 새로 들어온 사진도 같은 규칙이에요 (2026-11-16 사용자 지적: 처음엔 추천 1장만 남김, 남길 사진만 눌러 바꿈)
 //     AI 특징값 · 지문이 뒤에서 만들어지며 묶음이 커져도 새 사진이 모두 "남김"으로 쌓이지 않게
 //   사용자가 아무것도 안 고른 묶음은 지금 추천에 맞춰 다시 맞춰요. 하나라도 고른 묶음은 적어 둔 표시 그대로
-//   다시 묶이며 한 묶음이 모두 버림이 되면 그 묶음은 옮기지 않아요 (discardIds, main 도 다시 확인)
+//   다시 묶이며 한 묶음이 모두 버림이 되면, 사용자가 모두 직접 고른 묶음이 아니면 옮기지 않아요 (discardIds, main 도 다시 확인)
 export function pinMarks(groups, overrides) {
   let next = null;
   const put = (id, v) => {
@@ -98,18 +106,29 @@ export function pinMarks(groups, overrides) {
   return next || overrides || new Map();
 }
 
-// 버릴 사진 번호들: 적어 둔 "버림"만 (pinMarks로 화면에 보인 묶음). 혹시 한 묶음이 전부 버림이면 그 묶음은 빼요 (main도 다시 확인해요)
+// 사용자가 묶음의 모든 사진을 직접 "버림"으로 고른 묶음인지
+const wholeChosen = (g, overrides) => g.ids.length > 0 && g.ids.every((id) => overrides && overrides.get(id) === 'discard');
+
+// 버릴 사진 번호들: 적어 둔 "버림"만 (pinMarks로 화면에 보인 묶음)
+//   한 묶음이 전부 버림이면, 사용자가 모두 직접 고른 묶음만 넣고 그 밖은 빼요 (main도 다시 확인해요)
 export function discardIds(groups, overrides) {
   const out = [];
   for (const g of groups || []) {
     const gone = g.ids.filter((id) => overrides && valueOf(overrides.get(id)) === 'discard');
-    if (gone.length === g.ids.length) continue;
+    if (gone.length === g.ids.length && !wholeChosen(g, overrides)) continue;
     out.push(...gone);
   }
   return out;
 }
 
-// 이 묶음만 지금 옮기기: 이 묶음에서 고정된 "버림"만 (모두 버림이면 빈 목록. main도 다시 확인해요)
+// 모두 버리기로 고른 묶음의 번호들 (discardIds 가 넣은 "한 장도 안 남는 묶음"). main 에 같이 보내요
+export function wholeIds(groups, overrides) {
+  const out = [];
+  for (const g of groups || []) if (wholeChosen(g, overrides)) out.push(...g.ids);
+  return out;
+}
+
+// 이 묶음만 지금 옮기기: 이 묶음에서 고정된 "버림"만 (모두 버림은 사용자가 모두 고른 경우만. main도 다시 확인해요)
 export function groupDiscardIds(group, overrides) {
   return discardIds([group], overrides);
 }
@@ -125,6 +144,11 @@ export function keptAfterDiscard(groups, overrides) {
     out.push(...g.ids.filter((id) => !gone.has(id)));
   }
   return out;
+}
+
+// 이 묶음을 모두 버리는 버튼 글자 (누르면 확인 창이 떠요, 2026-11-24 사용자 요청)
+export function groupAllLabel(n) {
+  return `이 묶음 ${count(n)}장 모두 버리기`;
 }
 
 // 이 묶음만 옮기는 버튼 글자 (확인 창에서 어디로 가는지 다시 보여 줘요)
@@ -207,6 +231,7 @@ export function discardLabel(info) {
 export function previewLines(info) {
   if (!info || !info.count) return [];
   const lines = [`묶음 ${count(info.groups)}개에서 ${count(info.count)}장을 옮겨요.`];
+  if (info.emptied > 0) lines.push(`그중 묶음 ${count(info.emptied)}개는 한 장도 남기지 않아요.`);
   if (info.trash > 0) lines.push(`휴지통으로 ${count(info.trash)}장`);
   if (info.move > 0) lines.push(`휴지통이 없는 드라이브라 백업 폴더 안 _정리완료원본 폴더로 ${count(info.move)}장 (갤러리에는 안 보이고, 지우는 것은 직접 확인한 뒤에 해 주세요)`);
   if (info.pairs > 0) lines.push(`라이브 포토의 짝 영상 ${count(info.pairs)}개도 사진과 같은 곳으로 옮겨요`);
@@ -234,4 +259,65 @@ export function progressText(p) {
   if (p.done >= p.total) return '';
   if (p.waiting) return `사진 지문 ${count(p.done)} / ${count(p.total)}장. 가져오기가 끝나면 이어서 만들어요.`;
   return `사진 지문 만드는 중 ${count(p.done)} / ${count(p.total)}장. 끝나면 묶음이 더 생길 수 있어요.`;
+}
+
+// ---------- 같은 영상 (두 번 저장된 영상, 2026-11-24) ----------
+
+// 묶음에서 버릴 영상 번호 (남길 영상 = 첫 번째는 빼요)
+export function videoDiscardIds(groups) {
+  const out = [];
+  for (const g of groups || []) for (const id of g.ids.slice(1)) out.push(id);
+  return out;
+}
+
+// 영상 크기 글 (예: 1.2GB, 35MB)
+export function sizeText(bytes) {
+  const n = Number(bytes || 0);
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)}GB`;
+  return `${Math.max(1, Math.round(n / 1024 ** 2))}MB`;
+}
+
+// 위쪽 요약 한 줄
+export function videoSummary(groups) {
+  const n = videoDiscardIds(groups).length;
+  if (!n) return '';
+  return `두 번 저장된 같은 영상 묶음 ${count((groups || []).length)}개, 옮길 영상 ${count(n)}개`;
+}
+
+// 확인 창의 실행 버튼
+export function videoDiscardLabel(info) {
+  if (!info || !info.count) return '';
+  if (info.move === 0) return `같은 영상 ${count(info.count)}개 휴지통으로 옮기기`;
+  if (info.trash === 0) return `같은 영상 ${count(info.count)}개 정리완료원본 폴더로 옮기기`;
+  return `같은 영상 ${count(info.count)}개 옮기기`;
+}
+
+// 확인 창 설명
+export function videoPreviewLines(info) {
+  if (!info || !info.count) return [];
+  const lines = [`묶음 ${count(info.groups)}개에서 꼬리 붙은 이름의 영상 ${count(info.count)}개를 옮겨요. 이름에 꼬리가 없는 영상은 남겨요.`];
+  lines.push('옮기기 직전에 두 영상의 화면 데이터를 다시 비교해서, 다르면 옮기지 않아요 (영상 하나에 수십 초 걸릴 수 있어요).');
+  if (info.trash > 0) lines.push(`휴지통으로 ${count(info.trash)}개`);
+  if (info.move > 0) lines.push(`휴지통이 없는 드라이브라 백업 폴더 안 _정리완료원본 폴더로 ${count(info.move)}개 (갤러리에는 안 보이고, 지우는 것은 직접 확인한 뒤에 해 주세요)`);
+  for (const w of info.warnings || []) lines.push(`주의: ${w}`);
+  return lines;
+}
+
+// 끝난 뒤 알림 한 줄
+export function videoResultText(r) {
+  if (!r) return '';
+  const parts = [];
+  if (r.trashed) parts.push(`휴지통으로 ${count(r.trashed)}개`);
+  if (r.moved) parts.push(`_정리완료원본 폴더로 ${count(r.moved)}개`);
+  let text = parts.length ? `같은 영상 ${parts.join(', ')} 옮겼어요.` : '옮긴 영상이 없어요.';
+  if (r.fail) text += ` ${count(r.fail)}개는 옮기지 않았어요${r.logName ? ` (로그 ${r.logName})` : ''}.`;
+  if (r.logFail) text += ` 로그에 ${count(r.logFail)}줄을 적지 못했어요 (디스크 공간을 확인해 주세요).`;
+  return text;
+}
+
+// 영상 지문 진행 글
+export function videoProgressText(p) {
+  if (!p || !p.total || !p.hashing) return '';
+  if (p.done >= p.total) return '';
+  return `같은 영상 찾는 중 ${count(p.done)} / ${count(p.total)}개. 끝나면 묶음이 더 생길 수 있어요.`;
 }

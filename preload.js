@@ -59,6 +59,9 @@ contextBridge.exposeInMainWorld('api', {
   onJobInfo: (cb) => subscribe('job-info', cb),
   // 가져올 때 태그를 붙인 결과 (회차 끝 다시 읽기가 끝난 뒤 와요)
   onImportTag: (cb) => subscribe('import-tag', cb),
+  // 작은 진행 창(최소화했을 때 뜨는 창)에서 일시정지 · 이어서 실행을 눌렀을 때
+  onMiniPause: (cb) => subscribe('mini-pause', cb),
+  onMiniResume: (cb) => subscribe('mini-resume', cb),
   onTrashProgress: (cb) => ipcRenderer.on('trash-progress', (e, data) => cb(data)),
   onCleanCheckProgress: (cb) => ipcRenderer.on('clean-check-progress', (e, data) => cb(data)),
 
@@ -101,9 +104,14 @@ contextBridge.exposeInMainWorld('api', {
     listSimilar: () => ipcRenderer.invoke('gallery:similar-list'),
     keepAllSimilar: (ids) => ipcRenderer.invoke('gallery:similar-keep-all', ids),
     clearSimilarKeeps: () => ipcRenderer.invoke('gallery:similar-clear-keeps'),
-    previewDiscard: (ids) => ipcRenderer.invoke('gallery:similar-preview', ids),
-    discardSimilar: (ids) => ipcRenderer.invoke('gallery:similar-discard', ids),
+    previewDiscard: (ids, whole) => ipcRenderer.invoke('gallery:similar-preview', ids, whole || []),
+    discardSimilar: (ids, whole) => ipcRenderer.invoke('gallery:similar-discard', ids, whole || []),
     onSimilarProgress: (cb) => subscribe('gallery:similar-progress', cb),
+    // 같은 영상 (두 번 저장된 영상): 묶음 목록, 옮기기 미리보기, 옮기기 (id로만, 2026-11-24)
+    listSameVideo: () => ipcRenderer.invoke('gallery:same-video-list'),
+    previewSameVideo: (ids) => ipcRenderer.invoke('gallery:same-video-preview', ids),
+    discardSameVideo: (ids) => ipcRenderer.invoke('gallery:same-video-discard', ids),
+    onSameVideoProgress: (cb) => subscribe('gallery:same-video-progress', cb),
     // 갤러리에서 고른 사진 휴지통으로: 미리보기(몇 장이 어디로, 아무것도 옮기지 않음), 옮기기 (id로만)
     previewTrash: (ids) => ipcRenderer.invoke('gallery:trash-preview', ids),
     trashSelected: (ids) => ipcRenderer.invoke('gallery:trash-selected', ids),

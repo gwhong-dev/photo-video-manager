@@ -52,7 +52,8 @@ const { isTagKind, normalizeTagEdit, planTagEdit, toTagPreview, cleanTagName, cl
 const { readCleanHistory, cleanedFolders, cleanedDirOf } = require('./lib/clean-history');
 const { rotateFile, rotateKind, TURNS } = require('./lib/media-edit');
 const fileTags = require('./lib/file-tags');
-const { probeVideo } = require('./lib/tools');
+const { probeVideo, sameVideoHash } = require('./lib/tools');
+const sameVideo = require('./lib/same-video');
 
 const SCHEME = 'pvm';
 const TABS = ['all', 'photo', 'video', 'screenshot'];
@@ -1224,25 +1225,28 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   });
 
   // 버리기 미리보기: 몇 장이 휴지통으로, 몇 장이 _정리완료원본으로 가는지 (아무것도 옮기지 않아요)
-  ipcMain.handle('gallery:similar-preview', async (e, ids) => {
+  //   whole = 화면에서 "모두 버리기"로 고른 묶음의 번호들 (한 장도 안 남는 묶음, 2026-11-24 사용자 요청. lib/similar-discard.js 가 다시 확인)
+  const similarKey = (ids, whole) => [...(Array.isArray(ids) ? ids : []), '|', ...(Array.isArray(whole) ? whole : [])];
+  ipcMain.handle('gallery:similar-preview', async (e, ids, whole) => {
     const root = editReady({ screenOk: true });
-    const { files, groups } = checkDiscard(db, root, ids);
+    const { files, groups, emptied } = checkDiscard(db, root, ids, whole);
     const info = await discardInfo(files, { driveKindOf: await previewDriveKindOf(root) }); // 미리보기는 읽어 둔 판단을 다시 써요 (위 규칙)
-    rememberPreview('similar', ids, info); // 옮기기 직전에 새 판단과 맞춰 봐요
-    return { ...info, groups, canTrash: typeof trash === 'function' };
+    rememberPreview('similar', similarKey(ids, whole), info); // 옮기기 직전에 새 판단과 맞춰 봐요
+    return { ...info, groups, emptied, canTrash: typeof trash === 'function' };
   });
 
   // 버리기 실행. 끝나면 옮긴 사진을 "사라짐"으로 적고 화면에 목록이 바뀌었다고 알려요
-  ipcMain.handle('gallery:similar-discard', async (e, ids) => {
+  ipcMain.handle('gallery:similar-discard', async (e, ids, whole) => {
     const root = editReady({ screenOk: true });
     if (discarding || filling) throw new Error('이미 옮기는 중이에요');
     if (library && library.isScanning()) throw new Error('백업 폴더를 읽는 중이에요. 끝난 뒤 다시 눌러 주세요');
-    const { files } = checkDiscard(db, root, ids);
+    const { files } = checkDiscard(db, root, ids, whole);
     discarding = true;
     try {
       const noTrash = async () => { throw new Error('휴지통을 쓸 수 없어요'); };
       const fresh = makeDriveKindOf(); // 옮길 때는 늘 새로 확인해요
-      await recheckPreview('similar', ids, files, fresh); // 확인 창과 달라졌으면 옮기지 않아요
+      const key = similarKey(ids, whole); // 확인 창을 열 때와 같은 열쇠
+      await recheckPreview('similar', key, files, fresh); // 확인 창과 달라졌으면 옮기지 않아요
       const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: fresh, logger, ...screenLog(root) });
       // DB에 적다가 실패해도 옮긴 결과는 알려요 (다음에 백업 폴더를 읽으면 "사라짐"으로 맞춰져요)
       if (r.done.length) {
@@ -1258,6 +1262,111 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
     } finally {
       discarding = false;
       warmPreviewDrive(root, { forget: true }); // 휴지통 크기가 바뀌었어요 → 다음 미리보기용으로 뒤에서 새로 읽어요
+    }
+  });
+
+  // ---------- 같은 영상 (비슷한 사진 화면의 "같은 영상" 묶음, 2026-11-24 사용자 요청, lib/same-video.js) ----------
+  //   두 번 저장된 같은 영상(IMG_0001.MP4 · IMG_0001_1.MP4)을 찾아 꼬리 붙은 쪽을 휴지통으로 (없으면 _정리완료원본)
+  //   후보(같은 폴더 · 확장자 · 가로 × 세로 · 크기 5% 안)만 화면 데이터 지문을 한 개씩 계산해요 (영상 전체를 읽어서 오래 걸려요)
+  //   가져오기 중이거나 폴더가 바뀌면 멈춰요 (화면을 다시 열면 이어서). 진행은 gallery:same-video-progress 로 알려요
+  //   옮기기 직전에 버릴 영상과 남길 영상의 지문을 다시 계산해서 둘 다 같을 때만 옮겨요 (makeVerify)
+  let videoHashing = false;
+  let videoHashIdle = 0; // 한 개도 못 만들고 멈춘 시각: 1분 동안 다시 시작하지 않아요 (화면이 다시 부르고 또 멈추는 반복 막기)
+  const ffmpegPath = () => {
+    const t = getTools();
+    return t && t.ffmpeg && t.ffmpeg.ok ? t.ffmpeg.path : null;
+  };
+  const hashVideo = (file) => sameVideoHash(ffmpegPath(), file); // 화면 + 소리 + 회전 표시 (lib/tools.js)
+  // 옮기기 · 채우기 · 태그 쓰기 중에는 지문을 만들지 않아요 (FFmpeg 가 파일을 잡고 있으면 휴지통 옮기기가 실패할 수 있어서)
+  const editing = () => discarding || filling || tagWriting;
+  async function startVideoHashing(root) {
+    if (videoHashing || closed || !root || busy() || editing()) return;
+    if (!ffmpegPath() || !isDir(root) || Date.now() - videoHashIdle < 60000) return;
+    const todo = sameVideo.pendingRows(db.videoRows(root));
+    if (!todo.length) return;
+    videoHashing = true;
+    let done = 0;
+    const tell = () => send('gallery:same-video-progress', { done, total: todo.length, hashing: videoHashing });
+    try {
+      tell();
+      for (const r of todo) {
+        // 백업 폴더가 빠졌으면 "실패"로 적지 않고 멈춰요 (다시 꽂으면 다시 계산)
+        if (closed || busy() || editing() || rootNow() !== root || !isDir(root)) break;
+        const hash = await hashVideo(r.path);
+        if (closed) break;
+        if (!hash && !isDir(root)) break;
+        db.setVideoHash(r.path, r.size, r.mtimeMs, hash);
+        done++;
+        if (done % 5 === 0) tell();
+      }
+    } catch (e) {
+      errorLog('같은 영상 지문 만들기', e);
+    } finally {
+      videoHashing = false;
+      videoHashIdle = done === 0 ? Date.now() : 0;
+      if (!closed) {
+        try {
+          tell(); // hashing: false → 화면이 목록을 다시 받아요
+        } catch (e) { /* 끄는 중 */ }
+      }
+    }
+  }
+
+  // 묶음 목록 → { groups: [{ ids, keepId, files: [{ id, name, width, height, size, takenAt }] }], pending: 지문을 아직 안 만든 후보 수, hashing, noFfmpeg }
+  //   파일 경로는 화면에 주지 않아요
+  ipcMain.handle('gallery:same-video-list', () => {
+    const root = editReady({ screenOk: true });
+    startVideoHashing(root).catch((e) => errorLog('같은 영상 지문 만들기', e));
+    const rows = db.videoRows(root);
+    const groups = sameVideo.buildVideoGroups(rows).map((g) => ({
+      ids: g.ids,
+      keepId: g.keepId,
+      files: g.files.map((r) => ({ id: r.id, name: r.name, width: r.width, height: r.height, size: r.size, takenAt: r.takenAt })),
+    }));
+    const pending = sameVideo.pendingRows(rows).length;
+    const t = getTools(); // 아직 찾는 중이면 null → "FFmpeg 없음"을 띄우지 않아요
+    return { groups, pending, hashing: videoHashing, noFfmpeg: !!t && !(t.ffmpeg && t.ffmpeg.ok) && pending > 0 };
+  });
+
+  // 옮기기 미리보기: 몇 개가 휴지통으로, 몇 개가 _정리완료원본으로 가는지 (아무것도 옮기지 않아요)
+  ipcMain.handle('gallery:same-video-preview', async (e, ids) => {
+    const root = editReady({ screenOk: true });
+    const { files, groups } = sameVideo.checkSameVideo(db, root, ids);
+    const info = await discardInfo(files, { driveKindOf: await previewDriveKindOf(root) });
+    rememberPreview('video', ids, info); // 옮기기 직전에 새 판단과 맞춰 봐요
+    return { ...info, groups, canTrash: typeof trash === 'function' };
+  });
+
+  // 옮기기 실행. 끝나면 옮긴 영상을 "사라짐"으로 적고 화면에 목록이 바뀌었다고 알려요
+  ipcMain.handle('gallery:same-video-discard', async (e, ids) => {
+    const root = editReady({ screenOk: true });
+    if (discarding || filling) throw new Error('이미 옮기는 중이에요');
+    if (library && library.isScanning()) throw new Error('백업 폴더를 읽는 중이에요. 끝난 뒤 다시 눌러 주세요');
+    if (!ffmpegPath()) throw new Error('FFmpeg 가 없어서 같은 영상인지 다시 확인할 수 없어요. 아무것도 옮기지 않았어요');
+    const { files } = sameVideo.checkSameVideo(db, root, ids);
+    discarding = true;
+    try {
+      const noTrash = async () => { throw new Error('휴지통을 쓸 수 없어요'); };
+      const fresh = makeDriveKindOf(); // 옮길 때는 늘 새로 확인해요
+      await recheckPreview('video', ids, files, fresh); // 확인 창과 달라졌으면 옮기지 않아요
+      const r = await discardFiles({
+        root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: fresh, logger,
+        logKind: 'same-video', logTitle: '같은 영상 정리', ...screenLog(root),
+        verify: sameVideo.makeVerify(hashVideo), // 지문을 옮기기 직전에 다시 계산
+      });
+      if (r.done.length) {
+        try {
+          db.setMissing(r.done, 1);
+        } catch (err) {
+          errorLog('같은 영상 사라짐 표시', err);
+        }
+      }
+      countScreenRemoved(root, r);
+      send('gallery:library-changed');
+      return { trashed: r.trashed, moved: r.moved, fail: r.fail, logFail: r.logFail, logName: path.basename(r.logPath || '') };
+    } finally {
+      discarding = false;
+      warmPreviewDrive(root, { forget: true });
     }
   });
 

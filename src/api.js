@@ -50,12 +50,17 @@ export const api = {
   listSimilar: () => gallery().listSimilar(),
   keepAllSimilar: (ids) => gallery().keepAllSimilar(ids), // "모두 남기기"를 다음 실행에도 기억
   clearSimilarKeeps: () => gallery().clearSimilarKeeps(),
-  previewDiscard: (ids) => gallery().previewDiscard(ids),
-  discardSimilar: (ids) => gallery().discardSimilar(ids),
+  previewDiscard: (ids, whole) => gallery().previewDiscard(ids, whole || []), // whole = 모두 버리는 묶음의 번호 (2026-11-24)
+  discardSimilar: (ids, whole) => gallery().discardSimilar(ids, whole || []),
   previewTrash: (ids) => gallery().previewTrash(ids), // 갤러리에서 고른 사진 휴지통으로: 미리보기
   trashSelected: (ids) => gallery().trashSelected(ids), // 갤러리에서 고른 사진 휴지통으로: 옮기기
   previewRotate: (id) => gallery().previewRotate(id), // 돌리기: 미리보기 (원본 바꾸기면 어디로 옮기는지)
   rotate: (id, turn, mode) => gallery().rotate(id, turn, mode), // 돌리기: 실행 (mode 'copy' | 'replace')
+  // 같은 영상 (두 번 저장된 영상, 2026-11-24)
+  listSameVideo: () => gallery().listSameVideo(),
+  previewSameVideo: (ids) => gallery().previewSameVideo(ids),
+  discardSameVideo: (ids) => gallery().discardSameVideo(ids),
+  onSameVideoProgress: (cb) => gallery().onSameVideoProgress(cb),
   onSimilarProgress: (cb) => gallery().onSimilarProgress(cb),
   aiState: () => gallery().aiState(),
   aiDownload: () => gallery().aiDownload(),

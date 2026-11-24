@@ -8,6 +8,8 @@
 //   다 골랐으면 위쪽 "이 묶음에서 버릴 N장 옮기기" 또는 Delete → 이 창을 닫고 비슷한 사진 화면의 같은 확인 창을 열어요
 //     (2026-11-21 사용자 요청 "선택 완료됐으면 삭제도 바로 가능하게")
 //   원본 사진은 pvm://original/<id> (못 그리는 형식 · 못 읽으면 pvm://preview/<id> 1200px 로 대신)
+//   원본(수 MB)을 다 읽고 풀 때까지는 이미 받아 둔 썸네일을 같은 자리에 크게 깔아 둬요
+//     (원본을 바로 그리면 열 때 · 넘길 때 화면이 잠깐 멈췄어요, 2026-11-24 사용자 요청 "크게 보기 열 때 버벅임")
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { formatCount, formatTakenAt } from '../format.mjs';
@@ -22,13 +24,16 @@ function Pane({ file, view, onView, label, mark, onMark, pinned, openedAt = 0 })
   const boxRef = useRef(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [nat, setNat] = useState(() => ({ w: file.width || 0, h: file.height || 0 }));
-  const [src, setSrc] = useState(`pvm://original/${file.id}`);
+  // 어느 사진의 원본을 못 그렸는지 · 다 풀었는지를 번호로 기억해요 → 사진이 바뀐 첫 화면부터 바로 맞아요 (#150 검증 ⚠️)
+  const [failedId, setFailedId] = useState(null); // 원본을 못 그려 미리보기(1200px)로 대신하는 사진
+  const [readyId, setReadyId] = useState(null); // 원본(또는 미리보기)을 다 푼 사진 → 그 전엔 썸네일을 보여 줘요
+  const src = failedId === file.id ? `pvm://preview/${file.id}` : `pvm://original/${file.id}`;
+  const ready = readyId === file.id;
   const drag = useRef(null);
   const latest = useRef({ view, nat, box, onView });
   latest.current = { view, nat, box, onView };
 
   useEffect(() => {
-    setSrc(`pvm://original/${file.id}`);
     setNat({ w: file.width || 0, h: file.height || 0 });
   }, [file.id, file.width, file.height]);
 
@@ -87,6 +92,9 @@ function Pane({ file, view, onView, label, mark, onMark, pinned, openedAt = 0 })
           onView(toggleActual(view, nat, box, { x: e.clientX - r.left, y: e.clientY - r.top }));
         }}
       >
+        {box.w > 0 && !ready && (
+          <img key={`ph-${file.id}`} className="compare-img" src={`pvm://thumb/${file.id}`} alt="" draggable="false" style={style} />
+        )}
         {box.w > 0 && (
           <img
             key={file.id}
@@ -94,12 +102,19 @@ function Pane({ file, view, onView, label, mark, onMark, pinned, openedAt = 0 })
             src={src}
             alt=""
             draggable="false"
+            decoding="async"
             style={style}
             onLoad={(e) => {
               const t = e.currentTarget;
+              const id = file.id;
               if (t.naturalWidth && t.naturalHeight) setNat({ w: t.naturalWidth, h: t.naturalHeight });
+              // 다 푼 뒤에 썸네일을 치워요 (받기만 하고 아직 안 풀었을 때 치우면 잠깐 빈 칸이 보여요)
+              const done = () => { if (t.isConnected && t.dataset.id === String(id)) setReadyId(id); };
+              if (typeof t.decode === 'function') t.decode().then(done, done);
+              else done();
             }}
-            onError={() => setSrc((cur) => (cur.startsWith('pvm://original/') ? `pvm://preview/${file.id}` : cur))}
+            onError={() => setFailedId(file.id)}
+            data-id={file.id}
           />
         )}
         {!keep && <span className="similar-x compare-x" aria-hidden="true" />}
@@ -121,7 +136,6 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
   const [pinned, setPinned] = useState(null);
   const [current, setCurrent] = useState(() => (group.ids.includes(startId) ? startId : group.keepId ?? group.ids[0]));
   const [view, setView] = useState(FIT_VIEW);
-  const [note, setNote] = useState('');
   const rootRef = useRef(null);
   const [openedAt] = useState(() => Date.now()); // 열린 시각 (Pane 더블클릭 무시에 써요)
   const fileOf = useCallback((id) => group.files.find((f) => f.id === id), [group]);
@@ -137,19 +151,14 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
 
   const decide = (want) => {
     if (current === null || current === undefined) return;
+    // 마지막 남김도 버림으로 바꿀 수 있어요 (2026-11-24 사용자 요청)
     const r = setMark(group, current, want, overrides);
-    if (r.refused) {
-      setNote('묶음마다 한 장은 남겨요. 다른 사진을 먼저 남김으로 바꿔 주세요.');
-      return;
-    }
-    setNote('');
     onOverrides(r.overrides);
     setCurrent(afterDecide(ids, current));
   };
   const pin = () => {
     if (current === null || current === undefined) return;
     onOverrides(pinBest(group, current, overrides));
-    setNote('');
     const rest = browseIds(group, current);
     setPinned(current);
     // 오른쪽에는 고정한 사진 다음 사진부터 (없으면 첫 사진)
@@ -159,11 +168,7 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
   const toggleOf = (id) => () => {
     const want = markOf(group, id, overrides) === 'keep' ? 'discard' : 'keep';
     const r = setMark(group, id, want, overrides);
-    if (r.refused) setNote('묶음마다 한 장은 남겨요. 다른 사진을 먼저 남김으로 바꿔 주세요.');
-    else {
-      setNote('');
-      onOverrides(r.overrides);
-    }
+    onOverrides(r.overrides);
   };
 
   // 키: ←/→ 넘기기, Space 고정, ↑ 버림, ↓ 남김, Esc 닫기 (창이 열린 동안 다른 화면 키로 가지 않게 막아요)
@@ -229,7 +234,6 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
           {onReview && gone > 0 && <button type="button" className="primary compare-review" onClick={review}>{groupReviewLabel(gone)}</button>}
         </span>
       </div>
-      {note && <p className="compare-note" role="status">{note}</p>}
       <div className={`compare-panes${pin1 ? ' two' : ''}`}>
         {pin1 && (
           <Pane key={`pin-${pin1.id}`} file={pin1} view={view} onView={setView} label="고정한 사진" mark={markOf(group, pin1.id, overrides)} onMark={toggleOf(pin1.id)} pinned openedAt={openedAt} />

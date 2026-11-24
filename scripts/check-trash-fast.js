@@ -108,6 +108,9 @@ const items = [
           pv.every((b) => /previewDriveKindOf\(root\)/.test(b) && !/makeDriveKindOf\(\)/.test(b) && /rememberPreview\(/.test(b))
             && mv.every((b) => /const fresh = makeDriveKindOf\(\)/.test(b) && /recheckPreview\([^)]*fresh\)/.test(b) && /driveKindOf: fresh/.test(b) && !/previewDriveKindOf/.test(b) && /warmPreviewDrive\(root, \{ forget: true \}\)/.test(b))
             && /warmPreviewDrive\(root\)/.test(block('gallery:get-state'))));
+        // #144 검증 ⚠️5: 비슷한 사진 미리보기 · 옮기기가 같은 열쇠(번호 + 모두 버리는 번호)로 맞춰 봄
+        out.push(sub('62d 비슷한 사진 미리보기 · 옮기기 모두 similarKey(ids, whole) 로 기억 · 다시 맞춰 봄',
+          [block('gallery:similar-preview'), block('gallery:similar-discard')].every((b) => /similarKey\(ids, whole\)/.test(b))));
         out.push(sub('62d 확인 창: 버튼 글자에 고른 장수, Delete 는 dialogDeleteAction 만(미리 눌러 둔 것을 나중에 옮기지 않음), 처음 초점은 그만두기',
           /trashLabel\(info, error \? 0 : ids\.length\)/.test(dlg) && /dialogDeleteAction\(e,/.test(dlg) && !/queuedDeleteGoes|wantRef/.test(dlg) && /cancelRef\.current\.focus\(\)/.test(dlg)));
       }
