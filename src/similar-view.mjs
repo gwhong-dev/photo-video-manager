@@ -35,6 +35,9 @@ export function toggleMark(group, id, overrides) {
   const next = new Map(overrides || []);
   const now = markOf(group, id, overrides);
   next.set(id, now === 'keep' ? 'discard' : 'keep');
+  // 마지막 남김을 버림으로 바꾸면 사용자가 묶음 전체를 고른 것: 자동 버림도 사용자가 고른 버림으로 적어 둬요
+  //   (안 그러면 자동 버림이 섞여 "모두 버리기"로 안 보여 그 묶음이 조용히 빠져요, 검증 ⚠️4)
+  if (now === 'keep' && group.ids.every((x) => markOf(group, x, next) !== 'keep')) for (const x of group.ids) next.set(x, 'discard');
   return { overrides: next, refused: false };
 }
 

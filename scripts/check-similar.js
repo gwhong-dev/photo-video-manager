@@ -581,6 +581,13 @@ const items = [
             && JSON.stringify(V.discardIds([g2], new Map([[7, 'discard'], [8, 'discard']]))) === '[7,8]'
             && V.pinMarks([g, g2], pinned) === pinned,
           JSON.stringify([...pinned])));
+        // #144 검증 ⚠️4: 처음 표시(자동 버림)가 섞인 묶음에서 마지막 남김을 버림으로 바꾸면 묶음이 조용히 빠졌음
+        const lastOff = V.toggleMark(g, 2, pinned).overrides; // 2 = 처음 표시의 유일한 남김
+        const viaSet = V.setMark(g, 2, 'discard', pinned).overrides; // 비교 창 ↑ 버림도 같은 길
+        out.push(sub('37a 자동 버림이 섞인 묶음에서 마지막 남김을 버림으로 → 묶음 전체가 사용자가 고른 버림(버릴 번호 · whole 에 모두)',
+          [lastOff, viaSet].every((m) => JSON.stringify(V.discardIds([g], m)) === '[1,2,3]' && JSON.stringify(V.wholeIds([g], m)) === '[1,2,3]')
+            && lastOff.get(8) === 'auto-keep',
+          JSON.stringify([...lastOff])));
         // 검증 지적: 화면에 30개만 보이는데 안 본 묶음의 사진도 버림에 들어갔음
         out.push(sub('37a 아직 화면에 안 보인 묶음의 사진은 버리지 않음',
           JSON.stringify(V.discardIds([g, g2], V.pinMarks([g], new Map()))) === JSON.stringify([1, 3])
