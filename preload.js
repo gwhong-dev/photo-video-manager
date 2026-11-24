@@ -104,8 +104,8 @@ contextBridge.exposeInMainWorld('api', {
     listSimilar: () => ipcRenderer.invoke('gallery:similar-list'),
     keepAllSimilar: (ids) => ipcRenderer.invoke('gallery:similar-keep-all', ids),
     clearSimilarKeeps: () => ipcRenderer.invoke('gallery:similar-clear-keeps'),
-    previewDiscard: (ids) => ipcRenderer.invoke('gallery:similar-preview', ids),
-    discardSimilar: (ids) => ipcRenderer.invoke('gallery:similar-discard', ids),
+    previewDiscard: (ids, whole) => ipcRenderer.invoke('gallery:similar-preview', ids, whole || []),
+    discardSimilar: (ids, whole) => ipcRenderer.invoke('gallery:similar-discard', ids, whole || []),
     onSimilarProgress: (cb) => subscribe('gallery:similar-progress', cb),
     // 갤러리에서 고른 사진 휴지통으로: 미리보기(몇 장이 어디로, 아무것도 옮기지 않음), 옮기기 (id로만)
     previewTrash: (ids) => ipcRenderer.invoke('gallery:trash-preview', ids),
