@@ -1,8 +1,9 @@
 # 파일 위치: .github/workflows/electron-cache.yml
-# 역할: main에 Electron 받은 파일 캐시를 채워요. 모든 PR의 점검(check.yml)이 이 캐시를 꺼내 써요 (#54 검증)
+# 역할: main에 Electron 받은 파일 · 외부 도구(exiftool, FFmpeg) 캐시를 채워요. 모든 PR의 점검(check.yml)이 이 캐시를 꺼내 써요 (#54 검증)
 #   PR에서 저장한 캐시는 그 PR에서만 보여서, 새 PR마다 github.com에서 Electron을 다시 받았어요
 #   점검은 하지 않아요
-# 언제 돌까: main에 package-lock.json 이나 이 파일이 바뀌어 들어왔을 때, 또는 손으로 (Actions 화면의 Run workflow)
+# 언제 돌까: main에 package-lock.json · 이 파일 · 외부 도구 준비 스크립트가 바뀌어 들어왔을 때, 또는 손으로 (Actions 화면의 Run workflow)
+#   외부 도구 버전을 올릴 땐 check.yml 의 EXIFTOOL_VERSION · FFMPEG_VERSION 과 같은 값으로 같이 바꿔요
 
 name: Electron 캐시 채우기
 
@@ -13,6 +14,7 @@ on:
     paths:
       - package-lock.json
       - .github/workflows/electron-cache.yml
+      - .github/scripts/install-tools.ps1
   workflow_dispatch:
 
 permissions:
@@ -22,10 +24,13 @@ jobs:
   fill:
     runs-on: windows-latest
     timeout-minutes: 15
+    env:
+      EXIFTOOL_VERSION: '13.64'
+      FFMPEG_VERSION: '9.1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
           cache: npm
@@ -33,7 +38,7 @@ jobs:
       # check.yml 과 같은 경로와 열쇠여야 PR이 꺼내 쓸 수 있어요
       - name: Electron 받은 파일 꺼내기
         id: electron-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ runner.temp }}/electron-cache
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -54,7 +59,28 @@ jobs:
 
       - name: Electron 받은 파일 저장
         if: steps.electron-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ${{ runner.temp }}/electron-cache
           key: ${{ steps.electron-cache.outputs.cache-primary-key }}
+
+      # 외부 도구도 check.yml 과 같은 경로와 열쇠로 채워요 (Chocolatey 고장으로 점검이 실패하지 않게, 2026-11-24)
+      - name: 외부 도구 꺼내기
+        id: tools-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/tools
+          key: tools-${{ runner.os }}-exiftool-${{ env.EXIFTOOL_VERSION }}-ffmpeg-${{ env.FFMPEG_VERSION }}
+
+      - name: 외부 도구 받기
+        id: tools
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: ./.github/scripts/install-tools.ps1 -ToolsDir "${{ runner.temp }}/tools" -ExiftoolVersion $env:EXIFTOOL_VERSION -FfmpegVersion $env:FFMPEG_VERSION
+
+      - name: 외부 도구 저장
+        if: steps.tools-cache.outputs.cache-hit != 'true' && steps.tools.outputs.complete == 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/tools
+          key: ${{ steps.tools-cache.outputs.cache-primary-key }}

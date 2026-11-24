@@ -15,28 +15,46 @@ jobs:
   check:
     runs-on: windows-latest
     timeout-minutes: 30
+    # 외부 도구 버전 (electron-cache.yml 과 같은 값이어야 PR 이 main 의 캐시를 꺼내 써요)
+    env:
+      EXIFTOOL_VERSION: '13.64'
+      FFMPEG_VERSION: '9.1'
+    # 부품은 Node 24 로 도는 v5 (v4 는 "Node 20 은 곧 지원 끝" 경고가 나와요)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
           cache: npm
 
-      - name: 외부 도구 설치 (exiftool, FFmpeg, ImageMagick)
+      # 외부 도구: Chocolatey 서버 고장(503)으로 점검이 통째로 실패해서 (2026-11-24 7번),
+      #   공식 배포 파일을 버전을 정해 받고 캐시에 둬요. 자세한 건 .github/scripts/install-tools.ps1
+      - name: 외부 도구 꺼내기
+        id: tools-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/tools
+          key: tools-${{ runner.os }}-exiftool-${{ env.EXIFTOOL_VERSION }}-ffmpeg-${{ env.FFMPEG_VERSION }}
+
+      - name: 외부 도구 준비 (exiftool, FFmpeg, ImageMagick)
+        id: tools
         shell: pwsh
-        run: |
-          choco install exiftool ffmpeg imagemagick -y --no-progress
-          # ImageMagick은 다음 단계부터 찾을 수 있게 위치를 직접 알려 줘요
-          $dir = Get-ChildItem 'C:\Program Files\ImageMagick*' -Directory | Select-Object -First 1
-          $dir.FullName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        run: ./.github/scripts/install-tools.ps1 -ToolsDir "${{ runner.temp }}/tools" -ExiftoolVersion $env:EXIFTOOL_VERSION -FfmpegVersion $env:FFMPEG_VERSION
+
+      - name: 외부 도구 저장
+        if: steps.tools-cache.outputs.cache-hit != 'true' && steps.tools.outputs.complete == 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/tools
+          key: ${{ steps.tools-cache.outputs.cache-primary-key }}
 
       # Electron 받은 파일 꺼내기: npm ci가 매번 github.com에서 Electron(약 100MB)을 받다가 504로 실패한 적이 있어요 (#52, #53)
       #   PR에서 저장한 캐시는 그 PR에서만 보여요. 모든 PR이 같이 쓰는 캐시는 main에서 electron-cache.yml 이 채워요 (#54 검증)
       #   package-lock.json이 바뀌면 열쇠가 달라져서 새로 받아요
       - name: Electron 받은 파일 꺼내기
         id: electron-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ runner.temp }}/electron-cache
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -58,7 +76,7 @@ jobs:
       # 새로 받았으면 npm ci 바로 뒤에 저장해요 (점검이 실패해도 다음 push 때 다시 받지 않게)
       - name: Electron 받은 파일 저장
         if: steps.electron-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ${{ runner.temp }}/electron-cache
           key: ${{ steps.electron-cache.outputs.cache-primary-key }}
