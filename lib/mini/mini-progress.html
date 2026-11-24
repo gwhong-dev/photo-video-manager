@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <!-- 작은 진행 창: 큰 창을 최소화하면 오른쪽 아래에 떠요 (main.js "작은 진행 창", 글자는 lib/mini-progress.js 가 만들어요) -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+  <title>진행 상황</title>
+  <style>
+    /* 가져오기 화면처럼 밝은 색으로 고정 */
+    :root {
+      --win: #FFFFFF; --fg: #1F1E1B; --sub: #6B675E; --line: #E2DFD8;
+      --run: #2E9B5B; --pause: #D99A1E; --err: #D2453A; --track: #ECEAE4;
+      --btn: #F4F3EF; --btn-line: #D5D2CA;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--win); color: var(--fg); overflow: hidden; user-select: none;
+      font: 13px "IBM Plex Sans KR", "Malgun Gothic", system-ui, sans-serif; }
+    .box { border: 1px solid var(--line); width: 340px; }
+    .drag { -webkit-app-region: drag; }
+    button { -webkit-app-region: no-drag; font: inherit; color: var(--fg); cursor: pointer; }
+    [hidden] { display: none !important; }
+
+    /* 자세히 */
+    .head { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px 7px 12px; border-bottom: 1px solid var(--line); font-weight: 600; }
+    .tog { border: 0; background: none; color: var(--sub); font-size: 12px; padding: 2px 4px; }
+    .tog:hover { color: var(--fg); }
+    .body { padding: 12px; display: grid; gap: 8px; cursor: pointer; }
+    .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; }
+    .pct { font-size: 22px; font-weight: 600; }
+    .sub { color: var(--sub); font-size: 12px; }
+    .bar { height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; }
+    .bar > i { display: block; height: 100%; width: 0; background: var(--run); transition: width .2s; }
+    .bar.paused > i { background: var(--pause); }
+    .bar.error > i { background: var(--err); }
+    .counts { display: flex; gap: 14px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+    .file { color: var(--sub); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .msg { color: var(--sub); font-size: 12px; line-height: 1.5; }
+    .btns { display: flex; gap: 8px; justify-content: flex-end; padding-top: 4px; }
+    .btn { border: 1px solid var(--btn-line); background: var(--btn); border-radius: 5px; padding: 5px 10px; font-size: 12px; }
+    .btn:hover { border-color: #B9B5AB; }
+    .btn:disabled { color: var(--sub); cursor: default; }
+    .btn.main { background: var(--run); border-color: var(--run); color: #fff; }
+    .done { color: var(--run); font-weight: 600; font-size: 18px; }
+    .done.error { color: var(--err); }
+
+    /* 간단히 = 한 줄 */
+    .line { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; width: 420px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .line .bar { flex: 1; min-width: 50px; }
+    .line b { font-weight: 600; }
+    .line .txt { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .line .done { font-size: 13px; flex: none; }
+    .ic { width: 24px; height: 24px; display: inline-grid; place-items: center; border: 1px solid var(--btn-line); border-radius: 4px; background: var(--btn); font-size: 11px; padding: 0; flex: none; }
+    .ic:disabled { color: var(--sub); cursor: default; }
+  </style>
+</head>
+<body>
+  <!-- 자세히 -->
+  <div class="box" id="detail" hidden>
+    <div class="head drag"><span id="title"></span><button class="tog" id="toCompact" type="button">간단히 ▾</button></div>
+    <div class="body" id="body">
+      <div id="runPart">
+        <div class="row"><span class="pct" id="pct"></span><span class="sub" id="side"></span></div>
+        <div class="bar" id="bar"><i></i></div>
+      </div>
+      <div class="done" id="doneText"></div>
+      <div class="counts" id="counts"></div>
+      <div class="file" id="file"></div>
+      <div class="msg" id="note"></div>
+      <div class="row sub" id="speedRow"><span id="speed"></span><span id="bytes"></span></div>
+      <div class="msg" id="message"></div>
+      <div class="btns">
+        <button class="btn" id="pauseBtn" type="button">일시정지</button>
+        <button class="btn main" id="resumeBtn" type="button"></button>
+        <button class="btn" id="openBtn" type="button">큰 창 열기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 간단히 (한 줄) -->
+  <div class="box line drag" id="line" hidden>
+    <b id="lPct"></b>
+    <div class="bar" id="lBar"><i></i></div>
+    <span class="done" id="lDone"></span>
+    <span class="txt" id="lText"></span>
+    <button class="ic" id="lPause" type="button" title="일시정지">❚❚</button>
+    <button class="ic" id="lResume" type="button">▶</button>
+    <button class="ic" id="lOpen" type="button" title="큰 창 열기">⧉</button>
+    <button class="tog" id="toDetail" type="button">자세히 ▴</button>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const show = (id, on) => { $(id).hidden = !on; };
+    let compact = false;
+
+    function setBar(id, v) {
+      $(id).className = 'bar' + (v.phase === 'paused' ? ' paused' : v.phase === 'error' ? ' error' : '');
+      $(id).firstElementChild.style.width = (v.pct || 0) + '%';
+    }
+
+    function render(v) {
+      const ended = v.phase === 'done' || v.phase === 'error';
+      const hasPct = v.pct != null;
+      // 자세히
+      $('title').textContent = v.title;
+      show('runPart', !ended && hasPct);
+      $('pct').textContent = v.pctText;
+      $('side').textContent = v.side;
+      setBar('bar', v);
+      $('doneText').textContent = v.doneText;
+      $('doneText').className = 'done' + (v.phase === 'error' ? ' error' : '');
+      show('doneText', ended);
+      $('counts').replaceChildren(...v.counts.map((t) => Object.assign(document.createElement('span'), { textContent: t })));
+      show('counts', v.counts.length > 0);
+      $('file').textContent = v.file;
+      show('file', !!v.file);
+      $('note').textContent = v.note;
+      show('note', !ended && !!v.note);
+      $('speed').textContent = v.phase === 'paused' ? v.left : v.speed;
+      $('bytes').textContent = v.bytes;
+      show('speedRow', !ended && !!($('speed').textContent || v.bytes));
+      $('message').textContent = v.message;
+      show('message', ended && !!v.message);
+      show('pauseBtn', v.canPause || v.pausing);
+      $('pauseBtn').disabled = v.pausing;
+      $('pauseBtn').textContent = v.pausing ? '멈추는 중 (지금 파일까지)' : '일시정지';
+      show('resumeBtn', !!v.resume);
+      $('resumeBtn').textContent = v.resume;
+
+      // 간단히 (한 줄). 작업 이름은 마우스를 올리면 보여요
+      $('line').title = v.title + (v.message ? '\n' + v.message : '');
+      show('lPct', !ended && hasPct);
+      $('lPct').textContent = v.pctText;
+      show('lBar', !ended && hasPct);
+      setBar('lBar', v);
+      show('lDone', ended);
+      $('lDone').textContent = v.doneText;
+      $('lDone').className = 'done' + (v.phase === 'error' ? ' error' : '');
+      $('lText').textContent = v.lineText;
+      show('lPause', v.canPause || v.pausing);
+      $('lPause').disabled = v.pausing;
+      $('lPause').title = v.pausing ? '멈추는 중 (지금 파일까지)' : '일시정지';
+      show('lResume', !!v.resume);
+      $('lResume').title = v.resume;
+
+      show('detail', !compact);
+      show('line', compact);
+      const box = $(compact ? 'line' : 'detail').getBoundingClientRect();
+      window.mini.fit(Math.ceil(box.width), Math.ceil(box.height));
+    }
+
+    window.mini.onState((data) => {
+      if (!data || !data.view) return;
+      compact = !!data.compact;
+      render(data.view);
+    });
+
+    // 버튼. 창 아무 곳(자세히의 아래쪽)을 눌러도 큰 창이 열려요
+    $('body').onclick = (e) => { if (!e.target.closest('button')) window.mini.openMain(); };
+    $('openBtn').onclick = $('lOpen').onclick = () => window.mini.openMain();
+    $('pauseBtn').onclick = $('lPause').onclick = () => window.mini.pause();
+    $('resumeBtn').onclick = $('lResume').onclick = () => window.mini.resume();
+    $('toCompact').onclick = () => window.mini.setCompact(true);
+    $('toDetail').onclick = () => window.mini.setCompact(false);
+  </script>
+</body>
+</html>

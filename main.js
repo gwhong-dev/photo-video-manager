@@ -6,7 +6,7 @@
 //   바로 끝내요. 대화상자는 사용자 화면에서 점검을 멈춰 세워요. 다른 require보다 먼저 있어야 해요
 if (process.env.PVM_USER_DATA) process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
 
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, session, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -43,6 +43,7 @@ const { writePlanLog, nextTodo, requeueFailed, checkSpace, runBatch, DEFAULT_CON
 const { createMemoryGuard, lowMessage } = require('./lib/memory-guard');
 const { setupGallery, registerScheme } = require('./gallery-main');
 const { screenConflict, defaultTagName, importTagOf, isFirstRun, tagTargets } = require('./lib/import-screening');
+const mini = require('./lib/mini-progress');
 
 // ---------- 상태 ----------
 let win = null;
@@ -64,7 +65,8 @@ const logDir = () => path.join(userDir(), 'logs');
 
 // ---------- 설정 저장/불러오기 ----------
 // mapTileUrl, placeSearchUrl: 지도 그림과 장소 검색 서버 주소. 비워 두면 기본 주소를 써요 (https 만. 화면에는 설정 칸이 없고 settings.json 에서 바꿔요)
-const DEFAULTS = { source: '', backupRoot: '', includeSub: true, batchSize: 2000, exiftool: '', magick: '', ffmpeg: '', mapTileUrl: '', placeSearchUrl: '' };
+const DEFAULTS = { source: '', backupRoot: '', includeSub: true, batchSize: 2000, exiftool: '', magick: '', ffmpeg: '', mapTileUrl: '', placeSearchUrl: '', miniCompact: false };
+// miniCompact: 작은 진행 창(큰 창을 최소화하면 뜨는 창)을 "간단히(한 줄)"로 볼지. 작은 창의 "간단히 ▾ / 자세히 ▴"로 바뀌어요
 
 function loadSettings() {
   try {
@@ -223,7 +225,152 @@ function createWindow() {
     });
     if (r === 0) e.preventDefault();
   });
+
+  // 작은 진행 창: 작업 중에 최소화하면 오른쪽 아래에 띄우고, 큰 창을 다시 열면 숨겨요
+  win.on('minimize', () => {
+    if (miniState) showMini();
+  });
+  win.on('restore', () => {
+    hideMini();
+    // 끝 · 일시정지 · 멈춤 결과는 큰 창에서 봤으니 지워요 (다음에 최소화해도 옛 결과가 뜨지 않게)
+    if (miniState && miniState.phase !== 'running') setMini(null);
+  });
+  // 큰 창이 닫히면 작은 창도 닫아요 (남아 있으면 프로그램이 끝나지 않아요)
+  win.on('closed', () => {
+    if (miniWin && !miniWin.isDestroyed()) miniWin.destroy();
+    miniWin = null;
+  });
 }
+
+// ---------- 작은 진행 창 (큰 창을 최소화하면 오른쪽 아래에 떠요) ----------
+//   글자 · 작업 표시줄 막대는 lib/mini-progress.js 가 만들어요. 작은 창은 글자를 넣기만 해요
+//   가져오기 실행 · 원본 확인 · 원본 정리에서 써요. 저절로 닫히지 않고 끝난 결과를 남겨 둬요
+const MINI_FILE = path.join(__dirname, 'lib', 'mini', 'mini-progress.html');
+let miniWin = null;
+let miniState = null; // 지금 작업 상태 (작업이 없으면 null)
+let miniTimer = null; // 진행 알림은 파일마다 와서 0.2초에 한 번만 그려요
+let lastBatchN = 2000; // 이어서 실행할 개수를 셀 때 쓰는 회차 크기 (마지막 run-batch 값)
+
+function createMiniWindow() {
+  const area = screen.getDisplayMatching(win.getNormalBounds()).workArea;
+  miniWin = new BrowserWindow({
+    ...mini.cornerOf(area, 340, 200),
+    show: false,
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    backgroundColor: '#FFFFFF',
+    title: '진행 상황',
+    webPreferences: { preload: path.join(__dirname, 'lib', 'mini', 'mini-preload.js'), spellcheck: false },
+  });
+  guardWindow(miniWin.webContents, [MINI_FILE], (kind, url) => {
+    try { logger.newLog('window-guard', `작은 창 ${kind} 막음: ${String(url).slice(0, 200)}`); } catch (e) { /* 로그를 못 써도 막기는 그대로예요 */ }
+  });
+  miniWin.webContents.on('did-finish-load', () => flushMini());
+  miniWin.once('ready-to-show', () => {
+    if (miniWin && !miniWin.isDestroyed() && miniState && win && !win.isDestroyed() && win.isMinimized()) miniWin.showInactive();
+  });
+  miniWin.on('closed', () => { miniWin = null; });
+  miniWin.loadFile(MINI_FILE);
+}
+
+// 큰 창을 최소화했을 때 부르면 작은 창을 띄워요 (작업이 없으면 flushMini 가 숨겨 둬요)
+function showMini() {
+  flushMini();
+}
+
+function hideMini() {
+  if (miniWin && !miniWin.isDestroyed() && miniWin.isVisible()) miniWin.hide();
+}
+
+function setMini(next) {
+  miniState = next;
+  if (!miniTimer) miniTimer = setTimeout(flushMini, 200);
+}
+
+// 작업이 끝났을 때: 최소화돼 있으면 결과를 남기고, 큰 창을 보고 있으면 바로 지워요
+function endMini(next) {
+  setMini(win && !win.isDestroyed() && win.isMinimized() ? next : null);
+}
+
+function flushMini() {
+  if (miniTimer) clearTimeout(miniTimer);
+  miniTimer = null;
+  if (win && !win.isDestroyed()) {
+    const t = mini.taskbar(miniState);
+    win.setProgressBar(t.value, { mode: t.mode });
+  }
+  if (!miniState) {
+    hideMini();
+    return;
+  }
+  // 작은 창은 큰 창을 최소화했을 때만 보여요
+  if (!win || win.isDestroyed() || !win.isMinimized()) return;
+  if (!miniWin || miniWin.isDestroyed()) {
+    createMiniWindow(); // 다 읽으면 did-finish-load 에서 글자를, ready-to-show 에서 창을 띄워요
+    return;
+  }
+  miniWin.webContents.send('mini:state', { view: mini.view(miniState), compact: !!(settings && settings.miniCompact) });
+  // 다른 프로그램을 쓰는 중이니 초점은 가져오지 않아요. 처음 읽는 중이면 ready-to-show 가 띄워요
+  if (!miniWin.isVisible() && !miniWin.webContents.isLoading()) miniWin.showInactive();
+}
+
+function openMain() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+// 작은 창이 보낸 것만 받아요 (다른 창이 같은 이름으로 보내도 무시)
+const fromMini = (e) => !!(miniWin && !miniWin.isDestroyed() && e.sender === miniWin.webContents);
+
+ipcMain.on('mini:open', (e) => {
+  if (fromMini(e)) openMain();
+});
+
+// 일시정지: 큰 창의 일시정지 버튼과 같아요 (지금 파일까지만 하고 멈춤). 큰 창 버튼도 "멈추는 중"으로 바꿔요
+ipcMain.on('mini:pause', (e) => {
+  if (!fromMini(e) || !running || !miniState || miniState.job !== 'import' || miniState.phase !== 'running') return;
+  pauseAsked = true;
+  setMini({ ...miniState, pausing: true });
+  send('mini-pause');
+});
+
+// 이어서 실행: 큰 창의 "다음 N개 실행"을 누른 것처럼 해요 (공간 확인 · 결과 안내를 큰 창이 그대로 해요)
+//   물어볼 것(공간 부족 · 80% 넘음)이 있으면 큰 창을 열어서 보이게 해요
+ipcMain.on('mini:resume', async (e) => {
+  if (!fromMini(e) || running || !job || !miniState || miniState.phase !== 'paused') return;
+  try {
+    const space = await checkSpace(nextTodo(job, lastBatchN), job.backupRoot);
+    if (space && (!space.ok || space.warning)) openMain();
+  } catch (err) {
+    openMain(); // 확인을 못 했으면 큰 창에서 보게 해요
+  }
+  send('mini-resume');
+});
+
+// 간단히(한 줄) / 자세히: 고른 모양을 설정에 기억해요
+ipcMain.on('mini:compact', (e, on) => {
+  if (!fromMini(e)) return;
+  settings.miniCompact = on === true;
+  try { saveSettings(); } catch (err) { /* 저장을 못 해도 지금 창은 바뀌어요 */ }
+  flushMini();
+});
+
+// 작은 창 크기 맞추기: 화면이 잰 크기로, 오른쪽 아래 모서리는 그대로 두고
+ipcMain.on('mini:fit', (e, w, h) => {
+  if (!fromMini(e)) return;
+  const width = Math.max(200, Math.min(480, Math.round(Number(w) || 0)));
+  const height = Math.max(30, Math.min(420, Math.round(Number(h) || 0)));
+  const b = miniWin.getBounds();
+  if (b.width === width && b.height === height) return;
+  miniWin.setBounds(mini.resizeKeepCorner(b, width, height));
+});
 
 // ---------- 화면 바꾸기 ----------
 // 시작 화면은 갤러리예요. 갤러리 화면은 Vite로 만든 dist/renderer 에 있어요 (npm start 가 먼저 만들어 줘요)
@@ -502,6 +649,8 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
       running = false;
     }
   }
+  lastBatchN = n;
+  setMini(mini.textStage(null, 'import', '시작하는 중'));
   memGuard.start(); // 실행하는 동안 1분마다 다시 재요. 위험해지면 처리 중인 파일까지만 하고 멈춰요
   // 파일 여러 개를 동시에 처리해요 (lib/runner.js). exiftool도 그 수만큼 켜서 줄 서지 않게, 끝나면 꺼요
   const runEt = tools.exiftool.ok ? new ExifToolPool(tools.exiftool.path, DEFAULT_CONCURRENCY) : et;
@@ -515,12 +664,21 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
       logger,
       concurrency: DEFAULT_CONCURRENCY,
       shouldPause: () => pauseAsked || !!memGuard.low(),
-      onProgress: (p) => send('progress', p),
+      onProgress: (p) => {
+        send('progress', p);
+        setMini(mini.importProgress(p, miniState));
+      },
     });
     const low = memGuard.low();
     // 끝난 뒤 원본 개수 세기는 몇 분 걸릴 수 있어요 → 멈춘 것처럼 보이지 않게 알려요 (끝나면 결과 글로 바뀌어요)
     send('plan-status', `이번 회차 처리 끝. 정리할 수 있는 원본 개수를 세는 중이에요 (파일이 많으면 몇 분 걸려요)`);
-    return { ...r, memoryLow: low && r.paused ? lowMessage(low) : null, job: await jobInfo() };
+    setMini(mini.textStage(miniState, 'import', '정리할 수 있는 원본 개수를 세는 중'));
+    const out = { ...r, memoryLow: low && r.paused ? lowMessage(low) : null, job: await jobInfo() };
+    endMini(mini.importEnd(miniState, out, job ? nextTodo(job, n).length : 0, out.job ? out.job.stats.todo : 0));
+    return out;
+  } catch (err) {
+    endMini(mini.failed(miniState, 'import', err));
+    throw err;
   } finally {
     memGuard.stop();
     if (runEt && runEt !== et) runEt.close();
@@ -578,6 +736,8 @@ ipcMain.handle('trash-info', async () => {
   endScreeningIfOn();
   running = true;
   infoSeq++; // 처음 켤 때 세던 원본 개수는 그만둬요 (아래 확인이 같은 파일을 다시 읽어요)
+  const checkNote = '백업 결과 파일을 확인하는 중';
+  setMini(mini.countProgress('check', {}, checkNote));
   try {
     await refuseIfMemoryLow();
     cleanDriveKindOf = createDriveKindOf();
@@ -585,7 +745,7 @@ ipcMain.handle('trash-info', async () => {
     // 쓸 때 기록과 같은 결과 파일은 지문을 다시 읽지 않고, 표본만 끝까지 확인해요 (2026-11-15 결정)
     const sigs = new Map();
     let stats = null;
-    const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, sameContent: cleanSameContent, sameVideo: cleanSameVideo, sigs, onStats: (s) => (stats = s), onProgress: (p) => send('clean-check-progress', p) }) : [];
+    const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, sameContent: cleanSameContent, sameVideo: cleanSameVideo, sigs, onStats: (s) => (stats = s), onProgress: (p) => { send('clean-check-progress', p); setMini(mini.countProgress('check', p, checkNote)); } }) : [];
     cleanSigs = sigs;
     cleanJob = job;
     cleanSample = samplePool(job, targets);
@@ -596,7 +756,12 @@ ipcMain.handle('trash-info', async () => {
     const info = await cleanInfo(job, targets, { driveKindOf: cleanDriveKindOf });
     cleanOverflowRoots = overflowRootsOf(info);
     if (stats && stats.sampleFail) info.warnings = [...(info.warnings || []), `표본 검사에서 기록과 다른 결과 파일 ${stats.sampleFail}개를 찾아서 전부 지문으로 다시 확인했어요 (다른 파일은 정리 대상에서 빠졌어요)`];
-    return { ...info, check: stats, sample: sampleView(cleanSample), compare: await compareRows(job, cleanCompare, 0), job: await jobInfo() };
+    const out = { ...info, check: stats, sample: sampleView(cleanSample), compare: await compareRows(job, cleanCompare, 0), job: await jobInfo() };
+    endMini(mini.checkEnd());
+    return out;
+  } catch (err) {
+    endMini(mini.failed(miniState, 'check', err));
+    throw err;
   } finally {
     running = false;
   }
@@ -612,6 +777,7 @@ ipcMain.handle('trash-originals', async (e, opts = {}) => {
   endScreeningIfOn();
   // 정리하는 동안에는 "실행 중"으로 표시 → 미리보기·새 작업·작업 끝내기를 막아요 (기록이 섞이지 않게)
   running = true;
+  setMini(mini.countProgress('clean', {}, '옮기기 전 마지막 확인 중'));
   try {
     await refuseIfMemoryLow();
     // 남기기 먼저 적어요 → 아래 정리 직전 확인(mayClean)이 그 원본을 대상에서 빼요
@@ -624,7 +790,10 @@ ipcMain.handle('trash-originals', async (e, opts = {}) => {
     // 정리 직전 확인: 확인 창에서 통과한 원본 · 남길 파일이 그 뒤로 그대로인지(서명)만 봐요 (2026-11-15 결정)
     //   확인 창을 거치지 않았으면(다른 작업 등) 지금까지처럼 끝까지 확인해요
     //   화면에 진행 숫자를 보내요 (2026-11-14 실사용)
-    const progress = (p) => send('clean-check-progress', { ...p, final: true });
+    const progress = (p) => {
+      send('clean-check-progress', { ...p, final: true });
+      setMini(mini.countProgress('clean', p, '옮기기 전 마지막 확인 중'));
+    };
     const targets = !job ? [] : cleanSigs && cleanJob === job
       ? await recheckTargets(job, cleanSigs, { onProgress: progress })
       : await cleanTargets(job, { hashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, sameContent: cleanSameContent, sameVideo: cleanSameVideo, onProgress: progress });
@@ -643,11 +812,20 @@ ipcMain.handle('trash-originals', async (e, opts = {}) => {
       logger,
       trash: (p) => shell.trashItem(p),
       driveKindOf: cleanDriveKindOf || createDriveKindOf(), // 확인 창과 같은 판단
-      onProgress: (p) => send('trash-progress', p),
+      onProgress: (p) => {
+        send('trash-progress', p);
+        setMini(mini.countProgress('clean', p, '원본을 정리하는 중'));
+      },
       moveRoots,
       userKept,
     });
-    return { ...r, job: await jobInfo() };
+    setMini(mini.countProgress('clean', {}, '정리할 수 있는 원본 개수를 세는 중'));
+    const out = { ...r, job: await jobInfo() };
+    endMini(mini.cleanEnd(r));
+    return out;
+  } catch (err) {
+    endMini(mini.failed(miniState, 'clean', err));
+    throw err;
   } finally {
     running = false;
     resetCleanCheck();

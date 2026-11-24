@@ -714,6 +714,7 @@
 
       setBusy(true, true);
       pauseClicked = false;
+      trashOfferLater = false; // 미뤄 둔 원본 확인 질문은 이번 회차가 끝날 때 다시 물어요
       $('bar').value = 0;
       $('progressText').textContent = '⏳ 시작합니다...';
       setStatus('⏳ 처리 중... (일시정지를 누르면 지금 파일까지만 하고 멈춰요)');
@@ -745,7 +746,8 @@
         if (r.paused || pauseClicked) {
           // "원본 정리" 버튼은 지울 수 있는 원본이 있을 때만 보여서, 그때만 안내해요
           if (r.job && r.job.deletable) setStatus($('status').textContent + '\n🧹 일시정지 중에는 원본 정리 확인을 하지 않아요. 필요하면 위쪽 "원본 정리"를 눌러 주세요');
-        } else await offerTrash(r.job);
+        } else if (document.visibilityState === 'hidden' && r.job && r.job.deletable) trashOfferLater = true; // 최소화 중이면 큰 창이 보일 때 물어봐요
+        else await offerTrash(r.job);
         // 원본 정리 안내가 위 글자를 덮어써도, 재생 불가 안내는 끝까지 남겨요
         if (r.broken) setStatus($('status').textContent + `\n⚠ 재생할 수 없는 영상 ${num(r.broken)}개는 백업하지 않고 원본을 남겨 뒀어요. 표의 "⚠ 재생 불가" 줄과 로그에서 확인하세요.`);
         await maybeFinish();
@@ -762,6 +764,28 @@
       $('pauseBtn').disabled = true;
       $('pauseBtn').textContent = '⏸ 멈추는 중... (지금 파일까지)';
     };
+
+    // 작은 진행 창의 일시정지: main 이 이미 멈추라고 했어요 → 큰 창 버튼만 "멈추는 중"으로
+    api.onMiniPause(() => {
+      pauseClicked = true;
+      $('pauseBtn').disabled = true;
+      $('pauseBtn').textContent = '⏸ 멈추는 중... (지금 파일까지)';
+    });
+    // 작은 진행 창의 이어서 실행: "다음 N개 실행" 버튼을 누른 것과 같아요
+    api.onMiniResume(() => {
+      if (!busy && job && $('nextBtn').style.display !== 'none' && !$('nextBtn').disabled) runBatch();
+    });
+    // 큰 창이 최소화된 채로 회차가 끝나면 원본 확인 질문(confirm)을 바로 띄우지 않아요
+    //   보이지 않는 질문 창이 화면을 붙잡아, 작은 진행 창의 "이어서 실행"까지 듣지 않게 되기 때문이에요
+    //   큰 창이 다시 보일 때 물어봐요 (그 사이 다음 회차를 시작했으면 그 회차 끝에 물어요)
+    let trashOfferLater = false;
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState !== 'visible' || !trashOfferLater) return;
+      trashOfferLater = false;
+      if (busy || !job) return;
+      await offerTrash(job);
+      await maybeFinish();
+    });
 
     // ---------- 원본 정리 (하드디스크 → 휴지통 / USB·SD·네트워크 → _정리완료원본으로 이동) ----------
     api.onTrashProgress((p) => {
