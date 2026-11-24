@@ -807,7 +807,7 @@ const getSampleBig = () => {
     videoTimeoutMs: FFMPEG_TIMEOUT_MS,
     onCrash: ({ code, pending }) => console.error(`샘플 큰 그림 프로그램이 꺼졌어요 (code ${code}, 기다리던 그림 ${pending}개는 그림 없이 보여요)`),
   });
-  sampleBig = createCompareThumbs({ tempDir: path.join(userDir(), 'compare-tmp'), getTools: () => tools, make: sampleBigMake, limit: 1, max: 12 });
+  sampleBig = createCompareThumbs({ tempDir: path.join(userDir(), 'sample-big-tmp'), getTools: () => tools, make: sampleBigMake, limit: 1, max: 12 });
   return sampleBig;
 };
 // 정리 확인 창에서 만든 것들 비우기 (정리를 끝냈을 때, 작업을 끝내거나 새로 시작할 때)

@@ -190,9 +190,13 @@ const items = [
         const keys = ['ArrowLeft', 'ArrowRight', 'Escape'].every((k) => html.includes(`e.key === '${k}'`));
         const ui = html.includes("`${i + 1} / ${list.length}`") && html.includes('id="cvOpen"') && html.includes('Windows 에서 열기') && html.includes('openCleanSample({ view: s.key })');
         const guard = html.includes('if (mine !== viewer.seq) return;') && html.includes("if (!$('cdViewer').hidden) return closeViewer();");
+        const S2 = require('../lib/clean-sample');
+        const pool = [{ path: 'X:\a.jpg' }, { path: 'X:\b.jpg' }];
+        const range = S2.samplePath(pool, 1) === 'X:\b.jpg' && [-1, 2, 99, '1', null, undefined, 1.5, {}].every((k) => S2.samplePath(pool, k) === null) && S2.samplePath(null, 0) === null;
+        const tmpSplit = main.includes("'sample-big-tmp'");
         const preloadSame = preload.includes("openCleanSample: (key) => ipcRenderer.invoke('clean-sample-open', key)");
-        out.push(sub('48h 샘플을 창 안에서 크게 보기 (← → · Esc · n / 10 · 큰 그림은 따로 도는 프로그램에서)', proc && noSharp && reset && keys && ui && guard && preloadSame,
-          JSON.stringify({ proc, noSharp, reset, keys, ui, guard, preloadSame })));
+        out.push(sub('48h 샘플을 창 안에서 크게 보기 (← → · Esc · n / 10 · 큰 그림은 따로 도는 프로그램에서)', proc && noSharp && reset && keys && ui && guard && preloadSame && range && tmpSplit,
+          JSON.stringify({ proc, noSharp, reset, keys, ui, guard, preloadSame, range, tmpSplit })));
       }
       return out;
     },
