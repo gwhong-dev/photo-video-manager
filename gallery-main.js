@@ -35,6 +35,7 @@ const { pathToFileURL } = require('url');
 const { openDb } = require('./lib/db');
 const { createLibrary } = require('./lib/library');
 const { createThumbs, pruneAllowed } = require('./lib/thumbs');
+const { createProcMake } = require('./lib/thumb-proc');
 const { handleMedia } = require('./lib/media-protocol');
 const { now } = require('./lib/logger');
 const { normalizeRequest, planEdit, toPreview, MAX_TARGETS } = require('./lib/manual-edit');
@@ -257,11 +258,19 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   // ---------- 읽기와 썸네일 ----------
   let library = null;
   let thumbs = null;
+  let thumbMake = null;
   // 원본을 못 읽어 미리보기를 작은 썸네일로 대신 보낸 사진 번호들. 원본으로 다시 보내면 빠져요
   //   화면의 <img>는 응답 헤더를 못 읽어서, 그림을 받은 뒤 gallery:preview-fallback 으로 물어봐요 (2026-11-11 사용자 결정)
   const previewFallbacks = new Set();
   if (db) {
-    thumbs = createThumbs({ db, thumbDir: path.join(base, 'thumbs'), getTools, isBusy: busy, logger });
+    // 그림 만들기는 따로 도는 프로그램(lib/thumb-worker.js)에서: sharp 가 어떤 사진에서 꺼져도 앱은 그 칸만 "그림 없음" (2026-11-24)
+    //   그 프로그램이 꺼지면 기다리던 그림만 실패로 기록하고, 다음 그림 때 새로 띄워요 (실패한 칸은 '실패 다시 시도' 때만 다시)
+    thumbMake = createProcMake({
+      spawn: (file) => require('electron').utilityProcess.fork(file, [], { serviceName: 'pvm-gallery-thumbs' }),
+      videoTimeoutMs: 60000,
+      onCrash: ({ code, pending }) => console.error(`갤러리 그림 프로그램이 꺼졌어요 (code ${code}, 기다리던 그림 ${pending}개는 그림 없이 보여요)`),
+    });
+    thumbs = createThumbs({ db, thumbDir: path.join(base, 'thumbs'), getTools, isBusy: busy, logger, make: thumbMake });
     library = createLibrary({
       db,
       getEt,
@@ -1928,6 +1937,7 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
 
 
         if (thumbs) thumbs.stop().catch(() => {});
+        if (thumbMake) thumbMake.close(); // 그림 프로그램도 같이 끔 (끄는 중이라 기다리던 그림은 그림 없이)
       } catch (e) { /* 끄는 중이라 무시 */ }
       try {
         if (db) db.close();
