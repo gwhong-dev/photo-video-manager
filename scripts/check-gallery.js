@@ -1792,6 +1792,13 @@ const items = [
           dialog: { showOpenDialog: async () => { dialogCalls++; return { canceled: true, filePaths: [] }; }, showMessageBoxSync: () => 1, showMessageBox: async () => ({}) },
           shell: { trashItem: async (p) => { trashedPaths.push(p); }, openPath: async () => '' }, // 휴지통은 가짜 (보낸 경로만 기록, 18h)
           protocol: { registerSchemesAsPrivileged() {}, handle() {} },
+          // 비교 그림 프로그램(lib/thumb-worker.js)은 node 자식 프로세스로 대신 띄워요 (진짜 앱은 utilityProcess, 2026-11-24 18h)
+          utilityProcess: {
+            fork: (file) => {
+              const c = require('child_process').fork(file, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+              return { postMessage: (m) => c.send(m), on: (ev, fn) => c.on(ev, fn), kill: () => c.kill() };
+            },
+          },
           // 맞춤법 검사 끄기 호출을 기록해요 (main.js의 whenReady 첫머리)
           session: { defaultSession: { setSpellCheckerEnabled: (v) => spellCalls.push(['enabled', v]), setSpellCheckerLanguages: (v) => spellCalls.push(['languages', v]) } },
         };
