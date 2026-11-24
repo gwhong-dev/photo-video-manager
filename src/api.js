@@ -66,6 +66,11 @@ export const api = {
   fillUndo: () => gallery().fillUndo(),
   fillPickFolder: () => gallery().fillPickFolder(),
   fillClearFolders: () => gallery().fillClearFolders(),
+  // 태그를 파일에 쓰기 (31 ②)
+  tagWriteInfo: () => gallery().tagWriteInfo(),
+  tagWrite: () => gallery().tagWrite(),
+  onTagWriteProgress: (cb) => gallery().onTagWriteProgress(cb),
+  onTagWriteAsk: (cb) => gallery().onTagWriteAsk(cb),
   rescan: () => gallery().rescan(),
   openScreen: (name) => gallery().openScreen(name),
   // 구독을 끊는 함수를 돌려줘요 (React에서 정리할 때 써요)

@@ -92,15 +92,15 @@ const items = [
           return { tagNames, counts, dRows };
         };
         const afterMerge = readTags();
-        // 내가 붙인 태그를 떼도 앨범 태그는 남아야 해요
+        // 파일에서 읽은 태그도 내 태그라서(31 ②) 떼면 빠져요 (파일에는 '쓰지 않은 태그'로 남았다가 쓸 때 지워져요)
         db.applyManualBatch({ id: 'N2', root: 'R', kind: 'tagRemove', createdAt: '2026-01-01T00:00:01.000Z', items: [{ path: 'R/d.jpg', before: ['Prague 1'], after: [] }] });
         const afterRemove = readTags();
         db.close();
         const cnt = (n) => (afterMerge.counts.find((c) => c.name === n) || { n: 0 }).n;
-        out.push(sub('40n 앨범 태그 띄어쓰기: 읽을 때 U+00A0과 겹친 칸을 보통 칸 하나로(같은 사진 안 중복은 하나), 전에 저장한 줄은 켤 때 합침(두 번째는 0개), 내 태그와 겹치면 앨범 태그로 남고 내 태그를 떼도 그대로',
-          JSON.stringify(names) === '["Prague 1","Phu Quoc","사진"]' && merged === 2 && again === 0
+        out.push(sub('40n 파일 태그 띄어쓰기: 읽을 때 U+00A0과 겹친 칸을 보통 칸 하나로(같은 사진 안 중복은 하나), 전에 저장한 줄은 켤 때 합침(두 번째는 0개), 내 태그와 겹치면 하나(manual)로, 떼면 빠짐',
+          JSON.stringify([...names].sort()) === JSON.stringify(['Prague 1', 'Phu Quoc', '사진'].sort()) && merged === 2 && again === 0
           && !afterMerge.tagNames.some((n) => n.includes(NB)) && cnt('Prague 1') === 4 && cnt('Phu Quoc') === 1
-          && JSON.stringify(afterMerge.dRows) === '["Prague 1:album"]' && JSON.stringify(afterRemove.dRows) === '["Prague 1:album"]',
+          && JSON.stringify(afterMerge.dRows) === '["Prague 1:manual"]' && JSON.stringify(afterRemove.dRows) === '[]',
           JSON.stringify([names, merged, again, afterMerge, afterRemove.dRows])));
       }
 
@@ -187,14 +187,14 @@ const items = [
             && log.includes('태그 붙이기') && log.includes('태그 없음 → 여행'),
             JSON.stringify([pv.counts, r, last && last.kind])));
 
-          // 40d 패널, 사이드바, 태그 필터에 나옴. 앨범 태그와 내가 붙인 태그는 따로, 같은 이름은 합쳐서 셈
+          // 40d 패널, 사이드바, 태그 필터에 나옴. 파일에서 읽은 태그(c.jpg 의 '여행')도 내 태그로 같이 셈 (31 ②)
           const file = await call('gallery:get-file', ids.a);
           const state = await call('gallery:get-state');
           const list = await call('gallery:tag-list');
           const onlyTag = await call('gallery:list-ids', { tag: '여행' });
-          out.push(sub('40d 패널에 manual 태그, 태그 목록에 내가 붙인 2장과 앨범 1장, 태그 필터는 둘 다 찾음 (3장), 태그 수는 이름 하나',
-            file.tags.some((t) => t.name === '여행' && t.source === 'manual') && JSON.stringify(list.manual) === '[{"name":"여행","count":2,"hotkey":null}]'
-            && JSON.stringify(list.album) === '[{"name":"여행","count":1}]' && onlyTag.length === 3 && state.tagCount === 1 && JSON.stringify(state.manualTags) === JSON.stringify(list.manual)
+          out.push(sub('40d 패널에 manual 태그, 태그 목록에 붙인 2장과 파일에서 읽은 1장을 합쳐 3장(앨범 칸은 비어 있음), 태그 필터 3장, 태그 수는 이름 하나',
+            file.tags.some((t) => t.name === '여행' && t.source === 'manual') && JSON.stringify(list.manual) === '[{"name":"여행","count":3,"hotkey":null}]'
+            && JSON.stringify(list.album) === '[]' && onlyTag.length === 3 && state.tagCount === 1 && JSON.stringify(state.manualTags) === JSON.stringify(list.manual)
             && state.lastBatch && state.lastBatch.kind === 'tagAdd',
             JSON.stringify([file.tags, list, onlyTag.length, state.tagCount])));
         });
@@ -205,7 +205,7 @@ const items = [
           const file = await call('gallery:get-file', ids.b);
           out.push(sub('40e 다시 읽어도 내가 붙인 태그가 남음', file.tags.some((t) => t.name === '여행' && t.source === 'manual'), JSON.stringify(file.tags)));
 
-          // 40f 떼기 창 목록은 고른 사진의 내가 붙인 태그만 (앨범 태그는 없음), 떼기와 되돌리기
+          // 40f 떼기 창 목록과 떼기: 파일에서 읽은 태그도 같이 떼짐 (31 ②), 되돌리기
           const choices = await call('gallery:selection-tags', [ids.a, ids.c]);
           const r = await call('gallery:tag-apply', [ids.a, ids.c], { op: 'remove', name: '여행' });
           const cFile = await call('gallery:get-file', ids.c);
@@ -214,9 +214,9 @@ const items = [
           const undo = await call('gallery:undo-last', st.lastBatch.id);
           const aBack = withDb((db) => db.getManualTags(path.join(P.root, 'a.jpg')));
           const undoLog = logsOf('manual-edit');
-          out.push(sub('40f 떼기 목록은 내가 붙인 태그만, 떼기는 1장(앨범 태그는 그대로), 되돌리면 다시 붙음 + 되돌리기 로그',
-            JSON.stringify(choices) === '[{"name":"여행","count":1}]' && r.count === 1 && r.kind === 'tagRemove' && aAfter.length === 0
-            && cFile.tags.some((t) => t.name === '여행' && t.source === 'album') && undo.kind === 'tagRemove' && undo.count === 1
+          out.push(sub('40f 떼기 목록은 고른 2장, 떼기는 2장(파일에서 읽은 태그 포함), 되돌리면 다시 붙음 + 되돌리기 로그',
+            JSON.stringify(choices) === '[{"name":"여행","count":2}]' && r.count === 2 && r.kind === 'tagRemove' && aAfter.length === 0
+            && !cFile.tags.some((t) => t.name === '여행') && undo.kind === 'tagRemove' && undo.count === 2
             && JSON.stringify(aBack) === '["여행"]' && undoLog.includes('태그 되돌리기'),
             JSON.stringify([choices, r, aAfter, undo, aBack])));
 
@@ -261,7 +261,7 @@ const items = [
         });
 
         await scene('40k', async () => {
-          // 40k 앨범 태그와 같은 이름: c.jpg 에는 앨범 '여행'이 있어요. 붙이면 내가 붙인 장수에 들어가고 패널에 표시, 떼도 앨범 태그는 남음
+          // 40k 파일에서 읽은 '여행'(c.jpg)은 이미 내 태그: 다시 붙이면 0장, 패널에 mine, 떼면 필터에서도 빠짐 (31 ②)
           const idsK = withDb((db) => ({ c: idOf(db, 'c.jpg') }));
           const st0 = await call('gallery:get-state');
           const before0 = (st0.manualTags.find((t) => t.name === '여행') || { count: 0 }).count;
@@ -271,9 +271,9 @@ const items = [
           const file = await call('gallery:get-file', idsK.c);
           const rm = await call('gallery:tag-apply', [idsK.c], { op: 'remove', name: '여행' });
           const still = await call('gallery:list-ids', { tag: '여행' });
-          out.push(sub('40k 앨범 태그와 같은 이름도 내가 붙인 장수에 들어가고 패널에 표시(mine), 떼도 앨범 태그로 그 필터에 남음',
-            r.count === 1 && after1 === before0 + 1 && file.tags.some((t) => t.name === '여행' && t.mine === true) && rm.count === 1 && still.includes(idsK.c),
-            JSON.stringify([before0, after1, file.tags, still])));
+          out.push(sub('40k 파일에서 읽은 같은 이름 태그는 이미 붙어 있어 0장, 패널에 mine, 떼면 그 필터에서도 빠짐',
+            r.count === 0 && after1 === before0 && file.tags.some((t) => t.name === '여행' && t.mine === true) && rm.count === 1 && !still.includes(idsK.c),
+            JSON.stringify([r.count, before0, after1, file.tags, rm.count, still])));
 
           // 40l 옛 빌드처럼 file_tags 의 manual 줄만 지워진 상태 → 다시 켜면 되돌아옴
           const aPath = path.join(P.root, 'a.jpg');
@@ -457,7 +457,7 @@ const items = [
       const names = ['a.jpg', 'b.mp4', 'c.jpg'];
       const fileRows = () => names.map((name) => row({
         root: P.root, path: path.join(P.root, name), name, mediaType: name.endsWith('.mp4') ? 'video' : 'photo',
-        tags: name === 'c.jpg' ? [{ name: '바다', source: 'album' }] : [],
+        tags: [], // 파일에서 읽은 태그도 이제 내 태그와 같아서(31 ②) 앨범 태그 구분은 40 · 69번에서 봐요
       }));
       for (const n of names) fs.writeFileSync(path.join(P.root, n), `파일 ${n}`);
       const bytes = () => names.map((n) => fs.readFileSync(path.join(P.root, n), 'utf8')).join('|');
@@ -517,7 +517,7 @@ const items = [
           const st = await call('gallery:get-state');
           const j = journalLines().lines;
           out.push(sub('57c 새 태그 "가족" 은 0장으로 목록 · 사이드바에 남고 태그 수에 셈. 같은 이름 · 종류 태그는 거절. 기록 파일에 태그 목록 줄, 로그에 태그 만들기',
-            r.name === '가족' && (await listMine(call)) === '[{"name":"가족","count":0,"hotkey":null}]' && st.tagCount === 2
+            r.name === '가족' && (await listMine(call)) === '[{"name":"가족","count":0,"hotkey":null}]' && st.tagCount === 1
             && JSON.stringify(st.manualTags) === '[{"name":"가족","count":0,"hotkey":null}]' && !!dup && dup.includes('이미') && !!reserved
             && j.length === 1 && j[0].type === 'tagDefs' && JSON.stringify(j[0].defs) === '[{"name":"가족","hotkey":null}]' && logsOf('manual-edit').includes('태그 만들기'),
             JSON.stringify([r, dup, reserved, st.manualTags, j])));
@@ -530,18 +530,17 @@ const items = [
         });
 
         await scene('57e', async () => {
-          // 57e 단축키 숫자: 정하기, 다른 태그로 옮기면 앞 태그는 숫자가 빠짐, 0 · 10 · 앨범 태그는 거절
+          // 57e 단축키 숫자: 정하기, 다른 태그로 옮기면 앞 태그는 숫자가 빠짐, 10 은 거절
           await call('gallery:tag-apply', [ids.a, ids.b], { op: 'add', name: '여행' }); // 사진과 영상에 '여행'
           const k1 = await call('gallery:tag-hotkey', '가족', 1);
           const k2 = await call('gallery:tag-hotkey', '여행', 1);
           const k3 = await call('gallery:tag-hotkey', '가족', 2);
           const bad = await errOf(() => call('gallery:tag-hotkey', '가족', 10));
-          const album = await errOf(() => call('gallery:tag-hotkey', '바다', 3));
           const list = JSON.parse(await listMine(call));
-          out.push(sub('57e 숫자 1을 "여행"으로 옮기면 "가족"은 숫자가 빠짐, 10 과 앨범 태그(읽기 전용)는 거절',
-            k1.moved === null && k2.moved === '가족' && k3.hotkey === 2 && !!bad && !!album && album.includes('읽기 전용')
+          out.push(sub('57e 숫자 1을 "여행"으로 옮기면 "가족"은 숫자가 빠짐, 10 은 거절',
+            k1.moved === null && k2.moved === '가족' && k3.hotkey === 2 && !!bad
             && list.find((t) => t.name === '여행').hotkey === 1 && list.find((t) => t.name === '가족').hotkey === 2 && list.find((t) => t.name === '여행').count === 2,
-            JSON.stringify([k1, k2, k3, bad, album, list])));
+            JSON.stringify([k1, k2, k3, bad, list])));
         });
 
         await scene('57f', async () => {
@@ -580,8 +579,7 @@ const items = [
         });
 
         await scene('57h', async () => {
-          // 57h 지우기: 태그만 떼고 파일은 그대로, 앨범 태그는 지울 수 없음, 되돌리면 태그와 숫자가 돌아옴. 사진이 없는 태그는 묶음 없이 지움
-          const album = await errOf(() => call('gallery:tag-delete', '바다'));
+          // 57h 지우기: 태그만 떼고 파일은 그대로, 되돌리면 태그와 숫자가 돌아옴. 사진이 없는 태그는 묶음 없이 지움
           const r = await call('gallery:tag-delete', '가족');
           const gone = { a: mineOf('a.jpg'), b: mineOf('b.mp4'), list: JSON.parse(await listMine(call)) };
           const filter = await call('gallery:list-ids', { tag: '가족' });
@@ -594,12 +592,12 @@ const items = [
           const e0 = await call('gallery:tag-delete', '빈태그');
           const linesAfter = journalLines().lines.filter((l) => l.type === 'apply').length;
           const st2 = await call('gallery:get-state');
-          out.push(sub('57h 지우기: 2장(사진 · 영상)에서 떼고 목록 · 필터에서 빠짐, 앨범 태그는 거절, 되돌리면 "가족" 2장과 숫자 2가 돌아옴. 빈 태그 지우기는 되돌리기 줄을 차지하지 않음',
-            !!album && album.includes('읽기 전용') && r.count === 2 && r.kind === 'tagDelete' && gone.a.length === 0 && gone.b.length === 0
+          out.push(sub('57h 지우기: 2장(사진 · 영상)에서 떼고 목록 · 필터에서 빠짐, 되돌리면 "가족" 2장과 숫자 2가 돌아옴. 빈 태그 지우기는 되돌리기 줄을 차지하지 않음',
+            r.count === 2 && r.kind === 'tagDelete' && gone.a.length === 0 && gone.b.length === 0
             && !gone.list.some((t) => t.name === '가족') && filter.length === 0 && u.kind === 'tagDelete'
             && back.find((t) => t.name === '가족').count === 2 && back.find((t) => t.name === '가족').hotkey === 2
             && e0.batchId === null && e0.count === 0 && linesBefore === linesAfter && !!lastBefore && st2.lastBatch && st2.lastBatch.id === lastBefore.id && !JSON.parse(await listMine(call)).some((t) => t.name === '빈태그'),
-            JSON.stringify([album, r, gone, u, back, e0, st2.lastBatch])));
+            JSON.stringify([r, gone, u, back, e0, st2.lastBatch])));
         });
 
         await scene('57i', async () => {
