@@ -24,15 +24,16 @@ function Pane({ file, view, onView, label, mark, onMark, pinned, openedAt = 0 })
   const boxRef = useRef(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [nat, setNat] = useState(() => ({ w: file.width || 0, h: file.height || 0 }));
-  const [src, setSrc] = useState(`pvm://original/${file.id}`);
-  const [ready, setReady] = useState(false); // 원본(또는 대신 쓰는 미리보기)을 다 풀었는지 → 그 전엔 썸네일을 보여 줘요
+  // 어느 사진의 원본을 못 그렸는지 · 다 풀었는지를 번호로 기억해요 → 사진이 바뀐 첫 화면부터 바로 맞아요 (#150 검증 ⚠️)
+  const [failedId, setFailedId] = useState(null); // 원본을 못 그려 미리보기(1200px)로 대신하는 사진
+  const [readyId, setReadyId] = useState(null); // 원본(또는 미리보기)을 다 푼 사진 → 그 전엔 썸네일을 보여 줘요
+  const src = failedId === file.id ? `pvm://preview/${file.id}` : `pvm://original/${file.id}`;
+  const ready = readyId === file.id;
   const drag = useRef(null);
   const latest = useRef({ view, nat, box, onView });
   latest.current = { view, nat, box, onView };
 
   useEffect(() => {
-    setSrc(`pvm://original/${file.id}`);
-    setReady(false);
     setNat({ w: file.width || 0, h: file.height || 0 });
   }, [file.id, file.width, file.height]);
 
@@ -108,11 +109,11 @@ function Pane({ file, view, onView, label, mark, onMark, pinned, openedAt = 0 })
               const id = file.id;
               if (t.naturalWidth && t.naturalHeight) setNat({ w: t.naturalWidth, h: t.naturalHeight });
               // 다 푼 뒤에 썸네일을 치워요 (받기만 하고 아직 안 풀었을 때 치우면 잠깐 빈 칸이 보여요)
-              const done = () => { if (t.isConnected && t.dataset.id === String(id)) setReady(true); };
+              const done = () => { if (t.isConnected && t.dataset.id === String(id)) setReadyId(id); };
               if (typeof t.decode === 'function') t.decode().then(done, done);
               else done();
             }}
-            onError={() => setSrc((cur) => (cur.startsWith('pvm://original/') ? `pvm://preview/${file.id}` : cur))}
+            onError={() => setFailedId(file.id)}
             data-id={file.id}
           />
         )}

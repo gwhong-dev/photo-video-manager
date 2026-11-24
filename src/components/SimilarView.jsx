@@ -109,7 +109,8 @@ function SameVideoCell({ file, keep }) {
 //   남길 영상(이름에 꼬리가 없는 것)과 옮길 영상은 main 이 정해요. 확인 창을 보고 누를 때만 옮겨요
 //   영상 지문은 main 이 뒤에서 하나씩 만들고(gallery:same-video-progress), 다 만들면 목록을 다시 받아요
 // hold: 비슷한 사진을 옮기는 중이면 true → 그동안 온 목록 바뀜(gen)은 끝난 뒤 한 번만 다시 받아요 (옮기기 끝날 때 버벅임, 2026-11-24)
-function SameVideoSection({ gen, onNotice, hold = false }) {
+//   holdRef: 부모의 busyRef. 부모가 옮기기를 막 시작해 hold 가 아직 화면에 안 닿은 틈에도 미루게 (#150 검증 ⚠️)
+function SameVideoSection({ gen, onNotice, hold = false, holdRef = null }) {
   const [data, setData] = useState(null); // { groups, pending, hashing, noFfmpeg }
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(null);
@@ -122,8 +123,6 @@ function SameVideoSection({ gen, onNotice, hold = false }) {
   const cancelRef = useRef(null);
 
   const held = useRef(false); // 옮기는 중에 목록 바뀜이 와서 다시 받기를 미뤘는지
-  const holdRef = useRef(hold);
-  holdRef.current = hold;
   const load = useCallback(async () => {
     held.current = false; // 지금 받으면 그 전 바뀜까지 다 담겨요
     const mine = ++seq.current;
@@ -139,7 +138,7 @@ function SameVideoSection({ gen, onNotice, hold = false }) {
   // 처음과 목록이 바뀔 때(gen) 다시 받아요. 옮기는 중이면(내 것 · 비슷한 사진 쪽) 끝난 뒤로 미뤄요
   //   옮기기가 끝나면 main 의 "목록 바뀜" 알림과 옮기기 끝 다시 받기가 겹쳐 같은 목록을 두세 번 만들었어요
   useEffect(() => {
-    if (busyRef.current || holdRef.current) { held.current = true; return; }
+    if (busyRef.current || hold || (holdRef && holdRef.current)) { held.current = true; return; }
     load();
   }, [gen, load]);
   useEffect(() => {
@@ -394,7 +393,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
   const groups = data.groups;
   // 같은 영상 칸은 두 화면(사진 묶음 있음 / 없음)에서 같은 자리(AI 안내 줄 바로 아래)에 둬요
   //   자리가 같아야 사진 묶음이 처음 생겨도 이 칸이 새로 만들어지지 않아서, 열어 둔 확인 창이 닫히지 않아요 (#148 검증 지적)
-  const videos = <div className="same-video-only"><SameVideoSection gen={gen} onNotice={onNotice} hold={busy} /></div>;
+  const videos = <div className="same-video-only"><SameVideoSection gen={gen} onNotice={onNotice} hold={busy} holdRef={busyRef} /></div>;
   const progress = progressText(data.progress);
   if (!groups.length) {
     // 모두 남기기로 숨긴 묶음만 있으면 다시 보기 버튼을 보여 줘요
