@@ -11,13 +11,19 @@
 #   직접 받기가 3번씩 실패하면 마지막으로 Chocolatey 를 한 번 시도해요
 #   ImageMagick 은 GitHub Windows PC 에 이미 깔려 있어요 (없을 때만 Chocolatey)
 #
-# 버전 올리기: check.yml 과 electron-cache.yml 의 EXIFTOOL_VERSION · FFMPEG_VERSION 두 값을 같이 바꿔요
+# 버전 올리기: check.yml 과 electron-cache.yml 의 EXIFTOOL_VERSION · FFMPEG_VERSION 과
+#   EXIFTOOL_SHA256 · FFMPEG_SHA256 네 값을 두 파일에서 같이 바꿔요
 #   (캐시 열쇠에 버전이 들어 있어서 바뀌면 새로 받아요)
+#   SHA256 = 파일 지문. 받은 파일이 정해 둔 파일과 한 글자라도 다르면 쓰지 않아요 (바꿔치기 · 깨진 파일 막기)
+#   새 값 구하기: 파일을 받아 PowerShell 에서 (Get-FileHash 파일.zip).Hash
+# 폴더 모양(아래 $exifDir · $ffDir 안 구조)을 바꾸면 두 파일의 캐시 열쇠 앞부분 "tools-" 도 바꿔요 (옛 캐시를 안 꺼내게)
 
 param(
   [Parameter(Mandatory = $true)][string]$ToolsDir,
   [Parameter(Mandatory = $true)][string]$ExiftoolVersion,
-  [Parameter(Mandatory = $true)][string]$FfmpegVersion
+  [Parameter(Mandatory = $true)][string]$FfmpegVersion,
+  [Parameter(Mandatory = $true)][string]$ExiftoolSha256,
+  [Parameter(Mandatory = $true)][string]$FfmpegSha256
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,6 +44,18 @@ function Save-Url([string]$url, [string]$out) {
   return $false
 }
 
+# 받고 나서 지문(SHA256) 비교: 다르면 지우고 "받기 실패" 로 쳐요 → Chocolatey 로 넘어가고 캐시에 저장하지 않아요
+function Save-Checked([string]$url, [string]$out, [string]$sha) {
+  if (-not (Save-Url $url $out)) { return $false }
+  $got = (Get-FileHash $out -Algorithm SHA256).Hash
+  if ($got -ne $sha) {
+    Write-Host "❌ 지문이 달라요: $url (받은 값 $got)"
+    Remove-Item -Force $out
+    return $false
+  }
+  return $true
+}
+
 # 압축을 풀고, 안에 든 폴더 하나의 내용을 $dest 로 옮겨요 (zip 안이 "이름-버전/..." 한 겹이라서)
 function Expand-One([string]$zip, [string]$dest) {
   $tmp = Join-Path $ToolsDir ('unzip-' + [guid]::NewGuid().ToString('N'))
@@ -55,7 +73,7 @@ if (Test-Path $exifExe) {
 } else {
   $zip = Join-Path $ToolsDir 'exiftool.zip'
   $url = "https://sourceforge.net/projects/exiftool/files/exiftool-${ExiftoolVersion}_64.zip/download"
-  if (Save-Url $url $zip) {
+  if (Save-Checked $url $zip $ExiftoolSha256) {
     Expand-One $zip $exifDir
     # Windows 판 실행 파일 이름은 "exiftool(-k).exe" (끝나면 키 입력을 기다림) → exiftool.exe 로 바꾸면 기다리지 않아요
     Rename-Item (Join-Path $exifDir 'exiftool(-k).exe') 'exiftool.exe'
@@ -71,7 +89,7 @@ if (Test-Path $ffExe) {
 } else {
   $zip = Join-Path $ToolsDir 'ffmpeg.zip'
   $url = "https://github.com/GyanD/codexffmpeg/releases/download/$FfmpegVersion/ffmpeg-$FfmpegVersion-essentials_build.zip"
-  if (Save-Url $url $zip) {
+  if (Save-Checked $url $zip $FfmpegSha256) {
     Expand-One $zip $ffDir
   } else {
     Write-Host '⚠️ FFmpeg 직접 받기 실패 → Chocolatey 로 한 번 시도'
@@ -105,8 +123,11 @@ $magickCmd = if ($magick) { Join-Path $magick.FullName 'magick.exe' } else { 'ma
 $ok = $true
 foreach ($t in @(@('exiftool', $exifCmd, '-ver'), @('FFmpeg', $ffCmd, '-version'), @('ImageMagick', $magickCmd, '-version'))) {
   try {
-    $out = & $t[1] $t[2] 2>&1 | Select-Object -First 1
-    if ($LASTEXITCODE -ne 0) { throw "끝 코드 $LASTEXITCODE" }
+    # 끝 코드는 파이프(| Select-Object) 전에 읽어요. 파이프로 첫 줄만 받으면 도구가 중간에 끊겨 끝 코드가 -1 이 돼요
+    $all = & $t[1] $t[2] 2>&1
+    $code = $LASTEXITCODE
+    $out = $all | Select-Object -First 1
+    if ($code -ne 0) { throw "끝 코드 $code" }
     Write-Host "$($t[0]): $out"
   } catch {
     Write-Host "❌ $($t[0]) 실행 안 됨: $_"

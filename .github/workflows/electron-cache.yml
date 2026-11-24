@@ -3,7 +3,7 @@
 #   PR에서 저장한 캐시는 그 PR에서만 보여서, 새 PR마다 github.com에서 Electron을 다시 받았어요
 #   점검은 하지 않아요
 # 언제 돌까: main에 package-lock.json · 이 파일 · 외부 도구 준비 스크립트가 바뀌어 들어왔을 때, 또는 손으로 (Actions 화면의 Run workflow)
-#   외부 도구 버전을 올릴 땐 check.yml 의 EXIFTOOL_VERSION · FFMPEG_VERSION 과 같은 값으로 같이 바꿔요
+#   외부 도구 버전을 올릴 땐 check.yml 의 EXIFTOOL_VERSION · FFMPEG_VERSION · EXIFTOOL_SHA256 · FFMPEG_SHA256 과 같은 값으로 같이 바꿔요
 
 name: Electron 캐시 채우기
 
@@ -27,6 +27,8 @@ jobs:
     env:
       EXIFTOOL_VERSION: '13.64'
       FFMPEG_VERSION: '9.1'
+      EXIFTOOL_SHA256: '72C29C44D1E860EEBCAEFA71692D979AF9858FE9A6D7D791A5E7F1DAC77804AF'
+      FFMPEG_SHA256: 'B9BBBB3ACECE000CBEEC994F856649354E52C773807841E78908374B24D658FD'
     steps:
       - uses: actions/checkout@v5
 
@@ -76,7 +78,7 @@ jobs:
         id: tools
         if: steps.tools-cache.outputs.cache-hit != 'true'
         shell: pwsh
-        run: ./.github/scripts/install-tools.ps1 -ToolsDir "${{ runner.temp }}/tools" -ExiftoolVersion $env:EXIFTOOL_VERSION -FfmpegVersion $env:FFMPEG_VERSION
+        run: ./.github/scripts/install-tools.ps1 -ToolsDir "${{ runner.temp }}/tools" -ExiftoolVersion $env:EXIFTOOL_VERSION -FfmpegVersion $env:FFMPEG_VERSION -ExiftoolSha256 $env:EXIFTOOL_SHA256 -FfmpegSha256 $env:FFMPEG_SHA256
 
       - name: 외부 도구 저장
         if: steps.tools-cache.outputs.cache-hit != 'true' && steps.tools.outputs.complete == 'true'

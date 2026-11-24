@@ -15,10 +15,12 @@ jobs:
   check:
     runs-on: windows-latest
     timeout-minutes: 30
-    # 외부 도구 버전 (electron-cache.yml 과 같은 값이어야 PR 이 main 의 캐시를 꺼내 써요)
+    # 외부 도구 버전 · 파일 지문(SHA256) (electron-cache.yml 과 같은 값이어야 PR 이 main 의 캐시를 꺼내 써요)
     env:
       EXIFTOOL_VERSION: '13.64'
       FFMPEG_VERSION: '9.1'
+      EXIFTOOL_SHA256: '72C29C44D1E860EEBCAEFA71692D979AF9858FE9A6D7D791A5E7F1DAC77804AF'
+      FFMPEG_SHA256: 'B9BBBB3ACECE000CBEEC994F856649354E52C773807841E78908374B24D658FD'
     # 부품은 Node 24 로 도는 v5 (v4 는 "Node 20 은 곧 지원 끝" 경고가 나와요)
     steps:
       - uses: actions/checkout@v5
@@ -40,7 +42,7 @@ jobs:
       - name: 외부 도구 준비 (exiftool, FFmpeg, ImageMagick)
         id: tools
         shell: pwsh
-        run: ./.github/scripts/install-tools.ps1 -ToolsDir "${{ runner.temp }}/tools" -ExiftoolVersion $env:EXIFTOOL_VERSION -FfmpegVersion $env:FFMPEG_VERSION
+        run: ./.github/scripts/install-tools.ps1 -ToolsDir "${{ runner.temp }}/tools" -ExiftoolVersion $env:EXIFTOOL_VERSION -FfmpegVersion $env:FFMPEG_VERSION -ExiftoolSha256 $env:EXIFTOOL_SHA256 -FfmpegSha256 $env:FFMPEG_SHA256
 
       - name: 외부 도구 저장
         if: steps.tools-cache.outputs.cache-hit != 'true' && steps.tools.outputs.complete == 'true'
