@@ -40,7 +40,12 @@ const items = [
       const vidArgs = FT.writeArgs('video', ['가족']);
       out.push(sub('영상은 XMP + 탐색기 영상 태그(Microsoft:Category), IPTC 는 안 써요',
         vidArgs.includes('-Microsoft:Category=가족') && !vidArgs.some((a) => a.startsWith('-IPTC')), vidArgs.join(' ')));
-      out.push(sub('빈 목록이면 칸을 비우기만 해요', same(FT.writeArgs('xmp', []), ['-overwrite_original', '-P', '-XMP-dc:Subject='])));
+      out.push(sub('빈 목록이면 칸을 비우기만 해요 (원래 파일을 바로 고치는 인자 없음)', same(FT.writeArgs('xmp', []), ['-P', '-XMP-dc:Subject='])));
+      const longName = '아주긴태그이름'.repeat(4); // 28자 = 84바이트
+      const longArgs = FT.writeArgs('jpg', ['가족', longName]);
+      out.push(sub('IPTC 64바이트보다 긴 태그는 IPTC 에만 안 써요 (XMP · 탐색기 태그에는 써요)',
+        !FT.fitsIptc(longName) && !longArgs.includes(`-IPTC:Keywords=${longName}`) && longArgs.includes(`-XMP-dc:Subject=${longName}`) && longArgs.includes('-IPTC:Keywords=가족'),
+        longArgs.join(' ')));
       const m1 = FT.tagsFromMeta({ Subject: ['사진', '가족'], Keywords: '여행', XPKeywords: 'x;y', Category: ['캠핑'] });
       out.push(sub('여러 칸을 합치고 종류 태그는 따로 (XMP 가 있으면 탐색기 태그는 나누지 않아요)',
         same(m1, { tags: ['가족', '여행', '캠핑'], media: ['사진'] }), JSON.stringify(m1)));
@@ -59,8 +64,9 @@ const items = [
         const s1 = stat(p);
         const isVideo = /\.mov$/i.test(name);
         out.push(sub(`${name}: 쓰고 다시 읽으면 같은 태그, 수정 시각 그대로${isVideo ? ', 영상 재생 확인' : ''}`,
-          r.ok && !r.same && same(back.tags, [...list].sort()) && Math.abs(s1.mtimeMs - s0.mtimeMs) < 1000 && (!isVideo || probed === 1),
-          `${r.ok ? '' : r.why} 읽음 ${back.tags.join(',')} 시각차 ${Math.round(s1.mtimeMs - s0.mtimeMs)}ms`));
+          r.ok && !r.same && r.verified === true && same(back.tags, [...list].sort()) && Math.abs(s1.mtimeMs - s0.mtimeMs) < 1000 && (!isVideo || probed === 1)
+            && !fs.existsSync(`${p}_exiftool_tmp`),
+          `${r.ok ? '' : r.why} 읽음 ${back.tags.join(',')} 시각차 ${Math.round(s1.mtimeMs - s0.mtimeMs)}ms 지문확인 ${r.verified}`));
         if (!isVideo) {
           const r2 = await FT.writeFileTags(et, p, list, s1);
           out.push(sub(`${name}: 이미 같으면 파일을 건드리지 않아요`, r2.ok && r2.same && same(stat(p), s1)));
@@ -77,8 +83,14 @@ const items = [
           out.push(sub('JPG: 빈 목록을 쓰면 파일 태그가 비어요', r3.ok && (await FT.readFileTags(et, p)).tags.length === 0, r3.why || ''));
         }
         if (isVideo) {
-          const r4 = await FT.writeFileTags(et, p, ['가족'], stat(p), { probe: async () => ({ ok: false, reason: '시험' }) });
-          out.push(sub('영상: 쓴 뒤 재생이 안 되면 실패로 알려요 (다시 해 볼 수 있음)', !r4.ok && r4.lasting === false && /재생/.test(r4.why), r4.why || ''));
+          const sBefore = stat(p);
+          const bytesBefore = fs.readFileSync(p);
+          const r4 = await FT.writeFileTags(et, p, ['가족'], sBefore, { probe: async () => ({ ok: false, reason: '시험' }) });
+          // 확인에 실패하면 원래 파일은 한 바이트도 안 바뀌고, 확인 못 한 사본도 남지 않아요
+          out.push(sub('영상: 쓴 뒤 재생이 안 되면 실패로 알리고 원래 파일 · 태그는 그대로, 임시 사본도 안 남아요',
+            !r4.ok && r4.lasting === false && /재생/.test(r4.why) && same(stat(p), sBefore) && fs.readFileSync(p).equals(bytesBefore)
+              && same((await FT.readFileTags(et, p)).tags, [...list].sort()) && !fs.existsSync(`${p}_exiftool_tmp`),
+            r4.why || ''));
         }
       }
 
@@ -113,6 +125,26 @@ const items = [
         fs.writeFileSync(`${lone}_exiftool_tmp`, 'x');
         const found = FT.leftoverTemps([p, lone]);
         out.push(sub('남은 임시 파일은 원래 파일이 있는 것만 골라요', same(found, [`${p}_exiftool_tmp`]), found.map((f) => path.basename(f)).join(',')));
+        const s0 = stat(p);
+        const r = await FT.writeFileTags(et, p, ['가족'], s0);
+        out.push(sub('남은 임시 파일이 있으면 쓰지 않고 그 파일도 건드리지 않아요',
+          !r.ok && r.lasting === false && same(stat(p), s0) && fs.readFileSync(`${p}_exiftool_tmp`, 'utf8') === 'x', r.why || ''));
+      }
+      // 긴 한글 태그 (IPTC 64바이트 넘음): 실제 파일에 써도 다시 읽은 태그가 같아요 (잘린 이름이 생기지 않음)
+      {
+        const p = copy('IMG_0104.jpg', 'long.jpg');
+        const list = ['가족', '아주긴태그이름'.repeat(4)].sort();
+        const r = await FT.writeFileTags(et, p, list, stat(p));
+        const back = await FT.readFileTags(et, p);
+        out.push(sub('JPG: 긴 한글 태그도 쓰고 다시 읽으면 같아요', r.ok && same(back.tags, list), `${r.why || ''} 읽음 ${back.tags.join(',')}`));
+      }
+      // 내용 지문을 못 만드는 형식(GIF): 쓰기는 하되 "지문 확인됨" 이 아니라서 가져오기 기록을 새로 고치지 않아요
+      {
+        const p = path.join(dir, 'dot.gif');
+        fs.writeFileSync(p, Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'));
+        const r = await FT.writeFileTags(et, p, ['가족'], stat(p));
+        out.push(sub('GIF: 태그는 쓰지만 지문 확인은 안 된 것으로 알려요 (verified=false)',
+          r.ok && r.verified === false && same((await FT.readFileTags(et, p)).tags, ['가족']), r.why || JSON.stringify({ ok: r.ok, verified: r.verified })));
       }
 
       // ---------- ③ DB ----------

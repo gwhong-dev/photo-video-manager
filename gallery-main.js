@@ -45,7 +45,7 @@ const { createMapNet, roundCoord, roundCity } = require('./lib/map-net');
 const { buildGroups, createHasher, isBlurry } = require('./lib/similar');
 const ai = require('./lib/similar-ai');
 const { checkDiscard, checkSelected, discardInfo, discardFiles } = require('./lib/similar-discard');
-const { createDriveKindOf } = require('./lib/platform');
+const { createDriveKindOf, canUseRecycleBin } = require('./lib/platform');
 const { createPreviewDrive } = require('./lib/preview-drive');
 const { historyFromJobs, planFill, toFillPreview, runFill, undoFill, lastFillRun } = require('./lib/fill-nodate');
 const { isTagKind, normalizeTagEdit, planTagEdit, toTagPreview, cleanTagName, cleanHotkey, normalizeRename, planTagRename } = require('./lib/manual-tags');
@@ -910,16 +910,23 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
         errorLog('태그 쓰기 로그', err);
         throw new Error('로그 파일을 만들지 못해서 쓰지 않았어요');
       }
+      let binCheck = null; // 남은 임시 파일을 휴지통으로 옮길 수 있는 드라이브인지 (필요할 때 한 번 만들어요)
       for (let k = 0; k < rows.length; k++) {
         const r = rows[k];
         send('gallery:tag-write-progress', { done: k, total: rows.length });
         // 앱을 끄면 멈춰요 (남은 것은 다음에 이어서)
         if (closed) { res.stopped = true; break; }
         // 지난번에 쓰다 꺼져서 남은 임시 파일은 휴지통으로 (있으면 exiftool 이 쓰지 못해요)
+        //   휴지통을 쓸 수 없는 드라이브(USB 등)나 "바로 제거" 설정이면 옮기지 않고 그 사진만 건너뛰어요 (직접 지우도록 알림)
         let blocked = null;
         for (const tmp of fileTags.leftoverTemps([r.path])) {
           try {
             if (!trash) throw new Error('휴지통을 쓸 수 없어요');
+            if (!binCheck) binCheck = makeDriveKindOf();
+            const recycle = binCheck.recycleOf ? await binCheck.recycleOf(tmp) : null;
+            if (!canUseRecycleBin(await binCheck(tmp)) || (recycle && recycle.nuke)) {
+              throw new Error(`이 드라이브는 휴지통을 쓸 수 없어요. 탐색기에서 ${path.basename(tmp)} 을 직접 지운 뒤 다시 써 주세요`);
+            }
             await trash(tmp);
             note(`임시 파일 휴지통\t${tmp}`);
           } catch (err) {
@@ -954,9 +961,10 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
             note(`같음\t${r.path}\t${tagText(out.list)}`);
           } else {
             res.written++;
-            note(`씀\t${r.path}\t${tagText(out.before)} → ${tagText(out.list)}`);
+            note(`씀\t${r.path}\t${tagText(out.before)} → ${tagText(out.list)}${out.verified ? '' : ' (내용 지문 확인 안 됨)'}`);
             try {
-              const n = fileRewrite ? await fileRewrite.after(tok, r.path) : 0;
+              // 가져오기 기록(원본 정리가 믿는 서명 · 지문)은 내용이 그대로인 것을 지문으로 확인했을 때만 새로 고쳐요
+              const n = fileRewrite && out.verified ? await fileRewrite.after(tok, r.path) : 0;
               res.jobUpdated += n;
               if (n) note(`가져오기 기록 지문 갱신 ${n}개\t${r.path}`);
             } catch (err) {
