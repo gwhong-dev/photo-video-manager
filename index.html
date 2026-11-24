@@ -703,14 +703,26 @@
     });
 
     // n: 이번에 처리할 개수 (안 주면 "한 번에 N개" 칸 값)
+    let starting = false; // 공간을 재고 묻는 중이에요 (그 사이 작은 창 ▶ · 버튼을 또 눌러도 한 번만 시작)
     async function runBatch(n = batchSize()) {
-      // 남은 공간 먼저 확인 (모자라면 시작 안 함, 80% 넘으면 한 번 더 물어봄)
-      const space = await api.spaceInfo(n);
-      if (space && !space.ok) {
-        setStatus('⛔ ' + space.warning + '\n백업 드라이브 공간을 비우거나 한 번에 처리할 개수를 줄여 주세요.');
+      if (busy || starting) return;
+      starting = true;
+      let go = false;
+      try {
+        // 남은 공간 먼저 확인 (모자라면 시작 안 함, 80% 넘으면 한 번 더 물어봄)
+        const space = await api.spaceInfo(n);
+        if (space && !space.ok) {
+          setStatus('⛔ ' + space.warning + '\n백업 드라이브 공간을 비우거나 한 번에 처리할 개수를 줄여 주세요.');
+        } else {
+          go = !(space && space.warning && !confirm(`⚠️ ${space.warning}\n\n그래도 실행할까요?`));
+        }
+      } finally {
+        starting = false;
+      }
+      if (!go) {
+        await askTrashLater(); // 시작하지 않았으면 미뤄 둔 원본 확인 질문을 지금 물어요
         return;
       }
-      if (space && space.warning && !confirm(`⚠️ ${space.warning}\n\n그래도 실행할까요?`)) return;
 
       setBusy(true, true);
       pauseClicked = false;
@@ -772,20 +784,22 @@
       $('pauseBtn').textContent = '⏸ 멈추는 중... (지금 파일까지)';
     });
     // 작은 진행 창의 이어서 실행: "다음 N개 실행" 버튼을 누른 것과 같아요
-    api.onMiniResume(() => {
-      if (!busy && job && $('nextBtn').style.display !== 'none' && !$('nextBtn').disabled) runBatch();
+    //   개수는 작은 창에 적힌 "N개 이어서 실행"과 같게 main 이 보내요 (이상한 값이면 지금 회차 크기)
+    api.onMiniResume((n) => {
+      if (!busy && job && $('nextBtn').style.display !== 'none' && !$('nextBtn').disabled) runBatch(Number.isInteger(n) && n > 0 ? n : batchSize());
     });
     // 큰 창이 최소화된 채로 회차가 끝나면 원본 확인 질문(confirm)을 바로 띄우지 않아요
     //   보이지 않는 질문 창이 화면을 붙잡아, 작은 진행 창의 "이어서 실행"까지 듣지 않게 되기 때문이에요
     //   큰 창이 다시 보일 때 물어봐요 (그 사이 다음 회차를 시작했으면 그 회차 끝에 물어요)
+    //   다음 회차를 시작하려고 공간을 재는 중(starting)이면 묻지 않고 그대로 미뤄 둬요
     let trashOfferLater = false;
-    document.addEventListener('visibilitychange', async () => {
-      if (document.visibilityState !== 'visible' || !trashOfferLater) return;
+    async function askTrashLater() {
+      if (!trashOfferLater || busy || starting || !job || document.visibilityState !== 'visible') return;
       trashOfferLater = false;
-      if (busy || !job) return;
       await offerTrash(job);
       await maybeFinish();
-    });
+    }
+    document.addEventListener('visibilitychange', askTrashLater);
 
     // ---------- 원본 정리 (하드디스크 → 휴지통 / USB·SD·네트워크 → _정리완료원본으로 이동) ----------
     api.onTrashProgress((p) => {

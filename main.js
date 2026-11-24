@@ -32,7 +32,7 @@ const cleanSameVideo = async (src, keep) => {
 };
 const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
-const { cleanCandidatesAsync, cleanTargets, recheckTargets, overflowRootsOf, cleanInfo, cleanOriginals, createHashCache, countHashesFrom } = require('./lib/cleaner');
+const { cleanCandidatesAsync, cleanTargets, recheckTargets, overflowRootsOf, cleanInfo, cleanOriginals, createHashCache, countHashesFrom, trustedItemsOf, refreshTrusted } = require('./lib/cleaner');
 const { createDriveKindOf } = require('./lib/platform');
 const { samplePool, sampleView, openSample } = require('./lib/clean-sample');
 const { comparePool, compareRows, compareFile, keptItems, markUserKept, createCompareThumbs } = require('./lib/dup-compare');
@@ -215,6 +215,7 @@ function createWindow() {
 
   // 실행 중에 닫으려고 하면 한 번 물어보기
   win.on('close', (e) => {
+    if (!running && askTagsOnClose(e)) return;
     if (!running) return;
     const r = dialog.showMessageBoxSync(win, {
       type: 'warning',
@@ -316,7 +317,13 @@ function flushMini() {
   }
   miniWin.webContents.send('mini:state', { view: mini.view(miniState), compact: !!(settings && settings.miniCompact) });
   // 다른 프로그램을 쓰는 중이니 초점은 가져오지 않아요. 처음 읽는 중이면 ready-to-show 가 띄워요
-  if (!miniWin.isVisible() && !miniWin.webContents.isLoading()) miniWin.showInactive();
+  if (!miniWin.isVisible() && !miniWin.webContents.isLoading()) {
+    // 큰 창을 다른 모니터로 옮겼으면 작은 창도 그 모니터 오른쪽 아래로 (같은 모니터면 끌어 둔 자리 그대로)
+    const display = screen.getDisplayMatching(win.getNormalBounds());
+    const b = miniWin.getBounds();
+    if (screen.getDisplayMatching(b).id !== display.id) miniWin.setBounds(mini.cornerOf(display.workArea, b.width, b.height));
+    miniWin.showInactive();
+  }
 }
 
 function openMain() {
@@ -335,7 +342,7 @@ ipcMain.on('mini:open', (e) => {
 
 // 일시정지: 큰 창의 일시정지 버튼과 같아요 (지금 파일까지만 하고 멈춤). 큰 창 버튼도 "멈추는 중"으로 바꿔요
 ipcMain.on('mini:pause', (e) => {
-  if (!fromMini(e) || !running || !miniState || miniState.job !== 'import' || miniState.phase !== 'running') return;
+  if (!fromMini(e) || !running || !miniState || miniState.job !== 'import' || miniState.phase !== 'running' || !(miniState.total > 0)) return;
   pauseAsked = true;
   setMini({ ...miniState, pausing: true });
   send('mini-pause');
@@ -343,15 +350,20 @@ ipcMain.on('mini:pause', (e) => {
 
 // 이어서 실행: 큰 창의 "다음 N개 실행"을 누른 것처럼 해요 (공간 확인 · 결과 안내를 큰 창이 그대로 해요)
 //   물어볼 것(공간 부족 · 80% 넘음)이 있으면 큰 창을 열어서 보이게 해요
+//   공간을 재는 동안 ▶ 를 또 눌러도 한 번만 보내요. 회차 크기는 작은 창에 적힌 개수(lastBatchN)와 같게 보내요
+let miniResuming = false;
 ipcMain.on('mini:resume', async (e) => {
-  if (!fromMini(e) || running || !job || !miniState || miniState.phase !== 'paused') return;
+  if (!fromMini(e) || miniResuming || running || !job || !miniState || miniState.phase !== 'paused') return;
+  miniResuming = true;
   try {
     const space = await checkSpace(nextTodo(job, lastBatchN), job.backupRoot);
     if (space && (!space.ok || space.warning)) openMain();
   } catch (err) {
     openMain(); // 확인을 못 했으면 큰 창에서 보게 해요
+  } finally {
+    miniResuming = false;
   }
-  send('mini-resume');
+  send('mini-resume', lastBatchN);
 });
 
 // 간단히(한 줄) / 자세히: 고른 모양을 설정에 기억해요
@@ -371,6 +383,49 @@ ipcMain.on('mini:fit', (e, w, h) => {
   if (b.width === width && b.height === height) return;
   miniWin.setBounds(mini.resizeKeepCorner(b, width, height));
 });
+
+// 파일에 쓰지 않은 태그가 있으면 닫을 때 한 번 물어봐요 (31 ②). 닫기를 막았으면 true
+//   쓰는 중이면: 닫아도 쓴 파일은 그대로, 남은 것은 다음에 이어서 써요
+//   한 번 "다음에"를 고르면 이번에는 다시 묻지 않아요
+let tagCloseAsked = false;
+function askTagsOnClose(e) {
+  if (!gallery || !gallery.tagWriteState) return false;
+  const st = gallery.tagWriteState();
+  if (st.writing) {
+    const r = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      buttons: ['계속 쓰기', '닫기'],
+      defaultId: 0,
+      message: '파일에 태그를 쓰는 중이에요. 닫을까요?',
+      detail: '닫아도 이미 쓴 파일은 그대로예요. 남은 사진은 다음에 켜서 이어서 쓸 수 있어요.',
+    });
+    if (r === 0) {
+      e.preventDefault();
+      return true;
+    }
+    return false;
+  }
+  if (tagCloseAsked || !st.writable) return false;
+  tagCloseAsked = true;
+  const r = dialog.showMessageBoxSync(win, {
+    type: 'question',
+    buttons: ['지금 쓰기', '다음에'],
+    defaultId: 0,
+    cancelId: 1,
+    message: `파일에 쓰지 않은 태그가 ${st.writable}장에 있어요. 지금 쓸까요?`,
+    detail: '태그는 이 PC 의 목록에 저장돼 있어요. 파일에 써 두면 다른 PC 나 다른 프로그램에서도 보여요.',
+  });
+  if (r === 0) {
+    e.preventDefault();
+    // 쓰기 창은 갤러리 화면에 있어요. 가져오기 화면이면 갤러리 화면을 연 뒤 열어요
+    let onGallery = false;
+    try { onGallery = /dist[\/]renderer/.test(decodeURIComponent(win.webContents.getURL())); } catch (err) { /* 모르면 새로 열어요 */ }
+    if (onGallery) gallery.askTagWrite();
+    else loadScreen('gallery').then(() => gallery.askTagWrite(), () => {});
+    return true;
+  }
+  return false;
+}
 
 // ---------- 화면 바꾸기 ----------
 // 시작 화면은 갤러리예요. 갤러리 화면은 Vite로 만든 dist/renderer 에 있어요 (npm start 가 먼저 만들어 줘요)
@@ -633,8 +688,14 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
   const firstRun = isFirstRun(job); // 첫 회차면 미리보기 때부터 중복이던 사진에도 태그를 붙여요
 
   // 필요한 도구가 있는지 먼저 확인
-  if (todo.some((it) => it.kind === 'heic2jpg') && !tools.magick.ok) throw new Error('ImageMagick이 없어서 HEIC를 변환할 수 없어요');
-  if (todo.some((it) => it.kind === 'mov2mp4') && !tools.ffmpeg.ok) throw new Error('FFmpeg이 없어서 MOV를 변환할 수 없어요');
+  //   없으면 작은 창에도 오류로 알려요 (작은 창 "이어서 실행"으로 시작했다면 그대로 멈춰 보이지 않게)
+  const missing = todo.some((it) => it.kind === 'heic2jpg') && !tools.magick.ok ? 'ImageMagick이 없어서 HEIC를 변환할 수 없어요'
+    : todo.some((it) => it.kind === 'mov2mp4') && !tools.ffmpeg.ok ? 'FFmpeg이 없어서 MOV를 변환할 수 없어요' : '';
+  if (missing) {
+    const err = new Error(missing);
+    endMini(mini.failed(miniState, 'import', err));
+    throw err;
+  }
 
   running = true; // 재는 동안 다른 요청이 끼어들지 않게 먼저 세워요
   infoSeq++; // 처음 켤 때 세던 원본 개수는 그만둬요 (실행이 끝나면 다시 세요)
@@ -644,7 +705,9 @@ ipcMain.handle('run-batch', async (e, batchSize) => {
   if (memNow.low) {
     // 원본 개수를 다 센 뒤에 "실행 중"을 풀어요 (세는 동안 다른 요청이 끼어들어 계산이 그만둬지지 않게)
     try {
-      return { done: 0, dup: 0, fail: 0, broken: 0, paused: false, handled: 0, stopped: null, memoryLow: lowMessage(memNow.low), job: await jobInfo() };
+      const out = { done: 0, dup: 0, fail: 0, broken: 0, paused: false, handled: 0, stopped: null, memoryLow: lowMessage(memNow.low), job: await jobInfo() };
+      endMini(mini.importEnd(miniState, out, 0)); // 작은 창도 빨강 "메모리 부족"으로 바꿔요
+      return out;
     } finally {
       running = false;
     }
@@ -941,6 +1004,15 @@ app.whenReady().then(async () => {
         return r.canceled ? null : r.filePaths[0];
       },
       trash: (p) => shell.trashItem(p), // 비슷한 사진 버리기 (휴지통이 없는 드라이브는 _정리완료원본으로 이동)
+      // 파일에 태그 쓰기 (31 ②): 가져오기 작업 기록이 그 파일을 결과로 믿고 있었으면, 쓴 뒤 지문 · 서명을 새 값으로 바꿔요
+      //   (안 바꾸면 원본 정리가 "백업 파일이 바뀜"으로 원본을 남겨요). 작업이 없으면 할 일 없음
+      fileRewrite: {
+        before: async (p) => {
+          const j = job;
+          return { job: j, idx: j ? await trustedItemsOf(j, p) : [] };
+        },
+        after: async (tok, p) => (tok && tok.job && tok.job === job ? refreshTrusted(tok.job, store, tok.idx, p) : 0),
+      },
     });
   } catch (e) {
     // 갤러리를 못 켜도 가져오기는 쓸 수 있어야 해요
