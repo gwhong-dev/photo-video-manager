@@ -3,7 +3,7 @@
 //   mode="create" : 새 태그 만들기. 사진 없이도 목록에 남아요 (0장)
 //   mode="rename" : 이름 바꾸기. 같은 이름의 내 태그가 이미 있으면 "합칠까요?"를 한 번 더 물어요
 //   mode="delete" : 지우기. 붙은 장수를 보여 주고, 태그만 떼요 (사진 · 영상 파일은 그대로). 지운 뒤 되돌리기 줄이 떠요
-//   앨범에서 가져온 태그는 이 창으로 오지 않아요 (읽기 전용). 태그는 DB와 기록 파일에만 있어요. 사진 파일에는 쓰지 않아요
+//   바꾼 것은 DB와 기록 파일에 먼저 저장돼요. 파일에는 "N장 파일에 태그 쓰기"를 눌러야 써요 (31 ②)
 
 import React, { useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
@@ -136,7 +136,7 @@ export default function TagManageDialog({ mode, tag, onClose, onDone }) {
           {mode === 'delete' ? (
             <>
               <p>{tag.count > 0 ? `'${tag.name}' 태그가 붙은 ${formatCount(tag.count)}장에서 이 태그만 떼요.` : `'${tag.name}' 태그에는 붙은 사진이 없어요.`}</p>
-              <p className="dialog-sub">사진과 영상 파일은 그대로예요. 같은 이름의 앨범 태그도 그대로 남아요.{tag.count > 0 ? ' 지운 뒤 바로 되돌릴 수 있어요.' : ''}</p>
+              <p className="dialog-sub">사진과 영상 파일은 '파일에 태그 쓰기'를 누르기 전까지 그대로예요.{tag.count > 0 ? ' 지운 뒤 바로 되돌릴 수 있어요.' : ''}</p>
             </>
           ) : merge ? (
             <>

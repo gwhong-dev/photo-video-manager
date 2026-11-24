@@ -120,6 +120,11 @@ contextBridge.exposeInMainWorld('api', {
     fillPickFolder: () => ipcRenderer.invoke('gallery:fill-pick-folder'),
     fillClearFolders: () => ipcRenderer.invoke('gallery:fill-clear-folders'),
     onFillProgress: (cb) => subscribe('gallery:fill-progress', cb),
+    // 태그를 파일에 쓰기 (31 ②): 쓸 장수 · 남은 공간 보기 → 쓰기 (진행 알림, 닫을 때 묻기)
+    tagWriteInfo: () => ipcRenderer.invoke('gallery:tag-write-info'),
+    tagWrite: () => ipcRenderer.invoke('gallery:tag-write'),
+    onTagWriteProgress: (cb) => subscribe('gallery:tag-write-progress', cb),
+    onTagWriteAsk: (cb) => subscribe('gallery:tag-write-ask', cb),
     rescan: () => ipcRenderer.invoke('gallery:rescan'),
     openScreen: (name) => ipcRenderer.invoke('gallery:open-screen', name), // 'import' | 'gallery'
     // 구독을 끊는 함수를 돌려줘요

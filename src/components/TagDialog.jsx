@@ -4,7 +4,7 @@
 //   mode="tagRemove" : 고른 사진들에 내가 붙인 태그 중 하나를 골라요
 //   이름이 바뀔 때마다 main에 미리보기를 다시 부탁하고, 늦게 온 옛 응답은 버려요 (요청 번호)
 //   지금 이름에 맞는 미리보기가 오기 전에는 실행 버튼이 꺼져 있어요. 100장 이상이면 장수 확인 체크를 한 번 더 받아요
-//   태그는 DB와 기록 파일에만 저장돼요. 사진 파일에는 쓰지 않아요
+//   붙이고 떼기는 DB와 기록 파일에 먼저 저장돼요. 파일에는 "N장 파일에 태그 쓰기"를 눌러야 써요 (31 ②)
 
 import React, { useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
@@ -32,7 +32,7 @@ export default function TagDialog({ mode, ids, onClose, onApplied, initialName =
   useEffect(() => {
     let alive = true;
     const load = adding
-      ? api.tagList().then((r) => [...r.manual, ...r.album].map((t) => t.name).filter((n, i, all) => all.indexOf(n) === i))
+      ? api.tagList().then((r) => r.manual.map((t) => t.name))
       : api.selectionTags(ids);
     load.then(
       (list) => { if (alive) setKnown(list); },
@@ -165,9 +165,8 @@ export default function TagDialog({ mode, ids, onClose, onApplied, initialName =
               ))}
             </div>
           ) : (
-            !knownError && <p className="dialog-sub">고른 사진에 내가 붙인 태그가 없어요. 앨범에서 가져온 태그는 뗄 수 없어요.</p>
+            !knownError && <p className="dialog-sub">고른 사진에 붙은 태그가 없어요.</p>
           )}
-          {!adding && known.length > 0 && <p className="dialog-sub">앨범에서 가져온 같은 이름의 태그는 떼지 않고 그대로 남아요.</p>}
           {knownError && <p className="dialog-error" role="alert">{knownError}</p>}
         </div>
 
