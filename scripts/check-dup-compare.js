@@ -264,6 +264,77 @@ const items = [
           JSON.stringify({ htmlOk, texts, preOk, mainOk, readOnly })));
       }
 
+
+      // 58i 그림은 따로 도는 프로그램(lib/thumb-worker.js)에서: 진짜 사진은 그림이 오고,
+      //     그 프로그램이 꺼지면 기다리던 그림만 null 이고 다음 그림 때 새로 띄움, 답이 없으면 끄고 null, close 하면 꺼짐 (2026-11-24 앱 꺼짐)
+      //     점검은 node child_process.fork 로 띄워요 (앱은 Electron utilityProcess.fork)
+      {
+        const cp = require('child_process');
+        const { createProcMake } = require('../lib/thumb-proc');
+        const kids = [];
+        const spawn = (file) => {
+          const c = cp.fork(file, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+          kids.push(c);
+          return { postMessage: (m) => c.send(m), on: (ev, fn) => c.on(ev, fn), kill: () => c.kill() };
+        };
+        const pics = path.join(root, 'pics');
+        const tempDir = path.join(root, 'userData', 'compare-tmp');
+        fs.mkdirSync(tempDir, { recursive: true });
+        const before = listAll(pics);
+        const resolvedTools = env.tools || (await require('../lib/tools').detectTools({}, APP));
+        const real = createProcMake({ spawn, px: C.THUMB_PX, videoTimeoutMs: C.FFMPEG_TIMEOUT_MS });
+        const [jpg, none] = await Promise.all([
+          real(path.join(pics, 'IMG_0101.jpg'), { tools: resolvedTools, tempBase: path.join(tempDir, 'cmp-w-1') }),
+          real(path.join(pics, '없는파일.jpg'), { tools: resolvedTools, tempBase: path.join(tempDir, 'cmp-w-2') }),
+        ]);
+        const realRunning = real.stats().running;
+        real.close();
+        const realOk = Buffer.isBuffer(jpg) && jpg.length > 100 && none === null && realRunning && !real.stats().running
+          && JSON.stringify(before) === JSON.stringify(listAll(pics)) && listAll(tempDir).length === 0;
+
+        // 가짜 그림 프로그램: 'crash' 를 받으면 바로 꺼지고, 'hang' 은 답하지 않고, 나머지는 'ok' 를 돌려줘요
+        const fakeFile = path.join(root, 'fake-thumb-worker.js');
+        fs.writeFileSync(fakeFile, [
+          "process.on('message', (m) => {",
+          "  if (m.p === 'crash') process.exit(3);",
+          "  if (m.p === 'hang') return;",
+          "  process.send({ id: m.id, b64: Buffer.from('ok').toString('base64') });",
+          '});',
+          "process.on('disconnect', () => process.exit(0));",
+        ].join(String.fromCharCode(10)));
+        const crashes = [];
+        const fake = createProcMake({ spawn, file: fakeFile, timeoutMs: 1500, onCrash: (e) => crashes.push(e) });
+        const s = (b) => (Buffer.isBuffer(b) ? b.toString() : b);
+        const first = s(await fake('a.jpg'));
+        const crashed = s(await fake('crash'));
+        const afterCrash = fake.stats();
+        const again = s(await fake('b.jpg')); // 새로 띄워서 다시 돼요
+        const hung = s(await fake('hang')); // 답이 없으면 1.5초 뒤 끄고 null
+        const afterHang = fake.stats();
+        const third = s(await fake('c.jpg'));
+        fake.close();
+        const fakeOk = first === 'ok' && crashed === null && afterCrash.crashes === 1 && !afterCrash.running && crashes.length === 1 && crashes[0].code === 3
+          && again === 'ok' && hung === null && !afterHang.running && afterHang.crashes === 1 && third === 'ok' && !fake.stats().running;
+        for (const k of kids) {
+          try {
+            k.kill();
+          } catch (e) {
+            // 이미 꺼짐
+          }
+        }
+
+        // 앱 연결: main 은 utilityProcess 로 띄우고 비교 그림에 끼우고 끌 때 같이 끔, 화면 문구
+        const main = fs.readFileSync(path.join(APP, 'main.js'), 'utf8');
+        const html = fs.readFileSync(path.join(APP, 'index.html'), 'utf8');
+        const mainOk = main.includes("utilityProcess.fork(file, [], { serviceName: 'pvm-compare-thumbs' })") && main.includes('make: compareMake')
+          && main.indexOf('if (compareMake) compareMake.close();') > main.indexOf("app.on('will-quit'") && main.includes("app.on('will-quit'");
+        const htmlOk = html.includes('id="bannerTitle"') && html.includes('const binLoss = (d) =>') && html.includes('모두 체크 (정리)') && html.includes('모두 체크 풀기 (남김)')
+          && html.includes('원본은 ${src}에 두고 이 가져오기 마치기') && !html.includes('✔ 작업 끝내기');
+        out.push(sub('58i 그림은 따로 도는 프로그램에서: 진짜 사진은 그림, 꺼지면 그 그림만 null 이고 다음에 새로 띄움, 답이 없으면 끄고 null, 앱 연결 · 문구',
+          realOk && fakeOk && mainOk && htmlOk,
+          JSON.stringify({ realOk, jpg: jpg && jpg.length, none, fakeOk, first, crashed, afterCrash, again, hung, afterHang, third, crashes, mainOk, htmlOk })));
+      }
+
       if (own) fs.rmSync(tmpBase, { recursive: true, force: true });
       return out;
     },

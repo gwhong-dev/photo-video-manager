@@ -6,7 +6,7 @@
 //   바로 끝내요. 대화상자는 사용자 화면에서 점검을 멈춰 세워요. 다른 require보다 먼저 있어야 해요
 if (process.env.PVM_USER_DATA) process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
 
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, session, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, session, utilityProcess, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -35,7 +35,8 @@ const { JobStore, jobStats } = require('./lib/job');
 const { cleanCandidatesAsync, cleanTargets, recheckTargets, overflowRootsOf, cleanInfo, cleanOriginals, createHashCache, countHashesFrom, trustedItemsOf, refreshTrusted } = require('./lib/cleaner');
 const { createDriveKindOf } = require('./lib/platform');
 const { samplePool, sampleView, openSample } = require('./lib/clean-sample');
-const { comparePool, compareRows, compareFile, keptItems, markUserKept, createCompareThumbs } = require('./lib/dup-compare');
+const { comparePool, compareRows, compareFile, keptItems, markUserKept, createCompareThumbs, THUMB_PX, FFMPEG_TIMEOUT_MS } = require('./lib/dup-compare');
+const { createProcMake } = require('./lib/thumb-proc');
 const { openFolderOnly } = require('./lib/open-folder');
 const { createLogger, now } = require('./lib/logger');
 const { guardWindow } = require('./lib/window-guard');
@@ -781,7 +782,19 @@ let cleanJob = null; // 위 서명을 만든 작업 (다른 작업으로 바뀌�
 let cleanOverflowRoots = null; // 확인 창에서 휴지통에 다 담기지 않는다고 나온 드라이브들
 let cleanCompare = null; // 중복 비교 목록 (확인 창에서 정리될 중복 원본 ↔ 남는 파일, lib/dup-compare.js)
 let compareThumbs = null; // 중복 비교 줄의 작은 그림 (메모리에만, 임시 파일은 설정 폴더 아래)
-const getCompareThumbs = () => compareThumbs || (compareThumbs = createCompareThumbs({ tempDir: path.join(userDir(), 'compare-tmp'), getTools: () => tools }));
+// 그림은 따로 도는 프로그램(lib/thumb-worker.js)에서 만들어요: sharp 가 어떤 사진에서 꺼져도 앱은 안 꺼지고 그 그림만 "그림 없음" (2026-11-24)
+let compareMake = null;
+const getCompareThumbs = () => {
+  if (compareThumbs) return compareThumbs;
+  compareMake = createProcMake({
+    spawn: (file) => utilityProcess.fork(file, [], { serviceName: 'pvm-compare-thumbs' }),
+    px: THUMB_PX,
+    videoTimeoutMs: FFMPEG_TIMEOUT_MS,
+    onCrash: ({ code, pending }) => console.error(`비교 그림 프로그램이 꺼졌어요 (code ${code}, 기다리던 그림 ${pending}개는 그림 없이 보여요)`),
+  });
+  compareThumbs = createCompareThumbs({ tempDir: path.join(userDir(), 'compare-tmp'), getTools: () => tools, make: compareMake });
+  return compareThumbs;
+};
 // 정리 확인 창에서 만든 것들 비우기 (정리를 끝냈을 때, 작업을 끝내거나 새로 시작할 때)
 //   지난 작업의 샘플 후보가 남아 있으면 다른 작업의 파일을 열 수 있어서요
 function resetCleanCheck() {
@@ -1030,4 +1043,5 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   if (gallery) gallery.close(); // 썸네일 만들던 프로그램을 기다리지 않고 DB를 닫아요
   if (et) et.close();
+  if (compareMake) compareMake.close(); // 비교 그림 프로그램도 꺼요
 });
