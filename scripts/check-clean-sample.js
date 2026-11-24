@@ -178,6 +178,26 @@ const items = [
         out.push(sub('48g 작업 끝내기, 새 작업, 정리 끝에 샘플 후보 비움, 폴더 열기는 실제 폴더만', reset && used && folderOk && wired,
           JSON.stringify({ reset, used, res, opened, wired })));
       }
+      // 48h 창 안 크게 보기: 큰 그림은 따로 도는 프로그램에서 (본체에서 sharp 직접 부르지 않음), 번호로만, 넘기기 · 닫기 · 표시 연결
+      {
+        const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+        const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+        const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+        const h = main.slice(main.indexOf("ipcMain.handle('clean-sample-open'"), main.indexOf("ipcMain.handle('clean-compare-rows'"));
+        const proc = /createProcMake\(\{[^}]*pvm-sample-big/s.test(main) && h.includes('samplePath(cleanSample, key.view)') && h.includes('getSampleBig().get(p)');
+        const noSharp = !/require\(['"]sharp['"]\)/.test(main) && !h.includes('photoBuffer');
+        const reset = /function resetCleanCheck\(\) \{[^}]*sampleBig\.clear\(\)/.test(main);
+        const keys = ['ArrowLeft', 'ArrowRight', 'Escape'].every((k) => html.includes(`e.key === '${k}'`));
+        const ui = html.includes("`${i + 1} / ${list.length}`") && html.includes('id="cvOpen"') && html.includes('Windows 에서 열기') && html.includes('openCleanSample({ view: s.key })');
+        const guard = html.includes('if (mine !== viewer.seq) return;') && html.includes("if (!$('cdViewer').hidden) return closeViewer();");
+        const S2 = require('../lib/clean-sample');
+        const pool = [{ path: 'X:\a.jpg' }, { path: 'X:\b.jpg' }];
+        const range = S2.samplePath(pool, 1) === 'X:\b.jpg' && [-1, 2, 99, '1', null, undefined, 1.5, {}].every((k) => S2.samplePath(pool, k) === null) && S2.samplePath(null, 0) === null;
+        const tmpSplit = main.includes("'sample-big-tmp'");
+        const preloadSame = preload.includes("openCleanSample: (key) => ipcRenderer.invoke('clean-sample-open', key)");
+        out.push(sub('48h 샘플을 창 안에서 크게 보기 (← → · Esc · n / 10 · 큰 그림은 따로 도는 프로그램에서)', proc && noSharp && reset && keys && ui && guard && preloadSame && range && tmpSplit,
+          JSON.stringify({ proc, noSharp, reset, keys, ui, guard, preloadSame, range, tmpSplit })));
+      }
       return out;
     },
   },
