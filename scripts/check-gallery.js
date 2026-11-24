@@ -1775,6 +1775,8 @@ const items = [
           on() {},
           loadFile: async () => {},
           isDestroyed: () => false,
+          setProgressBar() {}, // 작업 표시줄 진행 막대 (69)
+          isMinimized: () => false, // 최소화하지 않은 큰 창 → 작은 진행 창은 만들지 않아요
         };
         const trashedPaths = []; // 가짜 휴지통에 보낸 경로 (18h)
         const fakeElectron = {
@@ -1788,7 +1790,7 @@ const items = [
             whenReady: () => ({ then: (cb) => { readyRun = Promise.resolve().then(cb); return readyRun; } }),
           },
           BrowserWindow: function FakeWindow() { winCount++; return win; },
-          ipcMain: { handle: (ch, fn) => handlers.set(ch, fn) },
+          ipcMain: { handle: (ch, fn) => handlers.set(ch, fn), on() {} }, // on = 작은 진행 창 버튼 (여기선 안 봐요, 69 에서 봐요)
           dialog: { showOpenDialog: async () => { dialogCalls++; return { canceled: true, filePaths: [] }; }, showMessageBoxSync: () => 1, showMessageBox: async () => ({}) },
           shell: { trashItem: async (p) => { trashedPaths.push(p); }, openPath: async () => '' }, // 휴지통은 가짜 (보낸 경로만 기록, 18h)
           protocol: { registerSchemesAsPrivileged() {}, handle() {} },
