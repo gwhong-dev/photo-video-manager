@@ -260,3 +260,64 @@ export function progressText(p) {
   if (p.waiting) return `사진 지문 ${count(p.done)} / ${count(p.total)}장. 가져오기가 끝나면 이어서 만들어요.`;
   return `사진 지문 만드는 중 ${count(p.done)} / ${count(p.total)}장. 끝나면 묶음이 더 생길 수 있어요.`;
 }
+
+// ---------- 같은 영상 (두 번 저장된 영상, 2026-11-24) ----------
+
+// 묶음에서 버릴 영상 번호 (남길 영상 = 첫 번째는 빼요)
+export function videoDiscardIds(groups) {
+  const out = [];
+  for (const g of groups || []) for (const id of g.ids.slice(1)) out.push(id);
+  return out;
+}
+
+// 영상 크기 글 (예: 1.2GB, 35MB)
+export function sizeText(bytes) {
+  const n = Number(bytes || 0);
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)}GB`;
+  return `${Math.max(1, Math.round(n / 1024 ** 2))}MB`;
+}
+
+// 위쪽 요약 한 줄
+export function videoSummary(groups) {
+  const n = videoDiscardIds(groups).length;
+  if (!n) return '';
+  return `두 번 저장된 같은 영상 묶음 ${count((groups || []).length)}개, 옮길 영상 ${count(n)}개`;
+}
+
+// 확인 창의 실행 버튼
+export function videoDiscardLabel(info) {
+  if (!info || !info.count) return '';
+  if (info.move === 0) return `같은 영상 ${count(info.count)}개 휴지통으로 옮기기`;
+  if (info.trash === 0) return `같은 영상 ${count(info.count)}개 정리완료원본 폴더로 옮기기`;
+  return `같은 영상 ${count(info.count)}개 옮기기`;
+}
+
+// 확인 창 설명
+export function videoPreviewLines(info) {
+  if (!info || !info.count) return [];
+  const lines = [`묶음 ${count(info.groups)}개에서 꼬리 붙은 이름의 영상 ${count(info.count)}개를 옮겨요. 이름에 꼬리가 없는 영상은 남겨요.`];
+  lines.push('옮기기 직전에 두 영상의 화면 데이터를 다시 비교해서, 다르면 옮기지 않아요 (영상 하나에 수십 초 걸릴 수 있어요).');
+  if (info.trash > 0) lines.push(`휴지통으로 ${count(info.trash)}개`);
+  if (info.move > 0) lines.push(`휴지통이 없는 드라이브라 백업 폴더 안 _정리완료원본 폴더로 ${count(info.move)}개 (갤러리에는 안 보이고, 지우는 것은 직접 확인한 뒤에 해 주세요)`);
+  for (const w of info.warnings || []) lines.push(`주의: ${w}`);
+  return lines;
+}
+
+// 끝난 뒤 알림 한 줄
+export function videoResultText(r) {
+  if (!r) return '';
+  const parts = [];
+  if (r.trashed) parts.push(`휴지통으로 ${count(r.trashed)}개`);
+  if (r.moved) parts.push(`_정리완료원본 폴더로 ${count(r.moved)}개`);
+  let text = parts.length ? `같은 영상 ${parts.join(', ')} 옮겼어요.` : '옮긴 영상이 없어요.';
+  if (r.fail) text += ` ${count(r.fail)}개는 옮기지 않았어요${r.logName ? ` (로그 ${r.logName})` : ''}.`;
+  if (r.logFail) text += ` 로그에 ${count(r.logFail)}줄을 적지 못했어요 (디스크 공간을 확인해 주세요).`;
+  return text;
+}
+
+// 영상 지문 진행 글
+export function videoProgressText(p) {
+  if (!p || !p.total || !p.hashing) return '';
+  if (p.done >= p.total) return '';
+  return `같은 영상 찾는 중 ${count(p.done)} / ${count(p.total)}개. 끝나면 묶음이 더 생길 수 있어요.`;
+}

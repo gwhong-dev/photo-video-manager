@@ -56,6 +56,11 @@ export const api = {
   trashSelected: (ids) => gallery().trashSelected(ids), // 갤러리에서 고른 사진 휴지통으로: 옮기기
   previewRotate: (id) => gallery().previewRotate(id), // 돌리기: 미리보기 (원본 바꾸기면 어디로 옮기는지)
   rotate: (id, turn, mode) => gallery().rotate(id, turn, mode), // 돌리기: 실행 (mode 'copy' | 'replace')
+  // 같은 영상 (두 번 저장된 영상, 2026-11-24)
+  listSameVideo: () => gallery().listSameVideo(),
+  previewSameVideo: (ids) => gallery().previewSameVideo(ids),
+  discardSameVideo: (ids) => gallery().discardSameVideo(ids),
+  onSameVideoProgress: (cb) => gallery().onSameVideoProgress(cb),
   onSimilarProgress: (cb) => gallery().onSimilarProgress(cb),
   aiState: () => gallery().aiState(),
   aiDownload: () => gallery().aiDownload(),

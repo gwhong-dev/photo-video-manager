@@ -104,6 +104,11 @@ contextBridge.exposeInMainWorld('api', {
     previewDiscard: (ids, whole) => ipcRenderer.invoke('gallery:similar-preview', ids, whole || []),
     discardSimilar: (ids, whole) => ipcRenderer.invoke('gallery:similar-discard', ids, whole || []),
     onSimilarProgress: (cb) => subscribe('gallery:similar-progress', cb),
+    // 같은 영상 (두 번 저장된 영상): 묶음 목록, 옮기기 미리보기, 옮기기 (id로만, 2026-11-24)
+    listSameVideo: () => ipcRenderer.invoke('gallery:same-video-list'),
+    previewSameVideo: (ids) => ipcRenderer.invoke('gallery:same-video-preview', ids),
+    discardSameVideo: (ids) => ipcRenderer.invoke('gallery:same-video-discard', ids),
+    onSameVideoProgress: (cb) => subscribe('gallery:same-video-progress', cb),
     // 갤러리에서 고른 사진 휴지통으로: 미리보기(몇 장이 어디로, 아무것도 옮기지 않음), 옮기기 (id로만)
     previewTrash: (ids) => ipcRenderer.invoke('gallery:trash-preview', ids),
     trashSelected: (ids) => ipcRenderer.invoke('gallery:trash-selected', ids),

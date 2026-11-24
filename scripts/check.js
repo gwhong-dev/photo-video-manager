@@ -1777,6 +1777,8 @@ const ITEMS = [
   ...require('./check-video-hash').items,
   // 69번은 태그를 사진 · 영상 파일에 쓰기 점검 (scripts/check-tag-write.js)
   ...require('./check-tag-write').items,
+  // 70번은 비슷한 사진 화면의 "같은 영상" 묶음 점검 — 두 번 저장된 영상 정리 (scripts/check-same-video.js)
+  ...require('./check-same-video').items,
 ];
 
 // ---------- 수동 샘플 처리 결과 표 (참고용) ----------

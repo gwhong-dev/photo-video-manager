@@ -16,11 +16,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { formatCount, formatTakenAt } from '../format.mjs';
-import { aiConfirmLabel, aiConfirmLines, aiLine, discardAll, discardIds, discardLabel, groupAllLabel, groupDiscardIds, groupNote, groupReviewLabel, keepAll, keptAfterDiscard, markOf, pinMarks, previewLines, progressText, pruneOverrides, recommendText, resultText, reviewLabel, toggleMark, wholeIds } from '../similar-view.mjs';
+import { aiConfirmLabel, aiConfirmLines, aiLine, discardAll, discardIds, discardLabel, groupAllLabel, groupDiscardIds, groupNote, groupReviewLabel, keepAll, keptAfterDiscard, markOf, pinMarks, previewLines, progressText, pruneOverrides, recommendText, resultText, reviewLabel, toggleMark, wholeIds, sizeText, videoDiscardIds, videoDiscardLabel, videoPreviewLines, videoProgressText, videoResultText, videoSummary } from '../similar-view.mjs';
 import EmptyState from './EmptyState.jsx';
 import CompareView from './CompareView.jsx';
 
 const PAGE = 30; // 한 번에 보여 주는 묶음 수
+const MAX_VIDEO = 20000; // 같은 영상을 한 번에 옮기는 최대 개수 (lib/similar-discard.js MAX_DISCARD 와 같게)
 
 // PC 안 AI 비교 한 줄: 모델이 없으면 "받기" 버튼 → 확인 창(어디서 · 얼마나 · 무엇을 보내지 않는지) → 받기
 //   모델은 이 확인 창에서 누를 때만 받아요 (2026-11-16 사용자 결정). 받은 뒤에는 특징값 만드는 진행만 보여요
@@ -83,6 +84,162 @@ function AiBar({ onNotice, onChanged }) {
         </div>
       )}
     </>
+  );
+}
+
+// 같은 영상 한 칸: 남김/버림이 정해져 있어서 누르지 않아요
+function SameVideoCell({ file, keep }) {
+  const [broken, setBroken] = useState(false);
+  return (
+    <div className={`similar-cell${keep ? ' keep' : ' discard'}`}>
+      <div className="cell empty">
+        {broken
+          ? <span className="no-preview">미리보기 없음</span>
+          : <img src={`pvm://thumb/${file.id}`} alt="" loading="lazy" draggable="false" onError={() => setBroken(true)} />}
+        {!keep && <span className="similar-x" aria-hidden="true" />}
+      </div>
+      <span className="similar-mark same-video-mark">{keep ? '남김' : '버림'}</span>
+      <span className="similar-size same-video-name" title={file.name}>{file.name}</span>
+      <span className="similar-size">{sizeText(file.size)}</span>
+    </div>
+  );
+}
+
+// 같은 영상 묶음 (두 번 저장된 백업 영상, 2026-11-24 사용자 요청): 비슷한 사진 화면 맨 위
+//   남길 영상(이름에 꼬리가 없는 것)과 옮길 영상은 main 이 정해요. 확인 창을 보고 누를 때만 옮겨요
+//   영상 지문은 main 이 뒤에서 하나씩 만들고(gallery:same-video-progress), 다 만들면 목록을 다시 받아요
+function SameVideoSection({ gen, onNotice }) {
+  const [data, setData] = useState(null); // { groups, pending, hashing, noFfmpeg }
+  const [error, setError] = useState('');
+  const [progress, setProgress] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [shown, setShown] = useState(PAGE);
+  const [confirm, setConfirm] = useState(null); // { ids, info }
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const seq = useRef(0);
+  const cancelRef = useRef(null);
+
+  const load = useCallback(async () => {
+    const mine = ++seq.current;
+    try {
+      const d = await api.listSameVideo();
+      if (mine !== seq.current) return; // 늦게 온 옛 응답
+      setData(d);
+      setError('');
+    } catch (e) {
+      if (mine === seq.current) setError(errorText(e));
+    }
+  }, []);
+  useEffect(() => { load(); }, [gen, load]);
+  useEffect(() => {
+    let off = () => {};
+    try {
+      off = api.onSameVideoProgress((p) => {
+        setProgress(p);
+        if (!p.hashing) load();
+      });
+    } catch (e) { /* electron 밖 */ }
+    return () => off();
+  }, [load]);
+
+  // 확인 창: 열리면 그만두기 버튼에 초점, Esc로 닫기 (옮기는 중에는 안 닫혀요)
+  useEffect(() => {
+    if (!confirm) return undefined;
+    if (cancelRef.current) cancelRef.current.focus();
+    const onKey = (e) => {
+      if (e.key !== 'Escape' || busyRef.current) return;
+      e.stopPropagation();
+      setConfirm(null);
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [confirm]);
+
+  const run = async (fn) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await fn();
+    } catch (e) {
+      onNotice(errorText(e));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+  const review = (ids) => run(async () => {
+    if (!ids.length) return;
+    const info = await api.previewSameVideo(ids);
+    setConfirm({ ids, info });
+  });
+  const discard = () => run(async () => {
+    const r = await api.discardSameVideo(confirm.ids);
+    setConfirm(null);
+    onNotice(videoResultText(r));
+    await load();
+  });
+
+  if (error) return <div className="same-video"><p className="similar-why">같은 영상을 불러오지 못했어요. {error}</p></div>;
+  if (!data) return null;
+  const groups = data.groups || [];
+  const all = videoDiscardIds(groups).slice(0, MAX_VIDEO);
+  const prog = progress && progress.hashing ? videoProgressText(progress) : (data.hashing ? '같은 영상을 찾는 중이에요.' : '');
+  const noFfmpeg = data.noFfmpeg ? `FFmpeg 가 없어서 같은 영상인지 확인하지 못했어요 (확인할 영상 ${formatCount(data.pending)}개). 가져오기 화면에서 FFmpeg 를 찾아 주세요.` : '';
+  if (!groups.length && !prog && !noFfmpeg) return null;
+
+  return (
+    <div className="same-video" aria-label="같은 영상">
+      <div className="similar-head">
+        <h3 className="panel-heading">같은 영상</h3>
+        {groups.length > 0 && <span className="similar-count">{videoSummary(groups)}</span>}
+        <span className="similar-head-actions">
+          {groups.length > 0 && (
+            <button type="button" className="link-button" onClick={() => setOpen((o) => !o)}>{open ? '묶음 접기' : '묶음 펼쳐 보기'}</button>
+          )}
+          {all.length > 0 && (
+            <button type="button" className="similar-group-go" disabled={busy} onClick={() => review(all)}>옮길 영상 {formatCount(all.length)}개 확인하기</button>
+          )}
+        </span>
+      </div>
+      {groups.length > 0 && <p className="similar-why">한 폴더에 두 번 저장된 영상이에요. 이름에 _1 같은 꼬리가 없는 영상을 남기고 나머지를 옮겨요.</p>}
+      {prog && <p className="similar-why">{prog}</p>}
+      {noFfmpeg && <p className="similar-why">{noFfmpeg}</p>}
+      {open && groups.slice(0, shown).map((g) => (
+        <div className="same-video-group" key={g.ids.join(',')}>
+          <div className="similar-head">
+            <span className="similar-count">{g.files[0].takenAt ? formatTakenAt(g.files[0].takenAt) : '날짜 없음'}</span>
+            <span className="similar-head-actions">
+              <button type="button" className="link-button" disabled={busy} onClick={() => review(g.ids.slice(1))}>이 묶음만 옮기기</button>
+            </span>
+          </div>
+          <div className="similar-grid">
+            {g.files.map((f) => <SameVideoCell key={f.id} file={f} keep={f.id === g.keepId} />)}
+          </div>
+        </div>
+      ))}
+      {open && groups.length > shown && (
+        <button type="button" className="similar-more" onClick={() => setShown((n) => n + PAGE)}>
+          묶음 {formatCount(Math.min(PAGE, groups.length - shown))}개 더 보기 (남은 {formatCount(groups.length - shown)}개)
+        </button>
+      )}
+      {confirm && (
+        <div className="dialog-backdrop">
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="same-video-confirm-title">
+            <h2 id="same-video-confirm-title" className="dialog-title">같은 영상 옮기기</h2>
+            <div className="dialog-pick similar-confirm">
+              {videoPreviewLines(confirm.info).map((l) => <p key={l}>{l}</p>)}
+              <p className="panel-hint">영상 파일은 지우지 않아요. 휴지통에서 되살릴 수 있어요.</p>
+            </div>
+            <div className="dialog-foot">
+              <button type="button" ref={cancelRef} disabled={busy} onClick={() => setConfirm(null)}>그만두기</button>
+              <button type="button" className="primary" disabled={busy} onClick={discard}>{busy ? '확인하며 옮기는 중' : videoDiscardLabel(confirm.info)}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -223,6 +380,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
     return (
       <section className="similar" aria-label="비슷한 사진">
         <AiBar onNotice={onNotice} onChanged={load} />
+        <div className="same-video-only"><SameVideoSection gen={gen} onNotice={onNotice} /></div>
         <EmptyState title={progress ? '비슷한 사진을 찾는 중이에요' : '비슷한 사진이 없어요'} action={again}>
           {progress || '3초 안에 이어서 찍었거나, 모양이 거의 같거나, AI 로 같은 장면인 1분 안 사진이 없어요.'}
         </EmptyState>
@@ -305,6 +463,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
         )}
       </div>
       <div className="similar-body">
+        <SameVideoSection gen={gen} onNotice={onNotice} />
         {groups.slice(0, shown).map((g) => {
           const gone = groupDiscardIds(g, overrides).length;
           const note = groupNote(g);
