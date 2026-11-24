@@ -1773,7 +1773,9 @@ const ITEMS = [
   ...require('./check-media-edit').items,
   // 67번은 내용 지문 비교 점검 — 백업 파일에 태그를 써도 같은 사진으로 보기 (scripts/check-content-hash.js)
   ...require('./check-content-hash').items,
-  // 69번은 태그를 사진 · 영상 파일에 쓰기 점검 (scripts/check-tag-write.js). 68번은 #141 영상 지문 점검 자리
+  // 68번은 영상 화면 데이터 지문 점검 — 이름이 다른 같은 영상을 또 저장하지 않기 (scripts/check-video-hash.js)
+  ...require('./check-video-hash').items,
+  // 69번은 태그를 사진 · 영상 파일에 쓰기 점검 (scripts/check-tag-write.js)
   ...require('./check-tag-write').items,
 ];
 

@@ -11,7 +11,7 @@ const path = require('path');
 const fs = require('fs');
 
 const { ExifTool, ExifToolPool } = require('./lib/exiftool');
-const { detectTools } = require('./lib/tools');
+const { detectTools, videoStreamHash } = require('./lib/tools');
 const { makePlan, priorKey, readMetaWithKeys, META_TAGS, isVideoPath, NO_DATE_DIR, statusLabelOf, isIssue } = require('./lib/planner');
 
 // 원본 정리 직전에 변환된 중복을 확인할 정보 (애플 ID, 촬영 날짜, 가로×세로) → Map<keyOf(경로), 정보>
@@ -22,6 +22,14 @@ const cleanReadMeta = (paths) => {
 // 원본 정리 직전에 바이트 지문이 다른 중복을 내용 지문으로 한 번 더 비교 (백업 파일에 태그를 쓴 경우, lib/content-hash.js)
 const { sameContent } = require('./lib/content-hash');
 const cleanSameContent = (src, keep) => (et ? sameContent(et, src, keep) : Promise.resolve({ same: false, why: '내용 지문을 읽지 못해 남김', lasting: false }));
+// 영상 화면 데이터 지문 (MOV 원본과 변환한 MP4 를 비교, lib/tools.js). ffmpeg 를 못 찾았으면 null → 비교 안 함
+const videoHashOf = (p) => videoStreamHash(tools && tools.ffmpeg && tools.ffmpeg.ok ? tools.ffmpeg.path : null, p);
+// 원본 정리 직전에 "영상 내용이 같은" 중복(lib/planner.js ⑤)을 지문으로 한 번 더 비교
+const cleanSameVideo = async (src, keep) => {
+  const [a, b] = [await videoHashOf(src), await videoHashOf(keep)];
+  if (!a || !b) return { same: false, why: '영상 내용 지문을 읽지 못해 남김', lasting: false };
+  return a === b ? { same: true, why: '' } : { same: false, why: '백업 영상과 화면 데이터가 달라 남김', lasting: true };
+};
 const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
 const { cleanCandidatesAsync, cleanTargets, recheckTargets, overflowRootsOf, cleanInfo, cleanOriginals, createHashCache, countHashesFrom, trustedItemsOf, refreshTrusted } = require('./lib/cleaner');
@@ -444,7 +452,7 @@ ipcMain.handle('make-plan', async (e, { source, backupRoot, includeSub }) => {
     }
     // 미리보기 동안만 exiftool을 여러 개 켜서 파일 정보를 나눠 읽어요 (파일이 많을 때 빨라져요). 끝나면 꺼요
     planEt = new ExifToolPool(tools.exiftool.path, DEFAULT_CONCURRENCY);
-    lastPlan = await makePlan({ source, backupRoot, includeSub }, planEt, (msg) => send('plan-status', msg), { priorResults });
+    lastPlan = await makePlan({ source, backupRoot, includeSub }, planEt, (msg) => send('plan-status', msg), { priorResults, videoHashOf });
   } finally {
     planning = false;
     if (planEt) planEt.close();
@@ -621,7 +629,7 @@ ipcMain.handle('trash-info', async () => {
     // 쓸 때 기록과 같은 결과 파일은 지문을 다시 읽지 않고, 표본만 끝까지 확인해요 (2026-11-15 결정)
     const sigs = new Map();
     let stats = null;
-    const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, sameContent: cleanSameContent, sigs, onStats: (s) => (stats = s), onProgress: (p) => send('clean-check-progress', p) }) : [];
+    const targets = job ? await cleanTargets(job, { hashOf: cleanHashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, sameContent: cleanSameContent, sameVideo: cleanSameVideo, sigs, onStats: (s) => (stats = s), onProgress: (p) => send('clean-check-progress', p) }) : [];
     cleanSigs = sigs;
     cleanJob = job;
     cleanSample = samplePool(job, targets);
@@ -663,7 +671,7 @@ ipcMain.handle('trash-originals', async (e, opts = {}) => {
     const progress = (p) => send('clean-check-progress', { ...p, final: true });
     const targets = !job ? [] : cleanSigs && cleanJob === job
       ? await recheckTargets(job, cleanSigs, { onProgress: progress })
-      : await cleanTargets(job, { hashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, sameContent: cleanSameContent, onProgress: progress });
+      : await cleanTargets(job, { hashOf, ffprobe: tools.ffprobe.path, store, logger, readMeta: cleanReadMeta, sameContent: cleanSameContent, sameVideo: cleanSameVideo, onProgress: progress });
     // 휴지통이 모자란 드라이브: 사용자가 "휴지통으로"를 직접 고른 때만 휴지통, 아니면 _정리완료원본으로
     //   확인 창을 거치지 않았으면(넘친 드라이브를 모름) 지금 다시 계산해서 안전한 쪽(옮기기)으로 막아요 (#115 검증 ⚠️)
     let moveRoots = null;
