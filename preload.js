@@ -59,6 +59,9 @@ contextBridge.exposeInMainWorld('api', {
   onJobInfo: (cb) => subscribe('job-info', cb),
   // 가져올 때 태그를 붙인 결과 (회차 끝 다시 읽기가 끝난 뒤 와요)
   onImportTag: (cb) => subscribe('import-tag', cb),
+  // 작은 진행 창(최소화했을 때 뜨는 창)에서 일시정지 · 이어서 실행을 눌렀을 때
+  onMiniPause: (cb) => subscribe('mini-pause', cb),
+  onMiniResume: (cb) => subscribe('mini-resume', cb),
   onTrashProgress: (cb) => ipcRenderer.on('trash-progress', (e, data) => cb(data)),
   onCleanCheckProgress: (cb) => ipcRenderer.on('clean-check-progress', (e, data) => cb(data)),
 
