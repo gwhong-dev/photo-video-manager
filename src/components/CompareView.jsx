@@ -137,11 +137,8 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
 
   const decide = (want) => {
     if (current === null || current === undefined) return;
+    // 마지막 남김도 버림으로 바꿀 수 있어요 (2026-11-24 사용자 요청)
     const r = setMark(group, current, want, overrides);
-    if (r.refused) {
-      setNote('묶음마다 한 장은 남겨요. 다른 사진을 먼저 남김으로 바꿔 주세요.');
-      return;
-    }
     setNote('');
     onOverrides(r.overrides);
     setCurrent(afterDecide(ids, current));
@@ -159,11 +156,8 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
   const toggleOf = (id) => () => {
     const want = markOf(group, id, overrides) === 'keep' ? 'discard' : 'keep';
     const r = setMark(group, id, want, overrides);
-    if (r.refused) setNote('묶음마다 한 장은 남겨요. 다른 사진을 먼저 남김으로 바꿔 주세요.');
-    else {
-      setNote('');
-      onOverrides(r.overrides);
-    }
+    setNote('');
+    onOverrides(r.overrides);
   };
 
   // 키: ←/→ 넘기기, Space 고정, ↑ 버림, ↓ 남김, Esc 닫기 (창이 열린 동안 다른 화면 키로 가지 않게 막아요)

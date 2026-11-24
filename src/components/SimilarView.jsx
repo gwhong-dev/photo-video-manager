@@ -2,7 +2,7 @@
 // 역할: "비슷한 사진" 화면 (단계 4, docs/개발개요-v3.md 4-2)
 //   묶음마다 사진을 늘어놓고, 처음에는 추천 1장(흐리지 않음 → 노출 → 크기 → 선명함 → 파일 크기 순)만 "남김", 나머지는 "버림"으로 표시해요
 //   추천 사진에는 "추천" 표시, 묶음 제목 아래에 까닭 한 줄 (2026-11-16 사용자 결정)
-//   사진을 누르면 오른쪽 패널에 크게 보이고, 사진 아래 표시 버튼으로 남김과 버림을 바꿔요 (묶음마다 한 장은 꼭 남아요)
+//   사진을 누르면 오른쪽 패널에 크게 보이고, 사진 아래 표시 버튼으로 남김과 버림을 바꿔요 (한 묶음을 모두 버릴 수도 있어요, 2026-11-24)
 //   아래 버튼 → 확인 창(몇 장이 휴지통으로, 몇 장이 _정리완료원본 폴더로 가는지) → 옮기기. 영구 삭제는 안 해요
 //   남김/버림 표시에만 색연필 빨강을 써요 (CLAUDE.md 화면 디자인)
 //   묶음마다 "이 묶음에서 버릴 N장 옮기기"로 그 묶음만 먼저 옮길 수 있어요. 아래 버튼은 화면에 보인 묶음 전체 (2026-11-16 사용자 요청)
@@ -16,7 +16,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { formatCount, formatTakenAt } from '../format.mjs';
-import { aiConfirmLabel, aiConfirmLines, aiLine, discardIds, discardLabel, groupDiscardIds, groupNote, groupReviewLabel, keepAll, keptAfterDiscard, markOf, pinMarks, previewLines, progressText, pruneOverrides, recommendText, resultText, reviewLabel, toggleMark } from '../similar-view.mjs';
+import { aiConfirmLabel, aiConfirmLines, aiLine, discardAll, discardIds, discardLabel, groupAllLabel, groupDiscardIds, groupNote, groupReviewLabel, keepAll, keptAfterDiscard, markOf, pinMarks, previewLines, progressText, pruneOverrides, recommendText, resultText, reviewLabel, toggleMark, wholeIds } from '../similar-view.mjs';
 import EmptyState from './EmptyState.jsx';
 import CompareView from './CompareView.jsx';
 
@@ -114,7 +114,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
   const [error, setError] = useState('');
   const [overrides, setOverrides] = useState(() => new Map());
   const [shown, setShown] = useState(PAGE);
-  const [confirm, setConfirm] = useState(null); // { ids, info, keepIds } 확인 창 (keepIds = 옮긴 뒤 목록에서 뺄 남은 사진)
+  const [confirm, setConfirm] = useState(null); // { ids, whole, info, keepIds } 확인 창 (whole = 모두 버리는 묶음의 번호, keepIds = 옮긴 뒤 목록에서 뺄 남은 사진)
   const [busy, setBusy] = useState(false);
   const [compare, setCompare] = useState(null); // { key: 묶음 열쇠, startId } 크게 비교 창
   const busyRef = useRef(false);
@@ -231,9 +231,8 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
   }
 
   const toggle = (group, id) => {
-    const r = toggleMark(group, id, overrides);
-    if (r.refused) onNotice('묶음마다 한 장은 남겨요. 다른 사진을 먼저 남김으로 바꿔 주세요.');
-    else setOverrides(r.overrides);
+    // 마지막 남김도 버림으로 바꿀 수 있어요 (2026-11-24 사용자 요청: 한 묶음을 모두 버리고 싶을 때도 있음)
+    setOverrides(toggleMark(group, id, overrides).overrides);
   };
   // 모두 남기기: 화면 표시를 바로 바꾸고, 다음 실행에도 기억해요 (저장을 못 해도 이번 화면에서는 남김)
   const keepGroup = (g) => {
@@ -251,18 +250,30 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
   //   표시를 다시 맞추지 않으므로, 옛 표시가 남은 채 버리지 않게)
   const ids = discardIds(groups.slice(0, shown), overrides);
   const review = () => run(async () => {
-    const info = await api.previewDiscard(ids);
-    setConfirm({ ids, info, keepIds: keptAfterDiscard(groups.slice(0, shown), overrides) });
+    const whole = wholeIds(groups.slice(0, shown), overrides);
+    const info = await api.previewDiscard(ids, whole);
+    setConfirm({ ids, whole, info, keepIds: keptAfterDiscard(groups.slice(0, shown), overrides) });
   });
   // 이 묶음만 먼저: 같은 확인 창을 이 묶음의 버림만으로 열어요
   const reviewGroup = (g) => run(async () => {
     const gids = groupDiscardIds(g, overrides);
     if (!gids.length) return;
-    const info = await api.previewDiscard(gids);
-    setConfirm({ ids: gids, info, keepIds: keptAfterDiscard([g], overrides) });
+    const whole = wholeIds([g], overrides);
+    const info = await api.previewDiscard(gids, whole);
+    setConfirm({ ids: gids, whole, info, keepIds: keptAfterDiscard([g], overrides) });
+  });
+  // 이 묶음 모두 버리기 (2026-11-24 사용자 요청): 모든 사진을 버림으로 바꾸고 바로 확인 창을 열어요
+  //   그만두기를 눌러도 표시는 버림으로 남아요 (사진을 눌러 다시 남김으로 바꿀 수 있어요)
+  const discardGroup = (g) => run(async () => {
+    const next = discardAll(g, overrides);
+    setOverrides(next);
+    const gids = groupDiscardIds(g, next);
+    const whole = wholeIds([g], next);
+    const info = await api.previewDiscard(gids, whole);
+    setConfirm({ ids: gids, whole, info, keepIds: [] });
   });
   const discard = () => run(async () => {
-    const r = await api.discardSimilar(confirm.ids);
+    const r = await api.discardSimilar(confirm.ids, confirm.whole || []);
     const keepIds = confirm.keepIds || [];
     setConfirm(null);
     let text = resultText(r);
@@ -310,6 +321,9 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
                 </button>
                 <button type="button" className="link-button" disabled={busy || g.ids.every((id) => markOf(g, id, overrides) === 'keep')} onClick={() => keepGroup(g)}>
                   이 묶음은 모두 남기기
+                </button>
+                <button type="button" className="link-button" disabled={busy} onClick={() => discardGroup(g)}>
+                  {groupAllLabel(g.ids.length)}
                 </button>
                 {gone > 0 && (
                   <button type="button" className="similar-group-go" disabled={busy} onClick={() => reviewGroup(g)}>{groupReviewLabel(gone)}</button>

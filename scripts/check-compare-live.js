@@ -97,20 +97,20 @@ const items = [
           JSON.stringify({ l1: l1.status, l2: l2.status, l3: l3.path && path.basename(l3.path), l4: l4.status, odd: odd.status })));
       }
 
-      // 64c 표시 규칙: Space 고정 = 남김 (아무것도 안 고른 묶음이면 원래 추천은 버림), ↑/↓ 는 정해서 표시, 마지막 남김은 못 버림
+      // 64c 표시 규칙: Space 고정 = 남김 (아무것도 안 고른 묶음이면 원래 추천은 버림), ↑/↓ 는 정해서 표시, 마지막 남김도 버릴 수 있음(2026-11-24)
       {
         const g = { ids: [11, 12, 13, 14], keepId: 12, softIds: [], keptIds: [] };
         const o0 = SV.pinMarks([g], new Map());
         const p = SV.pinBest(g, 14, o0);
         const touched = SV.setMark(g, 13, 'keep', o0).overrides; // 13 을 남김으로 고른 묶음
         const p2 = SV.pinBest(g, 14, touched);
-        const only = SV.setMark(g, 14, 'discard', p); // 14 가 유일한 남김 → 거절
+        const only = SV.setMark(g, 14, 'discard', p); // 14 가 유일한 남김 → 이제 버림으로 바뀜 (묶음 모두 버리기, 2026-11-24)
         const same = SV.setMark(g, 11, 'discard', p); // 이미 버림 → 사용자가 고른 것으로 적음
         out.push(sub('64c Space 고정: 고정한 사진 남김 + (안 고른 묶음이면) 원래 추천 버림, 이미 고른 묶음은 다른 표시 그대로',
           SV.markOf(g, 14, p) === 'keep' && SV.markOf(g, 12, p) === 'discard' && SV.discardIds([g], p).length === 3
             && SV.markOf(g, 14, p2) === 'keep' && SV.markOf(g, 12, p2) === 'keep' && SV.markOf(g, 13, p2) === 'keep'));
-        out.push(sub('64c ↑ 버림 · ↓ 남김: 마지막 남김은 버리지 못함, 같은 표시여도 사용자가 고른 것으로 적음',
-          only.refused === true && same.refused === false && same.overrides.get(11) === 'discard'));
+        out.push(sub('64c ↑ 버림 · ↓ 남김: 마지막 남김도 버림으로 바뀜, 같은 표시여도 사용자가 고른 것으로 적음',
+          only.refused === false && SV.markOf(g, 14, only.overrides) === 'discard' && same.refused === false && same.overrides.get(11) === 'discard'));
       }
 
       // 64d 비교 창 계산: 키, 넘기기, 두 칸 같이 확대 (마우스 자리 고정), 맞춤 ↔ 원본 크기, 끌기
