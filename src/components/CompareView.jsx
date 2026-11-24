@@ -8,6 +8,8 @@
 //   다 골랐으면 위쪽 "이 묶음에서 버릴 N장 옮기기" 또는 Delete → 이 창을 닫고 비슷한 사진 화면의 같은 확인 창을 열어요
 //     (2026-11-21 사용자 요청 "선택 완료됐으면 삭제도 바로 가능하게")
 //   원본 사진은 pvm://original/<id> (못 그리는 형식 · 못 읽으면 pvm://preview/<id> 1200px 로 대신)
+//   원본(수 MB)을 다 읽고 풀 때까지는 이미 받아 둔 썸네일을 같은 자리에 크게 깔아 둬요
+//     (원본을 바로 그리면 열 때 · 넘길 때 화면이 잠깐 멈췄어요, 2026-11-24 사용자 요청 "크게 보기 열 때 버벅임")
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { formatCount, formatTakenAt } from '../format.mjs';
@@ -23,12 +25,14 @@ function Pane({ file, view, onView, label, mark, onMark, pinned, openedAt = 0 })
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [nat, setNat] = useState(() => ({ w: file.width || 0, h: file.height || 0 }));
   const [src, setSrc] = useState(`pvm://original/${file.id}`);
+  const [ready, setReady] = useState(false); // 원본(또는 대신 쓰는 미리보기)을 다 풀었는지 → 그 전엔 썸네일을 보여 줘요
   const drag = useRef(null);
   const latest = useRef({ view, nat, box, onView });
   latest.current = { view, nat, box, onView };
 
   useEffect(() => {
     setSrc(`pvm://original/${file.id}`);
+    setReady(false);
     setNat({ w: file.width || 0, h: file.height || 0 });
   }, [file.id, file.width, file.height]);
 
@@ -87,6 +91,9 @@ function Pane({ file, view, onView, label, mark, onMark, pinned, openedAt = 0 })
           onView(toggleActual(view, nat, box, { x: e.clientX - r.left, y: e.clientY - r.top }));
         }}
       >
+        {box.w > 0 && !ready && (
+          <img key={`ph-${file.id}`} className="compare-img" src={`pvm://thumb/${file.id}`} alt="" draggable="false" style={style} />
+        )}
         {box.w > 0 && (
           <img
             key={file.id}
@@ -94,12 +101,19 @@ function Pane({ file, view, onView, label, mark, onMark, pinned, openedAt = 0 })
             src={src}
             alt=""
             draggable="false"
+            decoding="async"
             style={style}
             onLoad={(e) => {
               const t = e.currentTarget;
+              const id = file.id;
               if (t.naturalWidth && t.naturalHeight) setNat({ w: t.naturalWidth, h: t.naturalHeight });
+              // 다 푼 뒤에 썸네일을 치워요 (받기만 하고 아직 안 풀었을 때 치우면 잠깐 빈 칸이 보여요)
+              const done = () => { if (t.isConnected && t.dataset.id === String(id)) setReady(true); };
+              if (typeof t.decode === 'function') t.decode().then(done, done);
+              else done();
             }}
             onError={() => setSrc((cur) => (cur.startsWith('pvm://original/') ? `pvm://preview/${file.id}` : cur))}
+            data-id={file.id}
           />
         )}
         {!keep && <span className="similar-x compare-x" aria-hidden="true" />}
