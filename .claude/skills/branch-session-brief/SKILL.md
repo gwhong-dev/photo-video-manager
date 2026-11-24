@@ -1,6 +1,6 @@
 ---
 name: branch-session-brief
-description: 분기 세션(start_session)을 시작하기 전에 지시서를 만들 때 쓴다. 지시서 틀 · 기다리는 일 처리 · 점검 규칙이 들어 있어 세션이 PR 없이 멈추는 일을 막는다.
+description: 사용자가 "분기 · 병렬로" 라고 요청해 분기 세션(start_session)을 시작하기 전에만 지시서를 만들 때 쓴다. 메인 교체 · 새 주제 세션에는 쓰지 않는다. 지시서 틀 · 기다리는 일 처리 · 점검 규칙이 들어 있어 세션이 PR 없이 멈추는 일을 막는다.
 ---
 
 # 분기 세션 지시서 틀 (photo-video-manager)
@@ -11,7 +11,7 @@ description: 분기 세션(start_session)을 시작하기 전에 지시서를 �
 1. 같은 파일을 만지는 작업은 한 세션으로 묶는다 (예: `scripts/check*.js` 두 항목).
 2. 같은 PC 에서 `npm run check` 를 도는 세션은 **2개 이하**. 점검 포트 자동 선택 · 임시 폴더 분리(나중에 할 일)가 머지되기 전까지는 특히 지킨다.
 3. 사용자 결정이 필요한 작업(새 기능 설계)은 분기하지 않는다.
-4. 모델: S · M 분기는 `start_session` 의 `model` 을 `sonnet`, L 은 `opus` 로 직접 적음 (비우면 메인 모델을 따라가서 메인이 Sonnet 일 때 어긋남). 같은 원인으로 2번 막히면 Opus 로 다시 시작 (`CLAUDE.md` 7절 토큰 규칙)
+4. 분기는 S · M 만 (L 은 메인이 직접). 모델은 `start_session` 의 `model` 에 `sonnet` 으로 직접 적음 (비우면 메인 모델을 따라감). 같은 원인으로 2번 막히면 Opus 로 다시 시작 (`CLAUDE.md` 7절)
 5. 시작 직후 사용자에게 "세션 이름 · 등급 · 완료 예상"을 한 줄로 알리고, 20~30분 안에 세션 노트도 PR 도 없으면 `list_sessions` 로 확인해 `SendMessage` 로 깨운다.
 
 ## prompt 에 반드시 넣을 것
