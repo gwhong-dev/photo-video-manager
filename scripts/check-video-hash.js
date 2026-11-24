@@ -75,32 +75,57 @@ const items = [
           && noFn.status === 'todo' && noRead.status === 'todo' && diff.status === 'todo' && !diff.sameVideo,
         `지문: ${show(dup)} / 함수 없음: ${show(noFn)} / 못 읽음: ${show(noRead)} / 다름: ${show(diff)}`));
 
-      // 68c 원본 정리: 지문으로 찾은 중복은 후보이고, 정리 직전 지문이 같으면 정리 대상
-      //     비교 함수가 없으면 남김(기록 없음), 백업 영상이 바뀌어 지문이 다르면 남기고 까닭 기록
+      // 68c 원본 정리: 지문으로 찾은 중복은 후보이고, 정리 직전 지문 · 촬영 날짜가 같으면 정리 대상
+      //     비교 함수 · 정보 읽기가 없으면 남김(기록 없음), 백업 영상이 바뀌어 지문이 다르면 남기고 까닭 기록
+      //     원본의 촬영 날짜만 고친 사본(화면 데이터는 같음)은 남기고 까닭 기록 (#141 검증 ①)
       const fakeStore = { mark: (j, i, patch) => Object.assign(j.items[i], patch) };
       const ffprobe = env.tools.ffprobe.path; // 남길 영상이 재생되는지 확인하는 데 써요 (없으면 "확인 못 함 → 남김")
+      const { readMetaWithKeys, META_TAGS } = require('../lib/planner');
+      const readMeta = (paths) => readMetaWithKeys(env.et, paths.map((p) => ({ path: p, isVideo: true })), [...META_TAGS, 'ImageWidth', 'ImageHeight', 'ModifyDate']);
       const sameVideo = async (src, keep) => {
         const [a, b] = [await videoHashOf(src), await videoHashOf(keep)];
         if (!a || !b) return { same: false, why: '영상 내용 지문을 읽지 못해 남김', lasting: false };
         return a === b ? { same: true, why: '' } : { same: false, why: '백업 영상과 화면 데이터가 달라 남김', lasting: true };
       };
-      const dupJob = (keep) => ({ items: [{ i: 0, src: again, status: 'dup', converted: true, sameVideo: true, dupOf: keep }] });
+      const dupJob = (keep, src = again) => ({ items: [{ i: 0, src, status: 'dup', converted: true, sameVideo: true, dupOf: keep }] });
       const j1 = dupJob(mp4);
       const cand = cleaner.cleanCandidates(j1).length;
-      const ok1 = await cleaner.cleanTargets(j1, { store: fakeStore, ffprobe, sameVideo });
+      const ok1 = await cleaner.cleanTargets(j1, { store: fakeStore, ffprobe, sameVideo, readMeta });
       const j2 = dupJob(mp4);
-      const ok2 = await cleaner.cleanTargets(j2, { store: fakeStore, ffprobe });
+      const ok2 = await cleaner.cleanTargets(j2, { store: fakeStore, ffprobe, readMeta });
+      const j2b = dupJob(mp4);
+      const ok2b = await cleaner.cleanTargets(j2b, { store: fakeStore, ffprobe, sameVideo });
       const changed = path.join(dir, 'changed.mp4');
       fs.copyFileSync(other, changed);
       const j3 = dupJob(changed);
-      const ok3 = await cleaner.cleanTargets(j3, { store: fakeStore, ffprobe, sameVideo });
+      const ok3 = await cleaner.cleanTargets(j3, { store: fakeStore, ffprobe, sameVideo, readMeta });
+      const redated = path.join(dir, 'redated', 'IMG_0103.MOV');
+      fs.mkdirSync(path.dirname(redated), { recursive: true });
+      fs.copyFileSync(mov, redated);
+      await env.et.write(['-overwrite_original', '-Keys:CreationDate=2001:02:03 04:05:06+09:00', '-QuickTime:CreateDate=2001:02:03 04:05:06', redated]);
+      const sameAfterRedate = (await videoHashOf(redated)) === hMov;
+      const j5 = dupJob(mp4, redated);
+      const ok5 = await cleaner.cleanTargets(j5, { store: fakeStore, ffprobe, sameVideo, readMeta });
       const j4 = { items: [{ i: 0, src: again, status: 'dup', converted: true, dupOf: mp4 }] }; // 지문 표시가 없는 변환 중복은 예전처럼 후보 아님
-      out.push(sub('68c 원본 정리: 지문 중복은 후보이고 지문이 같으면 정리 대상. 비교 함수 없음은 남김(기록 없음), 지문이 다르면 남기고 까닭 기록',
+      out.push(sub('68c 원본 정리: 지문 중복은 후보이고 지문 · 촬영 날짜가 같으면 정리 대상. 비교 함수 · 정보 읽기 없음은 남김(기록 없음), 지문이 다르거나 날짜만 고친 사본은 남기고 까닭 기록',
         cand === 1 && ok1.length === 1 && !j1.items[0].cleanSkip
-          && ok2.length === 0 && !j2.items[0].cleanSkip
+          && ok2.length === 0 && !j2.items[0].cleanSkip && ok2b.length === 0 && !j2b.items[0].cleanSkip
           && ok3.length === 0 && /화면 데이터가 달라/.test(j3.items[0].cleanSkip || '')
+          && sameAfterRedate && ok5.length === 0 && /촬영 날짜가 달라/.test(j5.items[0].cleanSkip || '')
           && cleaner.cleanCandidates(j4).length === 0,
-        `후보 ${cand} / 같음 ${ok1.length} / 함수 없음 ${ok2.length} / 다름 ${ok3.length} (${j3.items[0].cleanSkip || '기록 없음'}) / 표시 없음 후보 ${cleaner.cleanCandidates(j4).length}`));
+        `후보 ${cand} / 같음 ${ok1.length} / 함수 없음 ${ok2.length} / 정보 읽기 없음 ${ok2b.length} / 다름 ${ok3.length} (${j3.items[0].cleanSkip || '기록 없음'}) / 날짜 고친 사본 ${ok5.length} (지문 같음 ${sameAfterRedate}, ${j5.items[0].cleanSkip || '기록 없음'}) / 표시 없음 후보 ${cleaner.cleanCandidates(j4).length}`));
+
+      // 68d 바이트가 같은 쌍둥이 MOV 둘을 다시 가져오면 둘 다 "이미 있음"이고 둘 다 원본 정리 후보 (#141 검증 ③)
+      const source3 = path.join(dir, 'src3');
+      fs.mkdirSync(source3, { recursive: true });
+      fs.copyFileSync(mov, path.join(source3, 'IMG_0103.MOV'));
+      fs.copyFileSync(mov, path.join(source3, 'IMG_0103(1).MOV'));
+      const plan3 = await makePlan({ source: source3, backupRoot, includeSub: true }, env.et, () => {}, { videoHashOf });
+      const twins = plan3.items;
+      out.push(sub('68d 바이트가 같은 쌍둥이 MOV 둘 다 "이미 있음"(백업 MP4) + 지문 표시 → 둘 다 원본 정리 후보',
+        twins.length === 2 && twins.every((x) => x.status === 'dup' && x.sameVideo === true && key(x.dupOf) === key(mp4))
+          && cleaner.cleanCandidates(plan3).length === 2,
+        twins.map((x) => `${path.basename(x.src)}: ${x.status} 지문 ${!!x.sameVideo} → ${x.dupOf ? path.basename(x.dupOf) : '없음'}`).join(' / ') + ` / 후보 ${cleaner.cleanCandidates(plan3).length}`));
       return out;
     },
   },
