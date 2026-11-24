@@ -1,9 +1,9 @@
 // 파일 위치: src/components/TagsView.jsx
-// 역할: "태그" 화면 (단계 5). 내가 만든 태그와 앨범에서 가져온 태그를 장수와 함께 보여 줘요
+// 역할: "태그" 화면 (단계 5). 내가 만든 태그를 장수와 함께 보여 줘요
 //   태그를 누르면 갤러리에서 그 태그의 사진만 보여요 (onPick)
 //   내가 만든 태그 (2026-11-18): 새 태그 만들기, 단축키 숫자(1~9) 정하기, 이름 바꾸기, 지우기
 //     만들기 · 이름 바꾸기 · 지우기 창은 App 이 열어요 (onManage). 숫자는 여기서 바로 정해요
-//   앨범에서 가져온 태그는 파일에서 읽은 것이라 바꿀 수 없어요 (읽기 전용)
+//   파일에서 읽은 태그(앨범 이름 등)도 내가 만든 태그에 같이 모여요. 바꾸면 "파일에 태그 쓰기"로 파일에도 써요 (31 ②)
 //   태그 붙이기와 떼기는 갤러리에서 사진을 고른 뒤 우클릭 메뉴, 오른쪽 패널, 단축키(T, 숫자)로 해요
 
 import React, { useEffect, useState } from 'react';
@@ -91,17 +91,6 @@ export default function TagsView({ gen, onPick, onManage, onChanged }) {
           </div>
         ) : (
           <p className="panel-hint">아직 만든 태그가 없어요. 새 태그를 만들거나, 갤러리에서 사진을 고른 뒤 붙이면 여기에 모여요.</p>
-        )}
-      </section>
-      <section className="tags-group" aria-label="앨범에서 가져온 태그">
-        <h2 className="panel-heading">앨범에서 가져온 태그</h2>
-        {list.album.length ? (
-          <>
-            <p className="panel-hint">사진 파일에서 읽은 태그라 이름을 바꾸거나 지울 수 없어요.</p>
-            <div className="tags-rows">{list.album.map((t) => <TagButton key={t.name} t={t} onPick={onPick} />)}</div>
-          </>
-        ) : (
-          <p className="panel-hint">앨범에서 가져온 태그가 없어요.</p>
         )}
       </section>
     </div>

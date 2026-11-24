@@ -39,6 +39,8 @@ import UndoBar from './components/UndoBar.jsx';
 import FillBanner from './components/FillBanner.jsx';
 import FillDialog from './components/FillDialog.jsx';
 import TrashDialog from './components/TrashDialog.jsx';
+import TagWriteBanner from './components/TagWriteBanner.jsx';
+import TagWriteDialog from './components/TagWriteDialog.jsx';
 import { deleteKeyOpens } from './trash-view.mjs';
 import { formatCount, needsManyCheck, undoneText } from './format.mjs';
 import { alreadyText, noKeyText, quickTags, tagKeyAction, tagOfKey } from './tag-keys.mjs';
@@ -101,6 +103,8 @@ export default function App() {
   const [justApplied, setJustApplied] = useState(null); // 방금 넣은 묶음 { batchId }. 넣은 직후 알림 줄을 보여 줘요
   const [undoing, setUndoing] = useState(false);
   const [fillOpen, setFillOpen] = useState(false); // 날짜 없음 채우기 창
+  const [tagInfo, setTagInfo] = useState(null); // 파일에 쓰지 않은 태그 (31 ②) gallery:tag-write-info 결과
+  const [tagWriteOpen, setTagWriteOpen] = useState(false); // 태그를 파일에 쓰기 창
   const [trashIds, setTrashIds] = useState(null); // 휴지통으로 옮기기 확인 창에 담은 사진 번호 (열 때의 선택 그대로, 2026-11-16)
   const [fillUndoing, setFillUndoing] = useState(false);
   const [syncing, setSyncing] = useState(false); // 넣은 직후 새 상태(마지막 묶음)를 받아오는 중. 그동안 되돌리기 버튼을 꺼요
@@ -128,6 +132,11 @@ export default function App() {
       scanningRef.current = !!(s.scan && s.scan.scanning);
       setState(s);
       setLoadError('');
+      // 파일에 쓰지 않은 태그 장수 (띠). 닫기 창에서 "지금 쓰기"를 골랐으면(ask) 쓰기 창을 열어요
+      api.tagWriteInfo().then((t) => {
+        setTagInfo(t);
+        if (t && t.ask) setTagWriteOpen(true);
+      }, () => {});
     } catch (e) {
       setLoadError(errorText(e));
     }
@@ -153,6 +162,7 @@ export default function App() {
     refresh();
     let offScan = () => {};
     let offChanged = () => {};
+    let offAsk = () => {};
     try {
       offScan = api.onScanProgress((scan) => {
         setState((s) => (s ? { ...s, scan } : s));
@@ -161,11 +171,13 @@ export default function App() {
         scanningRef.current = !!scan.scanning;
       });
       offChanged = api.onLibraryChanged(notifyChanged);
+      offAsk = api.onTagWriteAsk(() => setTagWriteOpen(true)); // 창을 닫을 때 "지금 쓰기"를 고르면
     } catch (e) { /* electron 밖이면 알림 없이 보여 줘요 */ }
     const t = throttle.current;
     return () => {
       offScan();
       offChanged();
+      offAsk();
       if (t.timer) {
         clearTimeout(t.timer);
         t.timer = null;
@@ -548,7 +560,7 @@ export default function App() {
   //   번호를 받는 사이 화면 · 필터가 바뀌었거나 다른 창이 열렸으면 열지 않아요. 받는 중에 또 눌러도 한 번만
   const dayTrashBusy = useRef(false);
   const openWindowsRef = useRef(false);
-  openWindowsRef.current = !!(dialog || fillOpen || trashIds || tagEdit);
+  openWindowsRef.current = !!(dialog || fillOpen || trashIds || tagEdit || tagWriteOpen);
   const trashDay = async (day) => {
     setCellMenuAt(null);
     if (!viewCurrent || !trashScreen || suggestOpen || openWindowsRef.current || dayTrashBusy.current) return;
@@ -578,7 +590,7 @@ export default function App() {
   // Delete 키로 확인 창 열기 (글 쓰는 칸 · 다른 창이 열려 있으면 안 열어요)
   useEffect(() => {
     const onKey = (e) => {
-      const open = !!(dialog || fillOpen || trashIds || cellMenuAt || tagEdit);
+      const open = !!(dialog || fillOpen || trashIds || cellMenuAt || tagEdit || tagWriteOpen);
       if (!deleteKeyOpens(e.key, document.activeElement, open)) return;
       if (!trashScreen || suggestOpen || selection.ids.size === 0) return;
       e.preventDefault();
@@ -590,7 +602,7 @@ export default function App() {
   // 태그 단축키: T = 붙이기 창, 숫자 1~9 = 정한 태그 바로 붙이기 (Delete 와 같은 화면 · 같은 조건, 글 쓰는 칸에서는 안 돼요)
   useEffect(() => {
     const onKey = (e) => {
-      const open = !!(dialog || fillOpen || trashIds || cellMenuAt || tagEdit);
+      const open = !!(dialog || fillOpen || trashIds || cellMenuAt || tagEdit || tagWriteOpen);
       const act = tagKeyAction(e, document.activeElement, open);
       if (!act) return;
       if (!showTools || !trashScreen || suggestOpen || screening || selection.ids.size === 0) return; // 거르기 중에는 태그를 붙이지 않아요
@@ -805,6 +817,9 @@ export default function App() {
         {showTools && screen === 'missing' && filter.info === 'noDate' && !suggestOpen && (state.noDate > 0 || !!state.lastFill) && (
           <FillBanner noDate={state.noDate} lastFill={state.lastFill || null} busy={fillUndoing} disabled={syncing} onOpen={() => setFillOpen(true)} onUndo={undoFill} />
         )}
+        {showTools && (screen === 'gallery' || screen === 'tags') && !suggestOpen && !screening && (
+          <TagWriteBanner info={tagInfo} disabled={syncing} onOpen={() => setTagWriteOpen(true)} />
+        )}
         {showAfterUndo && <UndoBar batch={lastBatch} variant="after" busy={undoing} disabled={syncing} onUndo={() => undo(lastBatch.id)} onDismiss={() => setJustApplied(null)} name={justApplied.name} />}
         <div className="center">{center}</div>
       </main>
@@ -851,6 +866,7 @@ export default function App() {
         />
       )}
       {tagEdit && <TagManageDialog mode={tagEdit.mode} tag={tagEdit.tag} onClose={() => setTagEdit(null)} onDone={onTagManaged} />}
+      {tagWriteOpen && <TagWriteDialog onClose={() => setTagWriteOpen(false)} onDone={() => { setGen((g) => g + 1); refresh(); }} />}
       {fillOpen && <FillDialog onClose={() => setFillOpen(false)} onDone={onFillDone} />}
       {trashIds && <TrashDialog ids={trashIds} onClose={() => setTrashIds(null)} onDone={onTrashDone} />}
       {dialog && (dialog.mode === 'tagAdd' || dialog.mode === 'tagRemove') && <TagDialog mode={dialog.mode} ids={dialog.ids} initialName={dialog.name || ''} onClose={() => setDialog(null)} onApplied={onApplied} />}

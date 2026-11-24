@@ -24,7 +24,7 @@ const { sameContent } = require('./lib/content-hash');
 const cleanSameContent = (src, keep) => (et ? sameContent(et, src, keep) : Promise.resolve({ same: false, why: '내용 지문을 읽지 못해 남김', lasting: false }));
 const { validateFolders, validatePick } = require('./lib/paths');
 const { JobStore, jobStats } = require('./lib/job');
-const { cleanCandidatesAsync, cleanTargets, recheckTargets, overflowRootsOf, cleanInfo, cleanOriginals, createHashCache, countHashesFrom } = require('./lib/cleaner');
+const { cleanCandidatesAsync, cleanTargets, recheckTargets, overflowRootsOf, cleanInfo, cleanOriginals, createHashCache, countHashesFrom, trustedItemsOf, refreshTrusted } = require('./lib/cleaner');
 const { createDriveKindOf } = require('./lib/platform');
 const { samplePool, sampleView, openSample } = require('./lib/clean-sample');
 const { comparePool, compareRows, compareFile, keptItems, markUserKept, createCompareThumbs } = require('./lib/dup-compare');
@@ -205,6 +205,7 @@ function createWindow() {
 
   // 실행 중에 닫으려고 하면 한 번 물어보기
   win.on('close', (e) => {
+    if (!running && askTagsOnClose(e)) return;
     if (!running) return;
     const r = dialog.showMessageBoxSync(win, {
       type: 'warning',
@@ -215,6 +216,49 @@ function createWindow() {
     });
     if (r === 0) e.preventDefault();
   });
+}
+
+// 파일에 쓰지 않은 태그가 있으면 닫을 때 한 번 물어봐요 (31 ②). 닫기를 막았으면 true
+//   쓰는 중이면: 닫아도 쓴 파일은 그대로, 남은 것은 다음에 이어서 써요
+//   한 번 "다음에"를 고르면 이번에는 다시 묻지 않아요
+let tagCloseAsked = false;
+function askTagsOnClose(e) {
+  if (!gallery || !gallery.tagWriteState) return false;
+  const st = gallery.tagWriteState();
+  if (st.writing) {
+    const r = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      buttons: ['계속 쓰기', '닫기'],
+      defaultId: 0,
+      message: '파일에 태그를 쓰는 중이에요. 닫을까요?',
+      detail: '닫아도 이미 쓴 파일은 그대로예요. 남은 사진은 다음에 켜서 이어서 쓸 수 있어요.',
+    });
+    if (r === 0) {
+      e.preventDefault();
+      return true;
+    }
+    return false;
+  }
+  if (tagCloseAsked || !st.writable) return false;
+  tagCloseAsked = true;
+  const r = dialog.showMessageBoxSync(win, {
+    type: 'question',
+    buttons: ['지금 쓰기', '다음에'],
+    defaultId: 0,
+    cancelId: 1,
+    message: `파일에 쓰지 않은 태그가 ${st.writable}장에 있어요. 지금 쓸까요?`,
+    detail: '태그는 이 PC 의 목록에 저장돼 있어요. 파일에 써 두면 다른 PC 나 다른 프로그램에서도 보여요.',
+  });
+  if (r === 0) {
+    e.preventDefault();
+    // 쓰기 창은 갤러리 화면에 있어요. 가져오기 화면이면 갤러리 화면을 연 뒤 열어요
+    let onGallery = false;
+    try { onGallery = /dist[\/]renderer/.test(decodeURIComponent(win.webContents.getURL())); } catch (err) { /* 모르면 새로 열어요 */ }
+    if (onGallery) gallery.askTagWrite();
+    else loadScreen('gallery').then(() => gallery.askTagWrite(), () => {});
+    return true;
+  }
+  return false;
 }
 
 // ---------- 화면 바꾸기 ----------
@@ -755,6 +799,15 @@ app.whenReady().then(async () => {
         return r.canceled ? null : r.filePaths[0];
       },
       trash: (p) => shell.trashItem(p), // 비슷한 사진 버리기 (휴지통이 없는 드라이브는 _정리완료원본으로 이동)
+      // 파일에 태그 쓰기 (31 ②): 가져오기 작업 기록이 그 파일을 결과로 믿고 있었으면, 쓴 뒤 지문 · 서명을 새 값으로 바꿔요
+      //   (안 바꾸면 원본 정리가 "백업 파일이 바뀜"으로 원본을 남겨요). 작업이 없으면 할 일 없음
+      fileRewrite: {
+        before: async (p) => {
+          const j = job;
+          return { job: j, idx: j ? await trustedItemsOf(j, p) : [] };
+        },
+        after: async (tok, p) => (tok && tok.job && tok.job === job ? refreshTrusted(tok.job, store, tok.idx, p) : 0),
+      },
     });
   } catch (e) {
     // 갤러리를 못 켜도 가져오기는 쓸 수 있어야 해요
