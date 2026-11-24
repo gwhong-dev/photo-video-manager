@@ -121,7 +121,6 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
   const [pinned, setPinned] = useState(null);
   const [current, setCurrent] = useState(() => (group.ids.includes(startId) ? startId : group.keepId ?? group.ids[0]));
   const [view, setView] = useState(FIT_VIEW);
-  const [note, setNote] = useState('');
   const rootRef = useRef(null);
   const [openedAt] = useState(() => Date.now()); // 열린 시각 (Pane 더블클릭 무시에 써요)
   const fileOf = useCallback((id) => group.files.find((f) => f.id === id), [group]);
@@ -137,19 +136,14 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
 
   const decide = (want) => {
     if (current === null || current === undefined) return;
+    // 마지막 남김도 버림으로 바꿀 수 있어요 (2026-11-24 사용자 요청)
     const r = setMark(group, current, want, overrides);
-    if (r.refused) {
-      setNote('묶음마다 한 장은 남겨요. 다른 사진을 먼저 남김으로 바꿔 주세요.');
-      return;
-    }
-    setNote('');
     onOverrides(r.overrides);
     setCurrent(afterDecide(ids, current));
   };
   const pin = () => {
     if (current === null || current === undefined) return;
     onOverrides(pinBest(group, current, overrides));
-    setNote('');
     const rest = browseIds(group, current);
     setPinned(current);
     // 오른쪽에는 고정한 사진 다음 사진부터 (없으면 첫 사진)
@@ -159,11 +153,7 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
   const toggleOf = (id) => () => {
     const want = markOf(group, id, overrides) === 'keep' ? 'discard' : 'keep';
     const r = setMark(group, id, want, overrides);
-    if (r.refused) setNote('묶음마다 한 장은 남겨요. 다른 사진을 먼저 남김으로 바꿔 주세요.');
-    else {
-      setNote('');
-      onOverrides(r.overrides);
-    }
+    onOverrides(r.overrides);
   };
 
   // 키: ←/→ 넘기기, Space 고정, ↑ 버림, ↓ 남김, Esc 닫기 (창이 열린 동안 다른 화면 키로 가지 않게 막아요)
@@ -229,7 +219,6 @@ export default function CompareView({ group, overrides, onOverrides, startId, on
           {onReview && gone > 0 && <button type="button" className="primary compare-review" onClick={review}>{groupReviewLabel(gone)}</button>}
         </span>
       </div>
-      {note && <p className="compare-note" role="status">{note}</p>}
       <div className={`compare-panes${pin1 ? ' two' : ''}`}>
         {pin1 && (
           <Pane key={`pin-${pin1.id}`} file={pin1} view={view} onView={setView} label="고정한 사진" mark={markOf(group, pin1.id, overrides)} onMark={toggleOf(pin1.id)} pinned openedAt={openedAt} />

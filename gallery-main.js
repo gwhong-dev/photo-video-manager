@@ -1224,25 +1224,28 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
   });
 
   // 버리기 미리보기: 몇 장이 휴지통으로, 몇 장이 _정리완료원본으로 가는지 (아무것도 옮기지 않아요)
-  ipcMain.handle('gallery:similar-preview', async (e, ids) => {
+  //   whole = 화면에서 "모두 버리기"로 고른 묶음의 번호들 (한 장도 안 남는 묶음, 2026-11-24 사용자 요청. lib/similar-discard.js 가 다시 확인)
+  const similarKey = (ids, whole) => [...(Array.isArray(ids) ? ids : []), '|', ...(Array.isArray(whole) ? whole : [])];
+  ipcMain.handle('gallery:similar-preview', async (e, ids, whole) => {
     const root = editReady({ screenOk: true });
-    const { files, groups } = checkDiscard(db, root, ids);
+    const { files, groups, emptied } = checkDiscard(db, root, ids, whole);
     const info = await discardInfo(files, { driveKindOf: await previewDriveKindOf(root) }); // 미리보기는 읽어 둔 판단을 다시 써요 (위 규칙)
-    rememberPreview('similar', ids, info); // 옮기기 직전에 새 판단과 맞춰 봐요
-    return { ...info, groups, canTrash: typeof trash === 'function' };
+    rememberPreview('similar', similarKey(ids, whole), info); // 옮기기 직전에 새 판단과 맞춰 봐요
+    return { ...info, groups, emptied, canTrash: typeof trash === 'function' };
   });
 
   // 버리기 실행. 끝나면 옮긴 사진을 "사라짐"으로 적고 화면에 목록이 바뀌었다고 알려요
-  ipcMain.handle('gallery:similar-discard', async (e, ids) => {
+  ipcMain.handle('gallery:similar-discard', async (e, ids, whole) => {
     const root = editReady({ screenOk: true });
     if (discarding || filling) throw new Error('이미 옮기는 중이에요');
     if (library && library.isScanning()) throw new Error('백업 폴더를 읽는 중이에요. 끝난 뒤 다시 눌러 주세요');
-    const { files } = checkDiscard(db, root, ids);
+    const { files } = checkDiscard(db, root, ids, whole);
     discarding = true;
     try {
       const noTrash = async () => { throw new Error('휴지통을 쓸 수 없어요'); };
       const fresh = makeDriveKindOf(); // 옮길 때는 늘 새로 확인해요
-      await recheckPreview('similar', ids, files, fresh); // 확인 창과 달라졌으면 옮기지 않아요
+      const key = similarKey(ids, whole); // 확인 창을 열 때와 같은 열쇠
+      await recheckPreview('similar', key, files, fresh); // 확인 창과 달라졌으면 옮기지 않아요
       const r = await discardFiles({ root, files, trash: typeof trash === 'function' ? trash : noTrash, driveKindOf: fresh, logger, ...screenLog(root) });
       // DB에 적다가 실패해도 옮긴 결과는 알려요 (다음에 백업 폴더를 읽으면 "사라짐"으로 맞춰져요)
       if (r.done.length) {

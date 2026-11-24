@@ -548,7 +548,7 @@ const items = [
       const base = path.join(env.tmp, 'similar-discard');
       fs.mkdirSync(base, { recursive: true });
 
-      // 37a 표시: 처음엔 keepId만 남김, 바꾸기, 마지막 남김은 못 버림, 모두 남기기, 버릴 번호, 사라진 사진의 기록 지우기
+      // 37a 표시: 처음엔 keepId만 남김, 바꾸기, 마지막 남김도 버림으로 바꿀 수 있음(2026-11-24), 모두 남기기 · 모두 버리기, 버릴 번호, 사라진 사진의 기록 지우기
       {
         const g = { ids: [1, 2, 3], keepId: 2 };
         const g2 = { ids: [7, 8], keepId: 8 };
@@ -558,18 +558,36 @@ const items = [
         o = t1.overrides;
         const t2 = V.toggleMark(g, 2, o); // 2 남김 → 버림 (1이 남아 있어 됨)
         o = t2.overrides;
-        const t3 = V.toggleMark(g, 1, o); // 1이 마지막 남김 → 거절
-        out.push(sub('37a 처음엔 가장 큰 사진만 남김, 바꿀 수 있고, 마지막 남김은 버림으로 못 바꿈',
-          first === 'discard,keep,discard' && !t1.refused && !t2.refused && t3.refused && V.markOf(g, 1, t3.overrides) === 'keep',
+        const t3 = V.toggleMark(g, 1, o); // 1이 마지막 남김 → 이제 버림으로 바뀜 (2026-11-24 사용자 요청)
+        out.push(sub('37a 처음엔 가장 큰 사진만 남김, 바꿀 수 있고, 마지막 남김도 버림으로 바꿀 수 있음',
+          first === 'discard,keep,discard' && !t1.refused && !t2.refused && !t3.refused && V.markOf(g, 1, t3.overrides) === 'discard'
+            && [1, 2, 3].every((x) => V.markOf(g, x, t3.overrides) === 'discard'),
           JSON.stringify([first, [...o]])));
         const all = V.keepAll(g, new Map());
         out.push(sub('37a 이 묶음은 모두 남기기', [1, 2, 3].every((id) => V.markOf(g, id, all) === 'keep')));
+        const gone = V.discardAll(g, V.pinMarks([g, g2], new Map()));
+        out.push(sub('37a 이 묶음 모두 버리기: 이 묶음만 사용자가 고른 버림, 버릴 번호 · 모두 버리는 번호(whole)에 들어감, 다른 묶음은 그대로',
+          [1, 2, 3].every((x) => gone.get(x) === 'discard') && gone.get(8) === 'auto-keep'
+            && JSON.stringify(V.discardIds([g, g2], gone)) === '[1,2,3,7]' && JSON.stringify(V.wholeIds([g, g2], gone)) === '[1,2,3]'
+            && JSON.stringify(V.keptAfterDiscard([g], gone)) === '[]',
+          JSON.stringify([...gone])));
         const pinned = V.pinMarks([g, g2], new Map());
-        out.push(sub('37a 버릴 번호: 보인 묶음의 고정된 버림만, 전부 버림인 묶음은 뺌',
+        const autoAll = new Map([[7, 'auto-discard'], [8, 'auto-discard']]); // 처음 표시만으로 모두 버림 (다시 묶이며 생길 수 있음)
+        const mixAll = new Map([[7, 'discard'], [8, 'auto-discard']]); // 하나만 사용자가 고름
+        out.push(sub('37a 버릴 번호: 보인 묶음의 고정된 버림만, 전부 버림인 묶음은 사용자가 모두 고른 경우만 넣음',
           JSON.stringify(V.discardIds([g, g2], pinned)) === JSON.stringify([1, 3, 7])
-            && JSON.stringify(V.discardIds([g2], new Map([[7, 'discard'], [8, 'discard']]))) === '[]'
+            && JSON.stringify(V.discardIds([g2], autoAll)) === '[]' && JSON.stringify(V.wholeIds([g2], autoAll)) === '[]'
+            && JSON.stringify(V.discardIds([g2], mixAll)) === '[]' && JSON.stringify(V.wholeIds([g2], mixAll)) === '[]'
+            && JSON.stringify(V.discardIds([g2], new Map([[7, 'discard'], [8, 'discard']]))) === '[7,8]'
             && V.pinMarks([g, g2], pinned) === pinned,
           JSON.stringify([...pinned])));
+        // #144 검증 ⚠️4: 처음 표시(자동 버림)가 섞인 묶음에서 마지막 남김을 버림으로 바꾸면 묶음이 조용히 빠졌음
+        const lastOff = V.toggleMark(g, 2, pinned).overrides; // 2 = 처음 표시의 유일한 남김
+        const viaSet = V.setMark(g, 2, 'discard', pinned).overrides; // 비교 창 ↑ 버림도 같은 길
+        out.push(sub('37a 자동 버림이 섞인 묶음에서 마지막 남김을 버림으로 → 묶음 전체가 사용자가 고른 버림(버릴 번호 · whole 에 모두)',
+          [lastOff, viaSet].every((m) => JSON.stringify(V.discardIds([g], m)) === '[1,2,3]' && JSON.stringify(V.wholeIds([g], m)) === '[1,2,3]')
+            && lastOff.get(8) === 'auto-keep',
+          JSON.stringify([...lastOff])));
         // 검증 지적: 화면에 30개만 보이는데 안 본 묶음의 사진도 버림에 들어갔음
         out.push(sub('37a 아직 화면에 안 보인 묶음의 사진은 버리지 않음',
           JSON.stringify(V.discardIds([g, g2], V.pinMarks([g], new Map()))) === JSON.stringify([1, 3])
@@ -610,16 +628,19 @@ const items = [
           JSON.stringify([...pinnedS])));
       }
 
-      // 37i 묶음별로 먼저 옮기기 (2026-11-16 사용자 요청): 이 묶음의 고정된 버림만, 전부 버림이면 빈 목록
+      // 37i 묶음별로 먼저 옮기기 (2026-11-16 사용자 요청): 이 묶음의 고정된 버림만, 처음 표시만으로 전부 버림이면 빈 목록
       {
         const g = { ids: [1, 2, 3], keepId: 1, softIds: [], keptIds: [] };
         const pinned = V.pinMarks([g], new Map());
         const other = { ids: [8, 9], keepId: 8, softIds: [], keptIds: [] };
         const both = V.pinMarks([other], pinned);
         const all = new Map([[1, 'discard'], [2, 'discard'], [3, 'discard']]);
-        out.push(sub('37i 이 묶음만: 이 묶음의 버림 번호만 (다른 묶음 빼고), 모두 버림이면 빈 목록, 버튼 문구',
-          JSON.stringify(V.groupDiscardIds(g, both)) === '[2,3]' && JSON.stringify(V.groupDiscardIds(g, all)) === '[]'
-            && V.groupReviewLabel(2) === '이 묶음에서 버릴 2장 옮기기' && V.groupReviewLabel(0) === '',
+        const autoAll = new Map([[1, 'auto-discard'], [2, 'auto-discard'], [3, 'auto-discard']]);
+        out.push(sub('37i 이 묶음만: 이 묶음의 버림 번호만 (다른 묶음 빼고), 처음 표시만으로 모두 버림이면 빈 목록, 사용자가 모두 고르면 전부, 버튼 문구',
+          JSON.stringify(V.groupDiscardIds(g, both)) === '[2,3]' && JSON.stringify(V.groupDiscardIds(g, autoAll)) === '[]'
+            && JSON.stringify(V.groupDiscardIds(g, all)) === '[1,2,3]'
+            && V.groupReviewLabel(2) === '이 묶음에서 버릴 2장 옮기기' && V.groupReviewLabel(0) === ''
+            && V.groupAllLabel(1200) === '이 묶음 1,200장 모두 버리기',
           JSON.stringify(V.groupDiscardIds(g, both))));
         const t = { ids: [4, 5, 6], keepId: 5, keepReason: '흐린 사진 1장을 빼고 가장 선명한 사진', softIds: [], keptIds: [], timeOnly: true };
         out.push(sub('37i 이어 찍기 묶음: 추천 1장만 남김, 나머지 2장은 버림 후보, 안내 · 추천 까닭 문구',
@@ -649,6 +670,9 @@ const items = [
           && V.resultText({ trashed: 2, pairs: 1, pairFail: 1, logName: 'x.log' }).includes('짝 영상 1개도 같이 옮겼어요')
           && V.resultText({ trashed: 2, pairs: 1, pairFail: 1, logName: 'x.log' }).includes('짝 영상 1개는 옮기지 못했어요'),
         V.resultText({ trashed: 2, pairs: 1, pairFail: 1, logName: 'x.log' })));
+      out.push(sub('37b 모두 버리는 묶음이 있으면 확인 창에 한 줄 더, 없으면 그대로',
+        V.previewLines({ count: 3, groups: 1, trash: 3, move: 0, emptied: 1 }).includes('그중 묶음 1개는 한 장도 남기지 않아요.')
+          && !V.previewLines({ count: 3, groups: 1, trash: 3, move: 0, emptied: 0 }).some((l) => l.includes('한 장도'))));
       out.push(sub('37b 휴지통 용량 경고는 확인 창에 "주의:"로',
         V.previewLines({ count: 1, groups: 1, trash: 1, move: 0, warnings: ['C:\ 드라이브: 넘어요'] }).at(-1) === '주의: C:\ 드라이브: 넘어요'));
 
@@ -665,16 +689,22 @@ const items = [
         ]);
         for (const f of db.hashJobs('R1', 10)) db.setHash(f.path, f.size, f.mtimeMs, f.name === 'c.jpg' ? F : (f.name === 'a.jpg' ? H : N));
         const id = (n) => db.similarRows('R1').find((r) => r.name === n).id;
-        const err = (ids) => { try { D.checkDiscard(db, 'R1', ids); return null; } catch (e) { return e.message; } };
+        const err = (ids, whole) => { try { D.checkDiscard(db, 'R1', ids, whole); return null; } catch (e) { return e.message; } };
         const ok = D.checkDiscard(db, 'R1', [id('b.jpg')]);
         out.push(sub('37c 묶음의 한 장은 버릴 수 있음 (경로, 크기, 수정 시각, 그 묶음에서 남는 사진을 돌려줌)',
           ok.files.length === 1 && ok.files[0].path === 'R1/b.jpg' && ok.files[0].mtimeMs === 1000 && ok.groups === 1
             && JSON.stringify(ok.files[0].keepers) === JSON.stringify([{ path: 'R1/a.jpg', size: 100, mtimeMs: 1000 }]),
           JSON.stringify(ok)));
-        out.push(sub('37c 묶음을 전부 버리려 하면 거절', err([id('a.jpg'), id('b.jpg')]) === '묶음마다 적어도 한 장은 남겨 주세요'));
+        const ab = [id('a.jpg'), id('b.jpg')];
+        const whole = D.checkDiscard(db, 'R1', ab, ab);
+        out.push(sub('37c 묶음을 전부 버리기: 모두 버리기로 고른 번호(whole)가 없거나 일부만이면 거절, 모두면 됨(남길 사진 확인 없음, 한 장도 안 남는 묶음 1개)',
+          err(ab) === '묶음이 바뀌어 남길 사진이 없어졌어요. 화면을 다시 불러온 뒤 골라 주세요' && err(ab, [ab[0]]) === '묶음이 바뀌어 남길 사진이 없어졌어요. 화면을 다시 불러온 뒤 골라 주세요'
+            && whole.files.length === 2 && whole.files.every((f) => f.keepers === null) && whole.emptied === 1 && whole.groups === 1
+            && ok.emptied === 0 && !!err([id('b.jpg')], [id('a.jpg')]) && !!err([id('b.jpg')], 'x'),
+          JSON.stringify({ err: err(ab), part: err(ab, [ab[0]]), emptied: whole.emptied, keepers: whole.files.map((f) => f.keepers) })));
         out.push(sub('37c 묶음에 없는 사진, 같은 번호 두 번, 빈 목록, 이상한 번호는 거절',
           !!err([id('c.jpg')]) && !!err([id('b.jpg'), id('b.jpg')]) && !!err([]) && !!err(['x']) && !!err(null)));
-        // 37j 검증 지적: 이어 찍기로만 묶인 묶음도 버리기 확인이 같은 묶음으로 봐요 (한 장은 남겨야 함)
+        // 37j 검증 지적: 이어 찍기로만 묶인 묶음도 버리기 확인이 같은 묶음으로 봐요 (모두 버리려면 whole 로 모두 골라야 함)
         db.upsertFiles([
           row({ root: 'R3', path: 'R3/p1.jpg', name: 'p1.jpg', takenDay: '2026-05-05', takenAt: '2026-05-05T10:00:00', model: 'iPhone' }),
           row({ root: 'R3', path: 'R3/p2.jpg', name: 'p2.jpg', takenDay: '2026-05-05', takenAt: '2026-05-05T10:00:20', model: 'iPhone' }),
@@ -689,11 +719,13 @@ const items = [
           db.setEmbed(f.path, f.size, f.mtimeMs, AI3.MODEL.id, v3);
         }
         const id3 = (n) => db.similarRows('R3').find((r) => r.name === n).id;
-        const err3 = (ids) => { try { D.checkDiscard(db, 'R3', ids); return null; } catch (e) { return e.message; } };
+        const err3 = (ids, whole) => { try { D.checkDiscard(db, 'R3', ids, whole); return null; } catch (e) { return e.message; } };
+        const two3 = [id3('p1.jpg'), id3('p2.jpg')];
         const ok3 = D.checkDiscard(db, 'R3', [id3('p1.jpg'), id3('p2.jpg')]);
-        out.push(sub('37j 이어 찍기 묶음: 두 장은 버릴 수 있고 남는 사진이 keepers, 세 장 모두는 거절',
+        const all3 = [...two3, id3('p3.jpg')];
+        out.push(sub('37j 이어 찍기 묶음: 두 장은 버릴 수 있고 남는 사진이 keepers, 세 장 모두는 whole 없이 거절 · 두 장만 whole 이면 거절 · 모두 whole 이면 됨',
           ok3.files.length === 2 && ok3.groups === 1 && ok3.files[0].keepers.map((k) => k.path).join() === 'R3/p3.jpg'
-            && err3([id3('p1.jpg'), id3('p2.jpg'), id3('p3.jpg')]) === '묶음마다 적어도 한 장은 남겨 주세요',
+            && err3(all3) === '묶음이 바뀌어 남길 사진이 없어졌어요. 화면을 다시 불러온 뒤 골라 주세요' && err3(all3, two3) === '묶음이 바뀌어 남길 사진이 없어졌어요. 화면을 다시 불러온 뒤 골라 주세요' && err3(all3, all3) === null,
           JSON.stringify(ok3.files.map((f) => f.keepers))));
         // 라이브 포토 짝 영상: 같은 폴더, 같은 이름의 MP4
 
@@ -903,11 +935,27 @@ const items = [
         thenClickUntil: '그만두기',
       });
       const text = String(r.text);
-      out.push(sub('38a 묶음이 보이고 남김과 버림 표시, 아래 버튼', r.clicked === true && text.includes('묶음 1개') && text.includes('남김') && text.includes('버림') && text.includes('이 묶음은 모두 남기기') && text.includes('이 묶음에서 버릴 1장 옮기기'), `화면 글자:
+      out.push(sub('38a 묶음이 보이고 남김과 버림 표시, 아래 버튼', r.clicked === true && text.includes('묶음 1개') && text.includes('남김') && text.includes('버림') && text.includes('이 묶음은 모두 남기기') && text.includes('이 묶음 2장 모두 버리기') && text.includes('이 묶음에서 버릴 1장 옮기기'), `화면 글자:
  ${text.slice(0, 400).replace(/\s+/g, ' ')}`));
       out.push(sub('38b 확인 창: 1장을 옮긴다는 글과 결과를 말하는 버튼', text.includes('묶음 1개에서 1장을 옮겨요') && /1장 (휴지통으로|정리완료원본 폴더로) 옮기기/.test(text) && text.includes('그만두기'), `화면 글자: ${text.slice(-300).replace(/\s+/g, ' ')}`));
       out.push(sub('38c 사진 파일은 그대로 (확인 창까지만)', fs.existsSync(big) && fs.existsSync(small)));
       out.push(sub('38d 화면 오류 없음, 정상 종료', r.errors.length === 0 && r.exitCode === 0, `${r.errors.join(' / ')} 종료 코드 ${r.exitCode}`));
+
+      // 38f 사용자 요청 (2026-11-24): "이 묶음 2장 모두 버리기" → 두 장 모두 옮긴다는 확인 창 (옮기기는 누르지 않음)
+      const rAll = await launchCheck(APP, {
+        env: { PVM_USER_DATA: ud },
+        until: '백업 폴더 다시 읽기',
+        untilMs: 30000,
+        clickText: '비슷한 사진',
+        clickUntil: '확인하기',
+        thenClickText: '이 묶음 2장 모두 버리기',
+        thenClickUntil: '그만두기',
+      });
+      const textAll = String(rAll.text);
+      out.push(sub('38f 이 묶음 모두 버리기: 2장을 옮기고 한 장도 남기지 않는다는 확인 창, 사진 파일은 그대로',
+        rAll.errors.length === 0 && textAll.includes('묶음 1개에서 2장을 옮겨요') && textAll.includes('그중 묶음 1개는 한 장도 남기지 않아요')
+          && /2장 (휴지통으로|정리완료원본 폴더로) 옮기기/.test(textAll) && fs.existsSync(big) && fs.existsSync(small),
+        `화면 글자: ${textAll.slice(-300).replace(/\s+/g, ' ')} ${rAll.errors.join(' / ')}`));
 
       // 38e 사용자 결정 (2026-11-04): "이 묶음은 모두 남기기"를 다음 실행에도 기억 → 그 묶음은 숨기고 다시 보기 버튼
       const r2 = await launchCheck(APP, {
@@ -1102,7 +1150,7 @@ const items = [
         out.push(sub('56d 썸네일 다시 만들기를 하면 특징값 실패 기록도 지워져 다시 할 일로', db.embedJobs('R1', 10, 0, 'm1').map((f) => f.name).join() === 'b.jpg'));
       });
 
-      // 56i 검증 지적: AI 로 나뉜 이어 찍기 묶음도 버리기 확인이 같은 묶음으로 봐요 (나뉜 한 묶음을 다 버리면 거절)
+      // 56i 검증 지적: AI 로 나뉜 이어 찍기 묶음도 버리기 확인이 같은 묶음으로 봐요 (나뉜 한 묶음을 whole 없이 다 버리면 거절)
       await withDb(env, 'similar-ai-discard', async (db) => {
         const D = require('../lib/similar-discard');
         const va = A.toInt8(new Float32Array(512).map((_, i) => Math.sin(i * 0.37)));
@@ -1120,8 +1168,8 @@ const items = [
         let err = '';
         try { D.checkDiscard(db, 'R4', [id4('a1.jpg'), id4('a2.jpg')]); } catch (e) { err = e.message; }
         const ok = D.checkDiscard(db, 'R4', [id4('a2.jpg'), id4('b2.jpg')]);
-        out.push(sub('56i AI 로 장면이 나뉘면 두 묶음, 한 묶음을 다 버리면 거절, 묶음마다 한 장씩은 버릴 수 있음',
-          groups.length === 2 && err === '묶음마다 적어도 한 장은 남겨 주세요' && ok.groups === 2, JSON.stringify({ groups: groups.map((g) => g.ids), err, okGroups: ok.groups })));
+        out.push(sub('56i AI 로 장면이 나뉘면 두 묶음, 한 묶음을 whole 없이 다 버리면 거절, 묶음마다 한 장씩은 버릴 수 있음',
+          groups.length === 2 && err === '묶음이 바뀌어 남길 사진이 없어졌어요. 화면을 다시 불러온 뒤 골라 주세요' && ok.groups === 2, JSON.stringify({ groups: groups.map((g) => g.ids), err, okGroups: ok.groups })));
       });
 
       // 56e 특징값 만들기 (가짜 세션): 모델이 없으면 아무것도 안 함, 썸네일 실패는 null, 가져오기 중엔 쉼, 끝나면 세션을 닫음
