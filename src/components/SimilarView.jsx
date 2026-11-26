@@ -17,6 +17,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, errorText } from '../api.js';
 import { formatCount, formatTakenAt } from '../format.mjs';
 import { aiConfirmLabel, aiConfirmLines, aiLine, discardAll, discardIds, discardLabel, groupAllLabel, groupDiscardIds, groupNote, groupReviewLabel, keepAll, keptAfterDiscard, markOf, pinMarks, previewLines, progressText, pruneOverrides, recommendText, resultText, reviewLabel, toggleMark, wholeIds, sizeText, videoDiscardIds, videoDiscardLabel, videoPreviewLines, videoProgressText, videoResultText, videoSummary } from '../similar-view.mjs';
+import { trashHint } from '../trash-view.mjs';
 import EmptyState from './EmptyState.jsx';
 import CompareView from './CompareView.jsx';
 
@@ -243,7 +244,7 @@ function SameVideoSection({ gen, onNotice, hold = false, holdRef = null }) {
             <h2 id="same-video-confirm-title" className="dialog-title">같은 영상 옮기기</h2>
             <div className="dialog-pick similar-confirm">
               {videoPreviewLines(confirm.info).map((l) => <p key={l}>{l}</p>)}
-              <p className="panel-hint">영상 파일은 지우지 않아요. 휴지통에서 되살릴 수 있어요.</p>
+              <p className="panel-hint">{trashHint(confirm.info, '영상')}</p>
             </div>
             <div className="dialog-foot">
               <button type="button" ref={cancelRef} disabled={busy} onClick={() => setConfirm(null)}>그만두기</button>
@@ -547,7 +548,7 @@ export default function SimilarView({ gen, focusId, onFocus, onNotice }) {
             <h2 id="similar-confirm-title" className="dialog-title">버릴 사진 옮기기</h2>
             <div className="dialog-pick similar-confirm">
               {previewLines(confirm.info).map((l) => <p key={l}>{l}</p>)}
-              <p className="panel-hint">사진 파일은 지우지 않아요. 휴지통에서 되살릴 수 있어요.</p>
+              <p className="panel-hint">{trashHint(confirm.info)}</p>
             </div>
             <div className="dialog-foot">
               <button type="button" ref={cancelRef} disabled={busy} onClick={() => setConfirm(null)}>그만두기</button>
