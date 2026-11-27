@@ -616,6 +616,8 @@ const ITEMS = [
         const j = (title, ts) => JSON.stringify({ title, photoTakenTime: { timestamp: String(ts) }, creationTime: { timestamp: '1700000000' } });
         const T = (y, mo, d, h, mi) => Math.floor(Date.UTC(y, mo - 1, d, h, mi) / 1000); // 세계 표준시 초
         const dayOf = (sec) => { const t = new Date(sec * 1000); return path.join(String(t.getFullYear()), String(t.getMonth() + 1).padStart(2, '0'), String(t.getDate()).padStart(2, '0')); };
+        const p2 = (v) => String(v).padStart(2, '0');
+        const localExif = (sec) => { const t = new Date(sec * 1000); return `${t.getFullYear()}:${p2(t.getMonth() + 1)}:${p2(t.getDate())} ${p2(t.getHours())}:${p2(t.getMinutes())}:${p2(t.getSeconds())}`; }; // 이 PC 시간대로 쓴 EXIF 모양
         const old = w(path.join(tk, 'IMG_0001.JPG'), 'old json'); // IMG_0001.JPG.json (예전 모양)
         w(path.join(tk, 'IMG_0001.JPG.json'), j('IMG_0001.JPG', T(2019, 3, 1, 3, 0)));
         const supp = w(path.join(tk, 'IMG_0002.jpg'), 'new json'); // .supplemental-metadata.json (새 모양)
@@ -638,12 +640,15 @@ const ITEMS = [
         w(path.join(tk, 'IMG_0006.jpg.json'), j('IMG_0006.jpg', T(2019, 11, 8, 3, 0)));
         const noTime = w(path.join(tk, 'IMG_0007.jpg'), 'no time'); // photoTakenTime 이 없으면 업로드 시각(creationTime)은 쓰지 않음
         w(path.join(tk, 'IMG_0007.jpg.json'), JSON.stringify({ title: 'IMG_0007.jpg', creationTime: { timestamp: '1700000000' } }));
-        const twinName = 'Screenshot_another_long_original_file_name_here.png'; // 잘린 JSON 둘이 같은 title → 어느 쪽인지 몰라 쓰지 않음
+        const twinName = 'Screenshot_another_long_original_file_name_here.png'; // 번호 없는 잘린 JSON 둘이 같은 title(여러 zip 을 합친 경우) → 어느 쪽인지 몰라 쓰지 않음
         const twin = w(path.join(tk, twinName), 'ambiguous');
         w(path.join(tk, 'Screenshot_another_long_original_file_name_h.json'), j(twinName, T(2019, 12, 9, 3, 0)));
-        w(path.join(tk, 'Screenshot_another_long_original_file_name_h(1).json'), j(twinName, T(2019, 12, 10, 3, 0)));
+        w(path.join(tk, 'Screenshot_another_long_original_file_name_he.json'), j(twinName, T(2019, 12, 10, 3, 0)));
         w(path.join(tk, 'metadata.json'), JSON.stringify({ title: 'Photos from 2019' })); // 앨범 정보 JSON
         w(path.join(tk, 'broken.jpg.json'), '{ 깨진 json');
+        const lone = w(path.join(tk, 'IMG_0008.jpg'), 'lone'); // 원본 JSON 이 빠지고 (1) JSON 만 있음 → 원본은 (1) 날짜를 받지 않음
+        const loneNo = w(path.join(tk, 'IMG_0008(1).jpg'), 'lone (1)');
+        w(path.join(tk, 'IMG_0008.jpg(1).json'), j('IMG_0008.jpg', T(2019, 2, 11, 3, 0)));
         const fakeEt = {
           read: async (paths) => paths.map((p) => ({ SourceFile: p, ...(keyOf(p) === keyOf(shot) ? { DateTimeOriginal: '2020:05:06 07:08:09' } : {}) })),
         };
@@ -654,16 +659,18 @@ const ITEMS = [
           [[old, T(2019, 3, 1, 3, 0)], [supp, T(2019, 4, 2, 3, 0)], [cut, T(2019, 5, 3, 3, 0)]].every(([p, t]) => at(p).dateFrom === '구글정보' && at(p).relDir === dayOf(t)),
           show([old, supp, cut])));
         out.push(sub('9c 같은 이름 두 장은 (1) 번호로 짝을 맞추고, 편집본(-edited)은 원본 JSON 날짜',
-          at(first).relDir === dayOf(T(2019, 6, 4, 3, 0)) && at(second).relDir === dayOf(T(2019, 7, 5, 3, 0)) && at(edited).relDir === dayOf(T(2019, 3, 1, 3, 0)),
-          show([first, second, edited])));
+          at(first).relDir === dayOf(T(2019, 6, 4, 3, 0)) && at(second).relDir === dayOf(T(2019, 7, 5, 3, 0)) && at(edited).relDir === dayOf(T(2019, 3, 1, 3, 0))
+            && at(lone).relDir === '_날짜없음' && at(loneNo).relDir === dayOf(T(2019, 2, 11, 3, 0)),
+          show([first, second, edited, lone, loneNo])));
         out.push(sub('9c 시각은 세계 표준시라 이 PC 시간대로 바꿔 날짜 폴더를 정함 (밤 11시 30분 UTC) · JSON 이름이 잘려도 title 로 찾음',
-          at(late).relDir === dayOf(T(2019, 8, 14, 23, 30)) && at(byTitle).dateFrom === '구글정보' && at(byTitle).relDir === dayOf(T(2019, 9, 6, 3, 0)),
-          show([late, byTitle])));
+          at(late).relDir === dayOf(T(2019, 8, 14, 23, 30)) && at(late).date === localExif(T(2019, 8, 14, 23, 30))
+            && (new Date(T(2019, 8, 14, 23, 30) * 1000).getTimezoneOffset() === 0 || at(late).date !== '2019:08:14 23:30:00') && at(byTitle).dateFrom === '구글정보' && at(byTitle).relDir === dayOf(T(2019, 9, 6, 3, 0)),
+          `${show([late, byTitle])} / ${at(late).date}`));
         out.push(sub('9c 촬영 정보 → 파일 이름 → 구글 정보 순서 (카톡 이름 날짜 · 촬영 정보가 JSON 보다 우선)',
           at(shot).dateFrom === '촬영정보' && at(named).dateFrom === '파일이름' && at(named).relDir === path.join('2018', '01', '02'),
           show([shot, named])));
         out.push(sub('9c 찍은 시각이 없는 JSON(업로드 시각만) · 같은 title 이 둘인 사진은 날짜없음, 앨범 metadata.json · 깨진 JSON 은 건너뜀',
-          at(noTime).relDir === '_날짜없음' && at(twin).relDir === '_날짜없음' && plan9.stats.byFrom['구글정보'] === 8
+          at(noTime).relDir === '_날짜없음' && at(twin).relDir === '_날짜없음' && plan9.stats.byFrom['구글정보'] === 9
             && mediaNameOf('metadata.json') === null && mediaNameOf('IMG_1.jpg.supplemental-metadata(2).json') === 'IMG_1(2).jpg',
           `${show([noTime, twin])} / 구글정보 ${plan9.stats.byFrom['구글정보']}`));
       }
@@ -688,6 +695,9 @@ const ITEMS = [
           ['FB_IMG_99999.jpg', null], // 13자리가 아님
           [`IMG_${ms}.jpg`, null], // 모르는 머리말 뒤 숫자는 날짜로 보지 않음
           ['9999999999999.jpg', null], // 1 로 시작하지 않음 (먼 미래)
+          [`${ms} (1).jpg`, want], // 같은 이름 두 번째
+          ['1234567890123_abc.jpg', null], // 머리말 없이 숫자 ID 로 시작하는 이름은 날짜로 보지 않음
+          ['1503154123456-photo.jpg', null],
         ];
         const bad = cases.filter(([n, w]) => ymd(n) !== w).map(([n, w]) => `${n}: ${ymd(n)} (기대 ${w})`);
         out.push(sub('9d 메신저 · 스크린샷 · 13자리 밀리초 이름에서 날짜 읽기, 모르는 모양은 날짜 없음', bad.length === 0, bad.join(' / ')));
