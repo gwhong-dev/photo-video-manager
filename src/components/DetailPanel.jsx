@@ -144,11 +144,12 @@ function Preview({ file, turn = 0 }) {
   const note = usePreviewNote(file.id); // 원본 대신 작은 썸네일이면 안내 한 줄
   // 파일이 바뀌거나 썸네일 상태가 달라지면 한 번 더 시도해요 (같은 상태에서는 다시 시도하지 않아요)
   useEffect(() => setBroken(false), [file.id, file.thumbState]);
-  // 영상을 재생하지 못한 파일 번호 (다른 영상을 고르면 다시 재생해 봐요)
+  // 영상을 재생하지 못한 파일 (번호:바뀐 시각). 다른 영상을 고르거나 파일이 바뀌면 다시 재생해 봐요
   const [unplayable, setUnplayable] = useState(null);
   const isVideo = file.mediaType === 'video';
   // 영상은 재생기로 보여 줘요. 돌리기를 미리 볼 때(turn)와 재생하지 못할 때는 썸네일로
-  const player = isVideo && !turn && unplayable !== file.id;
+  const playKey = `${file.id}:${file.mtimeMs || 0}`;
+  const player = isVideo && !turn && unplayable !== playKey;
   const failed = !player && (broken || (isVideo && file.thumbState === 'failed'));
   // 사진 비율에 맞춰 칸 모양을 정해요 (너무 길쭉하거나 납작하면 3:4 ~ 8:5 사이로)
   const ratio = file.width && file.height ? Math.min(1.6, Math.max(0.75, file.width / file.height)) : 4 / 3;
@@ -156,7 +157,7 @@ function Preview({ file, turn = 0 }) {
     <>
       <div className="preview" style={{ aspectRatio: String(ratio) }}>
         {player ? (
-          <VideoPlayer file={file} onUnplayable={() => setUnplayable(file.id)} />
+          <VideoPlayer file={file} onUnplayable={() => setUnplayable(playKey)} />
         ) : failed ? (
           <span className="no-preview">미리보기 없음</span>
         ) : (
@@ -168,7 +169,7 @@ function Preview({ file, turn = 0 }) {
         {!isVideo && !failed && !turn && <LivePhoto id={file.id} />}
       </div>
       <PreviewNote show={!player && !failed && note.small} />
-      {isVideo && unplayable === file.id && <span className="preview-note">{UNPLAYABLE_TEXT}</span>}
+      {isVideo && unplayable === playKey && <span className="preview-note">{UNPLAYABLE_TEXT}</span>}
     </>
   );
 }

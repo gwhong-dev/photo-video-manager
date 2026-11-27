@@ -99,7 +99,7 @@ const items = [
         const vp = read('src/components/VideoPlayer.jsx');
         out.push(sub('73c 연결: video 요청은 Range 를 넘겨 구간 응답, 영상 패널은 VideoPlayer(controls · preload=metadata · poster), 재생 실패면 썸네일 + 안내, 돌리기 미리 볼 땐 썸네일',
           /u\.hostname === 'video'\) return await fileRangeResponse\(r\.path, headers, request\.headers\.get\('range'\)\)/.test(gm)
-            && /<VideoPlayer file=\{file\}/.test(dp) && /isVideo && !turn && unplayable !== file\.id/.test(dp) && /UNPLAYABLE_TEXT/.test(dp)
+            && /<VideoPlayer file=\{file\}/.test(dp) && /isVideo && !turn && unplayable !== playKey/.test(dp) && /playKey = `\$\{file\.id\}:\$\{file\.mtimeMs/.test(dp) && /UNPLAYABLE_TEXT/.test(dp)
             && /controls/.test(vp) && /preload="metadata"/.test(vp) && /poster=\{poster\}/.test(vp) && /onError=\{onUnplayable\}/.test(vp)));
       }
 
