@@ -14,6 +14,7 @@ import LivePhoto from './LivePhoto.jsx'; // 라이브 포토 · 모션 포토 �
 import { trashMenuLabel } from '../trash-view.mjs';
 import { pickButtonLabel, pickNote } from '../pick-view.mjs';
 import RotateBar from './RotateBar.jsx'; // 사진 · 영상 돌리기 (2026-11-23)
+import VideoPlayer, { UNPLAYABLE_TEXT } from './VideoPlayer.jsx'; // 앱 안 영상 재생 (2026-11-27)
 import { canRotate, fitScale } from '../rotate-view.mjs';
 
 const SOURCE_TEXT = { exif: '사진 파일에서 읽음', filename: '파일 이름에서 읽음', manual: '내가 넣은 값' };
@@ -143,24 +144,32 @@ function Preview({ file, turn = 0 }) {
   const note = usePreviewNote(file.id); // 원본 대신 작은 썸네일이면 안내 한 줄
   // 파일이 바뀌거나 썸네일 상태가 달라지면 한 번 더 시도해요 (같은 상태에서는 다시 시도하지 않아요)
   useEffect(() => setBroken(false), [file.id, file.thumbState]);
+  // 영상을 재생하지 못한 파일 (번호:바뀐 시각). 다른 영상을 고르거나 파일이 바뀌면 다시 재생해 봐요
+  const [unplayable, setUnplayable] = useState(null);
   const isVideo = file.mediaType === 'video';
-  const failed = broken || (isVideo && file.thumbState === 'failed');
+  // 영상은 재생기로 보여 줘요. 돌리기를 미리 볼 때(turn)와 재생하지 못할 때는 썸네일로
+  const playKey = `${file.id}:${file.mtimeMs || 0}`;
+  const player = isVideo && !turn && unplayable !== playKey;
+  const failed = !player && (broken || (isVideo && file.thumbState === 'failed'));
   // 사진 비율에 맞춰 칸 모양을 정해요 (너무 길쭉하거나 납작하면 3:4 ~ 8:5 사이로)
   const ratio = file.width && file.height ? Math.min(1.6, Math.max(0.75, file.width / file.height)) : 4 / 3;
   return (
     <>
       <div className="preview" style={{ aspectRatio: String(ratio) }}>
-        {failed ? (
+        {player ? (
+          <VideoPlayer file={file} onUnplayable={() => setUnplayable(playKey)} />
+        ) : failed ? (
           <span className="no-preview">미리보기 없음</span>
         ) : (
           // 주소 끝 ?v= 는 파일이 바뀐 시각: 돌려서 저장하면 옛 그림 대신 새로 받아요
           <img key={file.id} src={`pvm://preview/${file.id}?v=${file.mtimeMs || 0}`} alt="" onLoad={note.onLoad} onError={() => setBroken(true)}
             style={turn ? { transform: `rotate(${turn}deg) scale(${fitScale(turn, ratio)})`, transition: 'transform 0.2s' } : undefined} />
         )}
-        {isVideo && formatDuration(file.durationSec) && <span className="badge">{formatDuration(file.durationSec)}</span>}
+        {isVideo && !player && formatDuration(file.durationSec) && <span className="badge">{formatDuration(file.durationSec)}</span>}
         {!isVideo && !failed && !turn && <LivePhoto id={file.id} />}
       </div>
-      <PreviewNote show={!failed && note.small} />
+      <PreviewNote show={!player && !failed && note.small} />
+      {isVideo && unplayable === playKey && <span className="preview-note">{UNPLAYABLE_TEXT}</span>}
     </>
   );
 }
