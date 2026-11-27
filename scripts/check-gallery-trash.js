@@ -135,6 +135,10 @@ const items = [
             && V.trashHint({ count: 2, trash: 1, move: 1 }).includes('휴지통이나 _정리완료원본')
             && V.trashHint({ count: 2, trash: 2, move: 0, warnings: ['넘어요'] }).includes('위의 주의를 먼저')
             && V.trashHint({ count: 0 }) === ''));
+        // 비슷한 사진 화면의 확인 창도 같은 글 (나중에 할 일 14번). 같은 영상 창은 "영상 파일"
+        out.push(sub('56c 비슷한 사진 확인 창 안내: 영상은 "영상 파일" 로, _정리완료원본만이면 휴지통이라고 하지 않음',
+          V.trashHint({ count: 2, trash: 0, move: 2 }, '영상') === '영상 파일은 지우지 않아요. _정리완료원본 폴더에서 되돌릴 수 있어요.'
+            && V.trashHint({ count: 1, trash: 1, move: 0 }).startsWith('사진 파일은')));
         const el = (tagName, extra = {}) => ({ tagName, ...extra });
         out.push(sub('56c Delete 키는 격자에서만 창을 열고, 글 쓰는 칸 · 다른 창이 열려 있으면 안 엶 (Backspace 는 안 엶)',
           V.deleteKeyOpens('Delete', el('BUTTON'), false) && V.deleteKeyOpens('Delete', el('DIV'), false) && V.deleteKeyOpens('Delete', null, false)
