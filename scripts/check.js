@@ -1932,6 +1932,8 @@ const ITEMS = [
   ...require('./check-mini-progress').items,
   // 71번은 비슷한 사진 화면의 "같은 영상" 묶음 점검 — 두 번 저장된 영상 정리 (scripts/check-same-video.js)
   ...require('./check-same-video').items,
+  // 73번은 앱 안 영상 재생 점검 — 패널에서 재생 · 건너뛰기 (scripts/check-video-player.js)
+  ...require('./check-video-player').items,
 ];
 
 // ---------- 수동 샘플 처리 결과 표 (참고용) ----------

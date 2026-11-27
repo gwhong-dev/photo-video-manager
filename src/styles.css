@@ -238,6 +238,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   background: var(--sidebar);
 }
 .preview img { display: block; width: 100%; height: 100%; object-fit: contain; }
+/* 앱 안 영상 재생 (2026-11-27). 칸을 꽉 채우고 비율은 그대로 */
+.video-player { display: block; width: 100%; height: 100%; object-fit: contain; background: var(--sidebar); }
 /* 원본을 못 읽어 작은 썸네일로 대신 보여 줄 때 안내 한 줄 (흐린 글자. 노랑은 "정보 없음" 전용) */
 /* 돌리기 버튼과 저장 고르기 (2026-11-23). 미리보기 바로 아래 */
 .rotate-bar { margin-top: 8px; }

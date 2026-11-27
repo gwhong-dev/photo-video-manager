@@ -91,7 +91,7 @@ const items = [
         out.push(sub('64b pvm://original 은 JPG 원본 그대로, HEIC 는 1200px 미리보기로 대신',
           o1.status === 200 && o1.path === plain && o1.type === 'image/jpeg' && o5.status === 200 && !o5.path && o5.type === 'image/webp',
           JSON.stringify({ o1: o1.type, o5: o5.type })));
-        out.push(sub('64b pvm://live 는 짝 영상(같은 이름 · 5초 이하 · 3초 안) 먼저, 없으면 JPG 끝 영상, 보통 사진은 204(화면 오류 로그 없게), 영상 번호 · 모르는 호스트는 404',
+        out.push(sub('64b pvm://live 는 짝 영상(같은 이름 · 5초 이하 · 3초 안) 먼저, 없으면 JPG 끝 영상, 보통 사진은 204(화면 오류 로그 없게), 영상 번호 · 사진 번호의 video 요청은 404',
           l3.status === 200 && l3.path === pairMov && l1.status === 200 && l1.buffer && l1.buffer.equals(video) && l1.type === 'video/mp4'
             && l2.status === 204 && l4.status === 404 && odd.status === 404,
           JSON.stringify({ l1: l1.status, l2: l2.status, l3: l3.path && path.basename(l3.path), l4: l4.status, odd: odd.status })));

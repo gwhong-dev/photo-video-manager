@@ -37,6 +37,7 @@ const { createLibrary } = require('./lib/library');
 const { createThumbs, pruneAllowed } = require('./lib/thumbs');
 const { createProcMake } = require('./lib/thumb-proc');
 const { handleMedia } = require('./lib/media-protocol');
+const { fileRangeResponse } = require('./lib/byte-range');
 const { now } = require('./lib/logger');
 const { normalizeRequest, planEdit, toPreview, MAX_TARGETS } = require('./lib/manual-edit');
 const { createJournal, recover } = require('./lib/manual-journal');
@@ -1744,6 +1745,8 @@ function setupGallery({ ipcMain, protocol, getWin, getSettings, getTools, getEt,
         headers['X-Pvm-Preview'] = r.fallback ? 'thumb' : 'full';
       }
       if (r.buffer) return new Response(r.buffer, { status: 200, headers });
+      // 영상 원본: 건너뛸 때 화면이 구간(Range)만 달라고 해요 → 그 구간만 206 으로 (lib/byte-range.js)
+      if (u.hostname === 'video') return await fileRangeResponse(r.path, headers, request.headers.get('range'));
       // 한글, #, % 가 든 경로도 안전하게 file:// 주소로 바꿔요
       const netFetch = require('electron').net.fetch;
       const res = await netFetch(pathToFileURL(r.path).toString());
