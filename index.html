@@ -432,7 +432,7 @@
       if (s.renamed) c.appendChild(chip(`🔁 _번호 붙음 ${num(s.renamed)}`, 'orange'));
       if (s.skip) c.appendChild(chip(`✔ 이미 정리됨 ${num(s.skip)}`));
       if (s.unsure) c.appendChild(chip(`⚠ 확인 필요 (이미 있는 파일과 같은지 모름) ${num(s.unsure)}`, 'red'));
-      c.appendChild(chip(`날짜 출처: 촬영정보 ${num(s.byFrom['촬영정보'])} · 파일이름 ${num(s.byFrom['파일이름'])} · 앨범정보 ${num(s.byFrom['앨범정보'])} · 없음 ${num(s.byFrom['없음'])}`));
+      c.appendChild(chip(`날짜 출처: 촬영정보 ${num(s.byFrom['촬영정보'])} · 파일이름 ${num(s.byFrom['파일이름'])}${s.byFrom['구글정보'] ? ` · 구글정보 ${num(s.byFrom['구글정보'])}` : ''} · 앨범정보 ${num(s.byFrom['앨범정보'])} · 없음 ${num(s.byFrom['없음'])}`));
     }
 
     // ---------- 요약 칩 (실행한 뒤 결과) ----------
