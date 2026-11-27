@@ -702,6 +702,56 @@ const ITEMS = [
         const bad = cases.filter(([n, w]) => ymd(n) !== w).map(([n, w]) => `${n}: ${ymd(n)} (기대 ${w})`);
         out.push(sub('9d 메신저 · 스크린샷 · 13자리 밀리초 이름에서 날짜 읽기, 모르는 모양은 날짜 없음', bad.length === 0, bad.join(' / ')));
       }
+      // 9e 해외 영상 시간대: UTC 로만 적힌 영상(안드로이드 · 카메라)은 같은 폴더 12시간 안 사진의 시간대를 빌림 (exiftool 은 가짜)
+      //    가짜 exiftool 도 진짜처럼 영상 CreateDate 를 "이 PC 시간대 + 시간대 글자"로 돌려줘요 → 어느 PC 에서 돌려도 같은 기대값
+      {
+        const { keyOf } = require('../lib/planner');
+        const D = require('../lib/dates');
+        const root9e = path.join(env.tmp, 'video-tz');
+        const bk9e = path.join(root9e, 'backup');
+        const dirs = ['trip', 'far', 'other'].map((d) => path.join(root9e, 'source', d));
+        for (const d of [...dirs, bk9e]) fs.mkdirSync(d, { recursive: true });
+        const [trip, far, other] = dirs;
+        const p2 = (v) => String(v).padStart(2, '0');
+        const pcExif = (ms, withZone) => { // 이 PC 시간대로 쓴 EXIF 모양 (exiftool -api QuickTimeUTC 처럼)
+          const t = new Date(ms);
+          const off = -t.getTimezoneOffset();
+          const z = `${off < 0 ? '-' : '+'}${p2(Math.floor(Math.abs(off) / 60))}:${p2(Math.abs(off) % 60)}`;
+          return `${t.getFullYear()}:${p2(t.getMonth() + 1)}:${p2(t.getDate())} ${p2(t.getHours())}:${p2(t.getMinutes())}:${p2(t.getSeconds())}${withZone ? z : ''}`;
+        };
+        const w = (p) => (fs.writeFileSync(p, path.basename(p)), p);
+        const vMs = Date.UTC(2019, 7, 14, 3, 30); // 미국 서부 8월 13일 저녁 8시 30분 (-07:00) = 한국 14일 낮 12시 30분
+        const vid = w(path.join(trip, 'VID_x.mp4')); // 이름에 날짜 없는 영상
+        const photo = w(path.join(trip, 'PXL_a.jpg'));
+        const iphone = w(path.join(trip, 'IMG_9001.mp4'));
+        const farVid = w(path.join(far, 'VID_far.mp4'));
+        const farPhoto = w(path.join(far, 'PXL_far.jpg'));
+        const lonely = w(path.join(other, 'VID_other.mp4'));
+        const metaOf = {
+          [keyOf(vid)]: { CreateDate: pcExif(vMs, true), FileType: 'MP4' },
+          [keyOf(photo)]: { DateTimeOriginal: '2019:08:13 20:00:00', OffsetTimeOriginal: '-07:00', FileType: 'JPEG' }, // 30분 전 사진
+          [keyOf(iphone)]: { KeysCreationDate: '2019:08:13 20:40:00-07:00', CreateDate: pcExif(vMs + 600000, true), FileType: 'MP4' },
+          [keyOf(farVid)]: { CreateDate: pcExif(vMs, true), FileType: 'MP4' },
+          [keyOf(farPhoto)]: { DateTimeOriginal: '2019:08:12 08:00:00', OffsetTimeOriginal: '-07:00', FileType: 'JPEG' }, // 12시간보다 멂
+          [keyOf(lonely)]: { CreateDate: pcExif(vMs, true), FileType: 'MP4' }, // 같은 폴더에 사진 없음
+        };
+        const fakeEt9e = { read: async (paths) => paths.map((p) => ({ SourceFile: p, ...(metaOf[keyOf(p)] || {}) })) };
+        const plan9e = await makePlan({ source: path.join(root9e, 'source'), backupRoot: bk9e, includeSub: true }, fakeEt9e);
+        const at = (p) => plan9e.items.find((it) => keyOf(it.src) === keyOf(p));
+        const show = (ps) => ps.map((p) => `${at(p).date} ${at(p).zone || '-'}`).join(' / ');
+        out.push(sub('9e UTC 로만 적힌 영상은 같은 폴더 30분 전 사진의 시간대(-07:00)로 현지 시각 · 날짜 폴더를 정함',
+          at(vid).date === '2019:08:13 20:30:00' && at(vid).relDir === path.join('2019', '08', '13') && at(vid).zone === '-07:00 (사진)'
+            && at(vid).name.startsWith('2019-08-13_203000'),
+          `${show([vid])} ${at(vid).relDir}`));
+        out.push(sub('9e 시간대가 든 아이폰 영상 · 12시간보다 먼 사진 · 다른 폴더 사진은 빌리지 않고 지금처럼 (이 PC 시간대)',
+          at(iphone).date === '2019:08:13 20:40:00' && !at(iphone).zone
+            && at(farVid).date === pcExif(vMs, false) && !at(farVid).zone && at(lonely).date === pcExif(vMs, false) && !at(lonely).zone,
+          show([iphone, farVid, lonely])));
+        out.push(sub('9e 시간대 글자 읽기: +05:30 · -07:00 · 없는 시간대 · 시간대 없는 시각',
+          D.offsetMinutes('+05:30') === 330 && D.offsetMinutes('-07:00') === -420 && D.offsetMinutes('+25:00') === null
+            && D.instantOfExif('2019:08:14 12:30:00+09:00') === vMs && D.instantOfExif('2019:08:14 12:30:00') === null,
+          `${D.offsetMinutes('+05:30')} ${D.instantOfExif('2019:08:14 12:30:00+09:00')}`));
+      }
       return out;
     },
   },
