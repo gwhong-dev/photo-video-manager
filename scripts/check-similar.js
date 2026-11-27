@@ -187,6 +187,7 @@ const items = [
           row({ root: 'R2', path: 'R2/x.jpg', name: 'x.jpg' }),
         ]);
         db.setMissing(['R1/gone.jpg'], 1);
+        // 할 일 순서는 최근 촬영일부터, 같은 날이면 큰 번호(나중에 넣은 사진)부터 (나중에 할 일 15번)
         const jobs1 = db.hashJobs('R1', 10).map((f) => f.name);
         const p0 = db.hashProgress('R1');
         const a = db.hashJobs('R1', 10).find((f) => f.name === 'a.jpg');
@@ -203,11 +204,11 @@ const items = [
         const rows1 = db.similarRows('R1');
         out.push(sub(
           '36e 할 일은 이 폴더의 보이는 사진만 (영상, 사라진 것, 다른 폴더 빼고), 지문을 넣거나 실패로 적으면 빠짐',
-          JSON.stringify(jobs1) === JSON.stringify(['a.jpg', 'b.jpg']) && jobs2.length === 0 && p0.total === 2 && p0.done === 0 && p1.done === 2,
+          JSON.stringify(jobs1) === JSON.stringify(['b.jpg', 'a.jpg']) && jobs2.length === 0 && p0.total === 2 && p0.done === 0 && p1.done === 2,
           JSON.stringify([jobs1, jobs2, p0, p1]),
         ));
         out.push(sub('36e 지문만 있으면 흐림 점수만 할 일로 남고 진행은 0 (둘 다 있어야 끝)',
-          JSON.stringify(half) === JSON.stringify(['a.jpg:b', 'b.jpg:b']) && pHalf.done === 0, JSON.stringify([half, pHalf])));
+          JSON.stringify(half) === JSON.stringify(['b.jpg:b', 'a.jpg:b']) && pHalf.done === 0, JSON.stringify([half, pHalf])));
         out.push(sub(
           '36e 묶기용 줄: 지문, 흐림 점수, 크기, 찍은 시각 (실패는 null)',
           rows1.length === 2 && rows1[0].dhash === '0f0f0f0f33333333' && rows1[0].blur === 0.31 && rows1[0].width === 400 && rows1[1].dhash === null && rows1[1].blur === null && typeof rows1[0].takenAt === 'string',
@@ -221,9 +222,9 @@ const items = [
         // 뒤에서 미리 계산(readyOnly)은 썸네일이 있는 사진만
         db.setThumbState(job3.id, 'ready');
         db.upsertFiles([row({ root: 'R1', path: 'R1/c.jpg', name: 'c.jpg' })]);
-        const ready = db.hashJobs('R1', 10, 0, { readyOnly: true }).map((f) => f.name);
+        const ready = db.hashJobs('R1', 10, null, { readyOnly: true }).map((f) => f.name);
         const all = db.hashJobs('R1', 10).map((f) => f.name);
-        out.push(sub('36e 뒤에서 미리 계산할 때는 썸네일이 있는 사진만 (없는 것은 화면을 열 때)', JSON.stringify(ready) === '["a.jpg"]' && JSON.stringify(all) === '["a.jpg","c.jpg"]', JSON.stringify([ready, all])));
+        out.push(sub('36e 뒤에서 미리 계산할 때는 썸네일이 있는 사진만 (없는 것은 화면을 열 때)', JSON.stringify(ready) === '["a.jpg"]' && JSON.stringify(all) === '["c.jpg","a.jpg"]', JSON.stringify([ready, all])));
         // 실패한 썸네일 다시 만들기를 하면 흐림 점수 "없음"도 지워져요
         db.resetFailedThumbs('R1');
         const bAgain = db.hashJobs('R1', 10).find((f) => f.name === 'b.jpg');
@@ -296,7 +297,7 @@ const items = [
           db.hashJobs('R1', 10).map((f) => f.name).sort().join() === 'broken.jpg,unplugged.jpg'));
       });
 
-      // 36g 검증 지적: 할 일 조회가 사진 수의 제곱으로 느려졌음 → 번호 순서로 앞으로만, 그림 읽기 실패는 없음으로 적지 않음
+      // 36g 검증 지적: 할 일 조회가 사진 수의 제곱으로 느려졌음 → 한 회차 안에서 앞으로만 (최근 촬영일부터), 그림 읽기 실패는 없음으로 적지 않음
       await withDb(env, 'similar-hasher-scale', async (db) => {
         const N = 3000;
         const many = [];
@@ -304,8 +305,8 @@ const items = [
         db.upsertFiles(many);
         const realJobs = db.hashJobs.bind(db);
         let fetched = 0;
-        db.hashJobs = (root, limit, afterId, o) => {
-          const r = realJobs(root, limit, afterId, o);
+        db.hashJobs = (root, limit, after, o) => {
+          const r = realJobs(root, limit, after, o);
           fetched += r.length;
           return r;
         };
@@ -327,7 +328,36 @@ const items = [
         out.push(sub('36g 3천 장: 할 일 조회는 사진 수만큼만 읽음, 못 얻은 것과 그림 읽기 실패는 비워 둠 (다음에 다시)',
           fetched === N && r.made === N - 300 - 1 && r.skipped === 301 && r.failed === 0 && left.length === 301 && left.includes(7),
           `${ms}ms, 읽은 줄 ${fetched}, ${JSON.stringify(r)}`));
-        out.push(sub('36g 이 번호 다음부터 할 일 (afterId)', db.hashJobs('R1', 2, 7).map((f) => f.id).join() === '10,20'));
+        // 3천 장 모두 같은 날이라 같은 날 안에서는 큰 번호부터: 남은 것은 3000, 2990, … 20, 10, 7
+        out.push(sub('36g 지난 묶음의 마지막 자리 다음부터 할 일 (after)', db.hashJobs('R1', 2, { day: '2026-10-25', id: 21 }).map((f) => f.id).join() === '20,10'));
+      });
+
+      // 36g-2 나중에 할 일 15번: 미리 계산은 목록 맨 위(최근 촬영일)부터, 날짜 없는 사진은 맨 뒤 (목록 순서와 같게)
+      //   묶음 크기가 달라도(2 · 3 · 4장) 빠지거나 두 번 나오는 사진 없이 같은 순서. 날짜 있는 것과 없는 것 사이를 넘어가도 이어짐
+      await withDb(env, 'similar-jobs-recent-first', async (db) => {
+        const days = ['2026-01-01', '2026-03-01', null, '2026-03-01', null, '2025-12-31'];
+        db.upsertFiles(days.map((d, i) => row({ root: 'R1', path: `R1/${i + 1}.jpg`, name: `${i + 1}.jpg`, takenDay: d, takenAt: d ? `${d}T10:00:00` : null })));
+        const idOf = new Map(db.hashJobs('R1', 10).map((f) => [f.name, f.id]));
+        const want = ['4.jpg', '2.jpg', '1.jpg', '6.jpg', '5.jpg', '3.jpg'].map((n) => idOf.get(n)).join();
+        const walk = (size, fn) => {
+          const seen = [];
+          let after = null;
+          for (let k = 0; k < 20; k++) {
+            const jobs = fn(size, after);
+            if (!jobs.length) break;
+            seen.push(...jobs.map((f) => f.id));
+            after = db.jobCursor(jobs);
+          }
+          return seen.join();
+        };
+        const h2 = walk(2, (n, a) => db.hashJobs('R1', n, a));
+        const h3 = walk(3, (n, a) => db.hashJobs('R1', n, a));
+        const e2 = walk(2, (n, a) => db.embedJobs('R1', n, a, 'm1'));
+        const e4 = walk(4, (n, a) => db.embedJobs('R1', n, a, 'm1'));
+        out.push(sub('36g-2 지문 · 특징값 미리 계산은 최근 촬영일부터, 날짜 없는 사진은 맨 뒤 (묶음 크기 2 · 3 · 4 모두 같은 순서)',
+          h2 === want && h3 === want && e2 === want && e4 === want, `기대 ${want} / 지문 ${h2} · ${h3} / 특징값 ${e2} · ${e4}`));
+        out.push(sub('36g-2 날짜 없는 사진 자리 다음은 그보다 작은 번호의 날짜 없는 사진만',
+          db.hashJobs('R1', 10, { day: null, id: idOf.get('5.jpg') }).map((f) => f.id).join() === String(idOf.get('3.jpg'))));
       });
 
       // 36h 검증 지적: 연속 촬영 사이에 낀 다른 한 장이 묶음을 끊지 않음 (3초 안 앞 사진들과 비교), 모양 거리 설정이 6보다 크면 오류
@@ -1133,21 +1163,24 @@ const items = [
           row({ root: 'R1', path: 'R1/b.jpg', name: 'b.jpg' }),
           row({ root: 'R1', path: 'R1/v.mp4', name: 'v.mp4', mediaType: 'video' }),
         ]);
-        const jobs0 = db.embedJobs('R1', 10, 0, 'm1').map((f) => f.name);
-        const [a, b] = db.embedJobs('R1', 10, 0, 'm1');
+        const jobs0 = db.embedJobs('R1', 10, null, 'm1').map((f) => f.name);
+        // 같은 날이라 큰 번호(b)부터 나와요 (나중에 할 일 15번) → 이름으로 찾아요
+        const byName = (n) => db.embedJobs('R1', 10, null, 'm1').find((f) => f.name === n);
+        const a = byName('a.jpg');
+        const b = byName('b.jpg');
         db.setEmbed(a.path, a.size, a.mtimeMs, 'm1', A.toInt8(new Float32Array(512).fill(1)));
         db.setEmbed(b.path, b.size, b.mtimeMs, 'm1', null);
-        const jobs1 = db.embedJobs('R1', 10, 0, 'm1').map((f) => f.name);
+        const jobs1 = db.embedJobs('R1', 10, null, 'm1').map((f) => f.name);
         const p1 = db.embedProgress('R1', 'm1');
         const rows = db.similarRows('R1');
-        const jobsNew = db.embedJobs('R1', 10, 0, 'm2').map((f) => f.name);
+        const jobsNew = db.embedJobs('R1', 10, null, 'm2').map((f) => f.name);
         out.push(sub('56d 할 일은 사진만, 저장하면(실패 포함) 빠지고 진행에 셈, 모델이 바뀌면 다시 할 일',
-          JSON.stringify(jobs0) === '["a.jpg","b.jpg"]' && jobs1.length === 0 && p1.total === 2 && p1.done === 2 && JSON.stringify(jobsNew) === '["a.jpg","b.jpg"]',
+          JSON.stringify(jobs0) === '["b.jpg","a.jpg"]' && jobs1.length === 0 && p1.total === 2 && p1.done === 2 && JSON.stringify(jobsNew) === '["b.jpg","a.jpg"]',
           JSON.stringify([jobs0, jobs1, p1, jobsNew])));
         out.push(sub('56d 묶기용 줄에 특징값(512바이트)과 모델 이름, 실패는 null',
           rows[0].vec instanceof Uint8Array && rows[0].vec.length === 512 && rows[0].embedModel === 'm1' && rows[1].vec === null && rows[1].embedModel === null, JSON.stringify(rows.map((x) => [x.name, x.vec && x.vec.length, x.embedModel]))));
         db.resetFailedThumbs('R1');
-        out.push(sub('56d 썸네일 다시 만들기를 하면 특징값 실패 기록도 지워져 다시 할 일로', db.embedJobs('R1', 10, 0, 'm1').map((f) => f.name).join() === 'b.jpg'));
+        out.push(sub('56d 썸네일 다시 만들기를 하면 특징값 실패 기록도 지워져 다시 할 일로', db.embedJobs('R1', 10, null, 'm1').map((f) => f.name).join() === 'b.jpg'));
       });
 
       // 56i 검증 지적: AI 로 나뉜 이어 찍기 묶음도 버리기 확인이 같은 묶음으로 봐요 (나뉜 한 묶음을 whole 없이 다 버리면 거절)
@@ -1204,7 +1237,7 @@ const items = [
           const t0 = Date.now();
           const r = await em.run('R1', null, { isBusy: () => Date.now() < busyUntil });
           const waited = Date.now() - t0;
-          const left = db.embedJobs('R1', 10, 0, A.MODEL.id).map((f) => f.name);
+          const left = db.embedJobs('R1', 10, null, A.MODEL.id).map((f) => f.name);
           out.push(sub('56e 만든 2장 · 썸네일 실패 1장(null) · 원본 못 읽음 1장(다음에 다시), 가져오기 중엔 쉼, 끝나면 세션 닫음',
             r.made === 2 && r.failed === 1 && r.skipped === 1 && JSON.stringify(left) === '["4.jpg"]' && waited >= 1000 && loads === 1 && releases === 1,
             JSON.stringify({ r, left, waited, loads, releases })));
@@ -1220,7 +1253,7 @@ const items = [
             thrown = e.message;
           }
           out.push(sub('56e 모델을 열지 못하면 회차가 오류로 끝남 (특징값을 "실패"로 적지 않아 고친 뒤 다시 만들 수 있음)',
-            thrown.includes('DLL') && db.embedJobs('R1', 10, 0, A.MODEL.id).map((f) => f.name).includes('9.jpg'), thrown));
+            thrown.includes('DLL') && db.embedJobs('R1', 10, null, A.MODEL.id).map((f) => f.name).includes('9.jpg'), thrown));
         } finally {
           A.MODEL.bytes = saved;
         }
